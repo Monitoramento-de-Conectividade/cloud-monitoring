@@ -1,0 +1,195 @@
+[2025-10-24 00:00:52]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 01:37:11]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 02:33:05]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 02:37:15]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 03:02:11]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 04:27:40]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 09:35:37]
+#28-PioneiraLEM_1-soil_app-01-0-lucasriffel-0-335-23/10/2025_15:46:16$
+
+[2025-10-24 09:48:09]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 10:07:01]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 10:11:01]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 10:39:23]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 10:54:38]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 11:00:39]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 11:11:12]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 12:00:49]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 12:57:57]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 13:20:19]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 13:23:10]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 13:37:12]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 13:48:44]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 13:52:48]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 13:56:43]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:15:38]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:23:57]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:27:44]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:45:15]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:47:19]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:48:32]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 14:54:11]
+#28-soilteste_1-system_manager-24-0-brownout-0-655-31/12/1969_21:00:00$
+
+[2025-10-24 14:58:37]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:05:08]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:10:02]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:10:16]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:12:20]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:15:24]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:18:23]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:18:38]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:21:20]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:25:03]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:40:10]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:40:21]
+#28-soilteste_1-system_manager-24-0-brownout-0-655-24/10/2025_15:27:30$
+
+[2025-10-24 15:44:33]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_15:44:28$
+
+[2025-10-24 15:45:19]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_15:45:14$
+
+[2025-10-24 15:47:12]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:48:10]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 15:52:15]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_15:45:14$
+
+[2025-10-24 15:52:36]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_15:45:14$
+
+[2025-10-24 15:57:08]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:03:29]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:04:41]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_16:04:36$
+
+[2025-10-24 16:04:50]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:09:11]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_16:09:07$
+
+[2025-10-24 16:09:36]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_16:09:07$
+
+[2025-10-24 16:10:23]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:11:05]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:13:13]
+#28-Savana_16-system_manager-30-0-manual-0-173-20/10/2025_08:20:47$
+
+[2025-10-24 16:13:28]
+#28-soilteste_1-system_manager-24-0-brownout-0-655-24/10/2025_16:11:07$
+
+[2025-10-24 16:14:48]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 16:17:01]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_16:16:56$
+
+[2025-10-24 16:24:34]
+#28-soilteste_1-soil_app-01-0-soil-0-655-24/10/2025_16:24:30$
+
+[2025-10-24 16:40:23]
+#28-soilteste_1-system_manager-24-0-brownout-0-655-24/10/2025_16:39:40$
+
+[2025-10-24 16:41:29]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 17:38:40]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 17:40:05]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+
+[2025-10-24 17:43:31]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-340-24/10/2025_09:48:08$
+

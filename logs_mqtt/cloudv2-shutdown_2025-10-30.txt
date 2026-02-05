@@ -1,0 +1,15 @@
+[2025-10-30 18:29:27]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-339-30/10/2025_07:04:46$
+
+[2025-10-30 18:52:58]
+#28-soilteste_1-system_manager-30-0-manual-0-655-29/10/2025_21:55:23$
+
+[2025-10-30 19:53:56]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-339-30/10/2025_07:04:46$
+
+[2025-10-30 21:26:26]
+#28-PioneiraLEM_1-system_manager-30-0-manual-0-339-30/10/2025_07:04:46$
+
+[2025-10-30 21:41:58]
+#28-soilteste_1-system_manager-30-0-manual-0-655-29/10/2025_21:55:23$
+
