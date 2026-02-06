@@ -1,3 +1,4 @@
+import atexit
 import os
 import random
 import ssl
@@ -22,9 +23,11 @@ PORT = runtime_config["port"]
 TOPICS = runtime_config["topics"]
 FILTER_NAMES = runtime_config["filter_names"]
 CMD_TOPICS = runtime_config["cmd_topics"]
-INFO_TOPIC = runtime_config["info_topic"]
+INFO_TOPICS = runtime_config["info_topics"]
 MIN_MINUTES = runtime_config["min_minutes"]
 MAX_MINUTES = runtime_config["max_minutes"]
+SCHEDULE_MODE = runtime_config["schedule_mode"]
+FIXED_MINUTES = runtime_config["fixed_minutes"]
 RESPONSE_TIMEOUT_SEC = runtime_config["response_timeout_sec"]
 PING_INTERVAL_MINUTES = runtime_config["ping_interval_minutes"]
 PING_TOPIC = runtime_config["ping_topic"]
@@ -34,6 +37,58 @@ DASHBOARD_REFRESH_SEC = runtime_config["dashboard_refresh_sec"]
 HISTORY_MODE = runtime_config["history_mode"]
 
 print(f"Arquivo de configuracao ativo: {get_config_file_path()}")
+
+PID_FILE = ".cloudv2-monitor.pid"
+
+
+def _is_process_running(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_pid_file():
+    if not os.path.exists(PID_FILE):
+        return None
+    try:
+        with open(PID_FILE, "r", encoding="utf-8") as file:
+            content = file.read().strip()
+        if not content:
+            return None
+        return int(content)
+    except (OSError, ValueError):
+        return None
+
+
+def _release_pid_file():
+    current_pid = os.getpid()
+    pid_in_file = _read_pid_file()
+    if pid_in_file != current_pid:
+        return
+    try:
+        os.remove(PID_FILE)
+    except OSError:
+        pass
+
+
+def _acquire_pid_file():
+    current_pid = os.getpid()
+    existing_pid = _read_pid_file()
+    if existing_pid and existing_pid != current_pid and _is_process_running(existing_pid):
+        print(f"Ja existe um monitor em execucao (PID {existing_pid}). Encerrando esta instancia.")
+        return False
+    try:
+        with open(PID_FILE, "w", encoding="utf-8") as file:
+            file.write(str(current_pid))
+    except OSError as exc:
+        print(f"Falha ao criar arquivo de lock do monitor: {exc}")
+        return False
+    atexit.register(_release_pid_file)
+    return True
 
 # ------------------------------------
 # Gerenciar certificados
@@ -106,14 +161,19 @@ def salvar_mensagem(topic, payload):
     print(f"Mensagem salva em {log_path}")
 
 
-def salvar_resposta_info(payload):
+def _safe_topic_filename(topic):
+    return str(topic).strip().replace("/", "_")
+
+
+def salvar_resposta_info(topic, payload):
     data_hoje = datetime.now().strftime("%Y-%m-%d")
-    log_path = os.path.join(LOG_DIR, f"cloudv2-info_respostas_{data_hoje}.txt")
+    safe_topic = _safe_topic_filename(topic)
+    log_path = os.path.join(LOG_DIR, f"{safe_topic}_respostas_{data_hoje}.txt")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     linha = f"[{timestamp}]\n{payload}\n\n"
     with open(log_path, "a", encoding="utf-8") as file:
         file.write(linha)
-    print(f"Resposta cloudv2-info salva em {log_path}")
+    print(f"Resposta {topic} salva em {log_path}")
 
 
 def salvar_envio_resultado(cmd_topic, sim_ou_nao):
@@ -174,7 +234,7 @@ def _publicar_11(client, cmd_topic):
 
 
 def _agendador_11(client):
-    """Thread que envia #11$ em intervalos aleatorios."""
+    """Thread que envia #11$ em intervalos aleatorios ou fixos."""
     while True:
         if not CMD_TOPICS:
             print("Nenhum topico de comando (#11$) configurado.")
@@ -183,8 +243,13 @@ def _agendador_11(client):
         for cmd_topic in CMD_TOPICS:
             _publicar_11(client, cmd_topic)
             time.sleep(0.2)
-        prox_min = random.randint(MIN_MINUTES, MAX_MINUTES)
-        print(f"Proximo #11$ em ~{prox_min} minuto(s).")
+
+        if SCHEDULE_MODE == "fixed":
+            prox_min = FIXED_MINUTES
+            print(f"Proximo #11$ em {prox_min} minuto(s) (fixo).")
+        else:
+            prox_min = random.randint(MIN_MINUTES, MAX_MINUTES)
+            print(f"Proximo #11$ em ~{prox_min} minuto(s) (aleatorio).")
         time.sleep(prox_min * 60)
 
 
@@ -197,7 +262,7 @@ def on_connect(client, userdata, flags, rc):
         print("Conectado ao broker!")
 
         subscriptions = []
-        for topic in TOPICS + CMD_TOPICS + [INFO_TOPIC, PING_TOPIC]:
+        for topic in TOPICS + CMD_TOPICS + INFO_TOPICS + [PING_TOPIC]:
             topic = str(topic).strip()
             if topic and topic not in subscriptions:
                 subscriptions.append(topic)
@@ -220,8 +285,8 @@ def on_message(client, userdata, msg):
         if any(name in payload for name in FILTER_NAMES):
             salvar_mensagem(msg.topic, payload)
 
-        if msg.topic == INFO_TOPIC:
-            salvar_resposta_info(payload)
+        if msg.topic in INFO_TOPICS:
+            salvar_resposta_info(msg.topic, payload)
             with _lock:
                 responded_topics = []
                 for cmd_topic in CMD_TOPICS:
@@ -235,7 +300,7 @@ def on_message(client, userdata, msg):
                 for cmd_topic in responded_topics:
                     salvar_envio_resultado(cmd_topic, "SIM")
                     if telemetry:
-                        telemetry.record_ping_result(cmd_topic, ok=True, ts=time.time(), source="info")
+                        telemetry.record_ping_result(cmd_topic, ok=True, ts=time.time(), source=msg.topic)
                     _aguardando_resposta.discard(cmd_topic)
                     timer = _timers_resposta.pop(cmd_topic, None)
                     if timer is not None:
@@ -251,6 +316,9 @@ def on_message(client, userdata, msg):
 # ------------------------------------
 # Inicializacao
 # ------------------------------------
+
+if not _acquire_pid_file():
+    raise SystemExit(1)
 
 preparar_certificados()
 
