@@ -1,0 +1,30 @@
+{
+  "broker": "a19mijesri84u2-ats.iot.us-east-1.amazonaws.com",
+  "port": 8883,
+  "topics": [
+    "cloudv2-ping",
+    "cloud2",
+    "cloudv2",
+    "cloudv2-shutdown",
+    "cloudv2-network"
+  ],
+  "filter_names": [
+    "DellaRiva_1",
+    "NovaBahia_6",
+    "NovaBahia_8",
+    "NovaBahia_9",
+    "LauroNoronha_1",
+    "LauroNoronha_2"
+  ],
+  "cmd_topic": "NovaBahia_8",
+  "info_topic": "cloudv2-info",
+  "min_minutes": 1,
+  "max_minutes": 10,
+  "response_timeout_sec": 10,
+  "ping_interval_minutes": 3,
+  "ping_topic": "cloudv2-ping",
+  "dashboard_enabled": true,
+  "dashboard_port": 8008,
+  "dashboard_refresh_sec": 5,
+  "history_mode": "merge"
+}
