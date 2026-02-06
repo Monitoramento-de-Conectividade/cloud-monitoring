@@ -1,8 +1,10 @@
 import tkinter as tk
 from tkinter import messagebox
 import os
+import signal
 import subprocess
 import sys
+import time
 import webbrowser
 
 from cloudv2_config import get_config_file_path, load_editable_config, normalize_config, save_config
@@ -27,9 +29,11 @@ class ConfigUI:
 
         self.broker_var = tk.StringVar()
         self.port_var = tk.StringVar()
-        self.info_topic_var = tk.StringVar()
+        self.info_topic_input_var = tk.StringVar()
         self.min_minutes_var = tk.StringVar()
         self.max_minutes_var = tk.StringVar()
+        self.schedule_mode_var = tk.StringVar(value="random")
+        self.fixed_minutes_var = tk.StringVar()
         self.timeout_var = tk.StringVar()
         self.ping_interval_var = tk.StringVar()
         self.ping_topic_var = tk.StringVar()
@@ -39,6 +43,11 @@ class ConfigUI:
         self.topic_input_var = tk.StringVar()
         self.filter_input_var = tk.StringVar()
         self.status_var = tk.StringVar(value=f"Arquivo de configuracao: {self.config_path}")
+
+        self.min_minutes_entry = None
+        self.max_minutes_entry = None
+        self.fixed_minutes_entry = None
+        self.info_topics_listbox = None
 
         self._build_ui()
         self._load_data()
@@ -135,14 +144,16 @@ class ConfigUI:
 
         self._field(parent, "Broker MQTT", self.broker_var, row=0, col=0)
         self._field(parent, "Porta", self.port_var, row=0, col=2)
-        self._field(parent, "Topico resposta preciso", self.info_topic_var, row=1, col=0)
-        self._field(parent, "Minimo de minutos", self.min_minutes_var, row=1, col=2)
-        self._field(parent, "Maximo de minutos", self.max_minutes_var, row=2, col=0)
-        self._field(parent, "Timeout resposta (s)", self.timeout_var, row=2, col=2)
-        self._field(parent, "Intervalo ping (min)", self.ping_interval_var, row=3, col=0)
-        self._field(parent, "Topico ping", self.ping_topic_var, row=3, col=2)
-        self._field(parent, "Dashboard porta", self.dashboard_port_var, row=4, col=0)
-        self._history_mode_field(parent, row=4, col=2)
+        self._info_topics_field(parent, row=1, col=0)
+        self._schedule_mode_field(parent, row=1, col=2)
+        self.min_minutes_entry = self._field(parent, "Minimo de minutos (aleatorio)", self.min_minutes_var, row=2, col=0)
+        self.max_minutes_entry = self._field(parent, "Maximo de minutos (aleatorio)", self.max_minutes_var, row=2, col=2)
+        self.fixed_minutes_entry = self._field(parent, "Intervalo fixo de envio (min)", self.fixed_minutes_var, row=3, col=0)
+        self._field(parent, "Timeout resposta (s)", self.timeout_var, row=3, col=2)
+        self._field(parent, "Intervalo ping (min)", self.ping_interval_var, row=4, col=0)
+        self._field(parent, "Topico ping", self.ping_topic_var, row=4, col=2)
+        self._field(parent, "Dashboard porta", self.dashboard_port_var, row=5, col=0)
+        self._history_mode_field(parent, row=5, col=2)
 
     def _field(self, parent, label, variable, row, col):
         tk.Label(
@@ -164,6 +175,106 @@ class ConfigUI:
             insertbackground=TEXT,
         )
         entry.grid(row=row, column=col + 1, sticky="ew", pady=(8, 4))
+        return entry
+
+    def _info_topics_field(self, parent, row, col):
+        tk.Label(
+            parent,
+            text="Topicos resposta preciso",
+            bg=PANEL,
+            fg=TEXT,
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(8, 4))
+
+        wrapper = tk.Frame(parent, bg=PANEL)
+        wrapper.grid(row=row, column=col + 1, sticky="ew", pady=(8, 4))
+        wrapper.columnconfigure(0, weight=1)
+
+        entry_row = tk.Frame(wrapper, bg=PANEL)
+        entry_row.grid(row=0, column=0, sticky="ew")
+        entry_row.columnconfigure(0, weight=1)
+        tk.Entry(
+            entry_row,
+            textvariable=self.info_topic_input_var,
+            bg=INPUT_BG,
+            fg=TEXT,
+            font=("Segoe UI", 10),
+            relief="solid",
+            bd=1,
+            insertbackground=TEXT,
+        ).grid(row=0, column=0, sticky="ew")
+        self._button(
+            entry_row,
+            "Adicionar",
+            lambda: self._add_to_list(self.info_topics_listbox, self.info_topic_input_var),
+            outline=True,
+        ).grid(row=0, column=1, padx=6)
+
+        list_row = tk.Frame(wrapper, bg=PANEL)
+        list_row.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        list_row.columnconfigure(0, weight=1)
+        list_row.rowconfigure(0, weight=1)
+        listbox = tk.Listbox(
+            list_row,
+            height=4,
+            bg=INPUT_BG,
+            fg=TEXT,
+            font=("Segoe UI", 9),
+            relief="solid",
+            bd=1,
+            selectbackground="#A5D6A7",
+            selectforeground=TEXT,
+        )
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = tk.Scrollbar(list_row, orient="vertical", command=listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        listbox.configure(yscrollcommand=scrollbar.set)
+
+        actions = tk.Frame(wrapper, bg=PANEL)
+        actions.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self._button(actions, "Remover", lambda: self._remove_selected(listbox), outline=True).pack(side="left")
+
+        self.info_topics_listbox = listbox
+
+    def _schedule_mode_field(self, parent, row, col):
+        tk.Label(
+            parent,
+            text="Modo envio #11$",
+            bg=PANEL,
+            fg=TEXT,
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(8, 4))
+
+        choices = tk.Frame(parent, bg=PANEL)
+        choices.grid(row=row, column=col + 1, sticky="w", pady=(8, 4))
+
+        tk.Radiobutton(
+            choices,
+            text="Aleatorio (min/max)",
+            variable=self.schedule_mode_var,
+            value="random",
+            command=self._apply_schedule_mode_visual,
+            bg=PANEL,
+            fg=TEXT,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+            selectcolor=INPUT_BG,
+            font=("Segoe UI", 10),
+        ).pack(side="left", padx=(0, 18))
+
+        tk.Radiobutton(
+            choices,
+            text="Fixo (periodico)",
+            variable=self.schedule_mode_var,
+            value="fixed",
+            command=self._apply_schedule_mode_visual,
+            bg=PANEL,
+            fg=TEXT,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+            selectcolor=INPUT_BG,
+            font=("Segoe UI", 10),
+        ).pack(side="left")
 
     def _history_mode_field(self, parent, row, col):
         tk.Label(
@@ -202,6 +313,21 @@ class ConfigUI:
             selectcolor=INPUT_BG,
             font=("Segoe UI", 10),
         ).pack(side="left")
+
+    def _apply_schedule_mode_visual(self):
+        mode = self.schedule_mode_var.get().strip().lower()
+        random_enabled = mode != "fixed"
+
+        min_state = "normal" if random_enabled else "disabled"
+        max_state = "normal" if random_enabled else "disabled"
+        fixed_state = "disabled" if random_enabled else "normal"
+
+        if self.min_minutes_entry is not None:
+            self.min_minutes_entry.configure(state=min_state)
+        if self.max_minutes_entry is not None:
+            self.max_minutes_entry.configure(state=max_state)
+        if self.fixed_minutes_entry is not None:
+            self.fixed_minutes_entry.configure(state=fixed_state)
 
     def _build_list_panel(
         self,
@@ -364,9 +490,11 @@ class ConfigUI:
 
         self.broker_var.set(config["broker"])
         self.port_var.set(str(config["port"]))
-        self.info_topic_var.set(config["info_topic"])
+        self._fill_listbox(self.info_topics_listbox, config["info_topics"])
         self.min_minutes_var.set(str(config["min_minutes"]))
         self.max_minutes_var.set(str(config["max_minutes"]))
+        self.schedule_mode_var.set(config["schedule_mode"])
+        self.fixed_minutes_var.set(str(config["fixed_minutes"]))
         self.timeout_var.set(str(config["response_timeout_sec"]))
         self.ping_interval_var.set(str(config["ping_interval_minutes"]))
         self.ping_topic_var.set(config["ping_topic"])
@@ -376,6 +504,7 @@ class ConfigUI:
         self._fill_listbox(self.cmd_topics_listbox, config["cmd_topics"])
         self._fill_listbox(self.topics_listbox, config["topics"])
         self._fill_listbox(self.filters_listbox, config["filter_names"])
+        self._apply_schedule_mode_visual()
         self.status_var.set(f"Configuracao carregada de {self.config_path}")
 
     def _save_data(self):
@@ -386,9 +515,11 @@ class ConfigUI:
         raw_config = {
             "broker": self.broker_var.get().strip(),
             "port": self.port_var.get().strip(),
-            "info_topic": self.info_topic_var.get().strip(),
+            "info_topics": self._listbox_values(self.info_topics_listbox),
             "min_minutes": self.min_minutes_var.get().strip(),
             "max_minutes": self.max_minutes_var.get().strip(),
+            "schedule_mode": self.schedule_mode_var.get().strip(),
+            "fixed_minutes": self.fixed_minutes_var.get().strip(),
             "response_timeout_sec": self.timeout_var.get().strip(),
             "ping_interval_minutes": self.ping_interval_var.get().strip(),
             "ping_topic": self.ping_topic_var.get().strip(),
@@ -403,6 +534,9 @@ class ConfigUI:
 
         if not normalized["broker"]:
             messagebox.showerror("Erro", "Broker nao pode ficar vazio.")
+            return None
+        if not normalized["info_topics"]:
+            messagebox.showerror("Erro", "Inclua pelo menos um topico de resposta preciso.")
             return None
         if not normalized["topics"]:
             messagebox.showerror("Erro", "Inclua pelo menos um topico.")
@@ -423,9 +557,11 @@ class ConfigUI:
         # Reaplica valores normalizados na tela para manter estado consistente.
         self.broker_var.set(normalized["broker"])
         self.port_var.set(str(normalized["port"]))
-        self.info_topic_var.set(normalized["info_topic"])
+        self._fill_listbox(self.info_topics_listbox, normalized["info_topics"])
         self.min_minutes_var.set(str(normalized["min_minutes"]))
         self.max_minutes_var.set(str(normalized["max_minutes"]))
+        self.schedule_mode_var.set(normalized["schedule_mode"])
+        self.fixed_minutes_var.set(str(normalized["fixed_minutes"]))
         self.timeout_var.set(str(normalized["response_timeout_sec"]))
         self.ping_interval_var.set(str(normalized["ping_interval_minutes"]))
         self.ping_topic_var.set(normalized["ping_topic"])
@@ -434,6 +570,7 @@ class ConfigUI:
         self._fill_listbox(self.cmd_topics_listbox, normalized["cmd_topics"])
         self._fill_listbox(self.topics_listbox, normalized["topics"])
         self._fill_listbox(self.filters_listbox, normalized["filter_names"])
+        self._apply_schedule_mode_visual()
 
         self.status_var.set(f"Configuracao salva em {self.config_path}")
         if show_success:
@@ -447,9 +584,32 @@ class ConfigUI:
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         script_path = os.path.join(base_dir, "cloudv2-ping-monitoring.py")
+        pid_file_path = os.path.join(base_dir, ".cloudv2-monitor.pid")
         if not os.path.exists(script_path):
             messagebox.showerror("Erro", f"Arquivo nao encontrado: {script_path}")
             return
+
+        running_pid = self._read_monitor_pid(pid_file_path)
+        if running_pid and self._is_process_running(running_pid):
+            should_restart = messagebox.askyesno(
+                "Monitoramento em execucao",
+                (
+                    f"Ja existe um monitor rodando (PID {running_pid}).\n"
+                    "Deseja reiniciar para aplicar a configuracao atual?"
+                ),
+            )
+            if not should_restart:
+                dashboard_url = f"http://localhost:{normalized['dashboard_port']}/index.html"
+                self.status_var.set("Monitoramento ja estava em execucao. Abrindo dashboard.")
+                self.root.after(250, lambda: webbrowser.open_new_tab(dashboard_url))
+                return
+
+            if not self._terminate_running_monitor(running_pid):
+                messagebox.showerror(
+                    "Erro",
+                    f"Nao foi possivel encerrar o monitor atual (PID {running_pid}).",
+                )
+                return
 
         command = [sys.executable, script_path]
         creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
@@ -468,6 +628,50 @@ class ConfigUI:
         dashboard_url = f"http://localhost:{normalized['dashboard_port']}/index.html"
         self.status_var.set(f"Monitoramento iniciado. Abrindo {dashboard_url}")
         self.root.after(900, lambda: webbrowser.open_new_tab(dashboard_url))
+
+    def _read_monitor_pid(self, pid_file_path):
+        if not os.path.exists(pid_file_path):
+            return None
+        try:
+            with open(pid_file_path, "r", encoding="utf-8") as file:
+                content = file.read().strip()
+            if not content:
+                return None
+            return int(content)
+        except (OSError, ValueError):
+            return None
+
+    def _is_process_running(self, pid):
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def _terminate_running_monitor(self, pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                except OSError:
+                    return False
+            else:
+                return False
+
+        for _ in range(30):
+            if not self._is_process_running(pid):
+                return True
+            time.sleep(0.1)
+        return False
 
 
 def main():
