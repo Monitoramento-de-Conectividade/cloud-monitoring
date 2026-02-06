@@ -32,7 +32,7 @@ DEFAULT_CONFIG = {
         "Paineira_16",
         "Dileta_1",
     ],
-    "cmd_topic": "PioneiraLEM_1",
+    "cmd_topics": ["PioneiraLEM_1"],
     "info_topic": "cloudv2-info",
     "min_minutes": 1,
     "max_minutes": 10,
@@ -114,7 +114,6 @@ def _apply_env_overrides(config):
     overrides = {
         "BROKER": "broker",
         "PORT": "port",
-        "CMD_TOPIC": "cmd_topic",
         "INFO_TOPIC": "info_topic",
         "MIN_MINUTES": "min_minutes",
         "MAX_MINUTES": "max_minutes",
@@ -130,6 +129,15 @@ def _apply_env_overrides(config):
         env_value = os.environ.get(env_name)
         if env_value is not None and env_value != "":
             config[config_key] = env_value
+
+    cmd_topics_env = os.environ.get("CMD_TOPICS")
+    if cmd_topics_env:
+        config["cmd_topics"] = cmd_topics_env
+
+    # Compatibilidade com configuracao antiga.
+    cmd_topic_env = os.environ.get("CMD_TOPIC")
+    if cmd_topic_env:
+        config["cmd_topic"] = cmd_topic_env
 
     topics_env = os.environ.get("TOPICS")
     if topics_env:
@@ -147,7 +155,6 @@ def normalize_config(raw_config):
             base[key] = raw_config[key]
 
     base["broker"] = str(base.get("broker", DEFAULT_CONFIG["broker"])).strip() or DEFAULT_CONFIG["broker"]
-    base["cmd_topic"] = str(base.get("cmd_topic", DEFAULT_CONFIG["cmd_topic"])).strip() or DEFAULT_CONFIG["cmd_topic"]
     base["info_topic"] = str(base.get("info_topic", DEFAULT_CONFIG["info_topic"])).strip() or DEFAULT_CONFIG["info_topic"]
     base["ping_topic"] = str(base.get("ping_topic", DEFAULT_CONFIG["ping_topic"])).strip() or DEFAULT_CONFIG["ping_topic"]
     base["history_mode"] = _normalize_history_mode(base.get("history_mode", DEFAULT_CONFIG["history_mode"]))
@@ -185,6 +192,15 @@ def normalize_config(raw_config):
 
     base["topics"] = _normalize_string_list(base.get("topics")) or list(DEFAULT_CONFIG["topics"])
     base["filter_names"] = _normalize_string_list(base.get("filter_names")) or list(DEFAULT_CONFIG["filter_names"])
+
+    cmd_topics = _normalize_string_list(base.get("cmd_topics"))
+    legacy_cmd_topic = str(raw_config.get("cmd_topic", "")).strip()
+    if not cmd_topics and legacy_cmd_topic:
+        cmd_topics = [legacy_cmd_topic]
+    if not cmd_topics:
+        cmd_topics = list(DEFAULT_CONFIG["cmd_topics"])
+    base["cmd_topics"] = cmd_topics
+
     if base["ping_topic"] and base["ping_topic"] not in base["topics"]:
         base["topics"].append(base["ping_topic"])
     return base

@@ -14,10 +14,14 @@
     "NovaBahia_8",
     "NovaBahia_9",
     "LauroNoronha_1",
-    "LauroNoronha_2"
+    "LauroNoronha_2",
+    "FernandoBarbosa_2",
+    "FernandoBarbosa_3"
   ],
-  "cmd_topic": "NovaBahia_8",
-  "info_topic": "cloudv2-info",
+  "cmd_topics": [
+    "DellaRiva_1"
+  ],
+  "info_topic": "cloudv2-network",
   "min_minutes": 1,
   "max_minutes": 10,
   "response_timeout_sec": 10,
@@ -26,5 +30,5 @@
   "dashboard_enabled": true,
   "dashboard_port": 8008,
   "dashboard_refresh_sec": 5,
-  "history_mode": "merge"
+  "history_mode": "fresh"
 }
