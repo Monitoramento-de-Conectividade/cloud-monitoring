@@ -1,5 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox
+import os
+import subprocess
+import sys
+import webbrowser
 
 from cloudv2_config import get_config_file_path, load_editable_config, normalize_config, save_config
 
@@ -18,12 +22,11 @@ class ConfigUI:
         self.config_path = get_config_file_path()
         self.root.title("CloudV2 - Configurador MQTT")
         self.root.configure(bg=BG)
-        self.root.geometry("1050x700")
-        self.root.minsize(980, 640)
+        self.root.geometry("1320x760")
+        self.root.minsize(1180, 680)
 
         self.broker_var = tk.StringVar()
         self.port_var = tk.StringVar()
-        self.cmd_topic_var = tk.StringVar()
         self.info_topic_var = tk.StringVar()
         self.min_minutes_var = tk.StringVar()
         self.max_minutes_var = tk.StringVar()
@@ -32,6 +35,7 @@ class ConfigUI:
         self.ping_topic_var = tk.StringVar()
         self.dashboard_port_var = tk.StringVar()
         self.history_mode_var = tk.StringVar(value="merge")
+        self.cmd_topic_input_var = tk.StringVar()
         self.topic_input_var = tk.StringVar()
         self.filter_input_var = tk.StringVar()
         self.status_var = tk.StringVar(value=f"Arquivo de configuracao: {self.config_path}")
@@ -44,14 +48,14 @@ class ConfigUI:
         header.pack(fill="x")
         tk.Label(
             header,
-            text="CloudV2 - Editor de Topicos e Filtros",
+            text="CloudV2 - Editor de Monitoramento e Comandos",
             bg=ACCENT,
             fg="white",
             font=("Segoe UI", 16, "bold"),
         ).pack(anchor="w")
         tk.Label(
             header,
-            text="Edite as configuracoes sem alterar o codigo manualmente.",
+            text="Configure comandos #11$, monitoramento preciso e monitoramento leve sem editar codigo.",
             bg=ACCENT,
             fg="#E8F5E9",
             font=("Segoe UI", 10),
@@ -70,24 +74,26 @@ class ConfigUI:
         lists.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
         lists.columnconfigure(0, weight=1)
         lists.columnconfigure(1, weight=1)
+        lists.columnconfigure(2, weight=1)
         lists.rowconfigure(0, weight=1)
 
-        self.topics_listbox = self._build_list_panel(
+        self.cmd_topics_listbox = self._build_list_panel(
             lists,
             col=0,
-            title="Topicos assinados",
-            placeholder="Digite um topico",
-            input_var=self.topic_input_var,
-            add_command=lambda: self._add_to_list(self.topics_listbox, self.topic_input_var),
-            remove_command=lambda: self._remove_selected(self.topics_listbox),
-            up_command=lambda: self._move_selected(self.topics_listbox, -1),
-            down_command=lambda: self._move_selected(self.topics_listbox, 1),
+            title="Monitoramento mais preciso",
+            placeholder="Topicos de comando que vao receber #11$",
+            input_var=self.cmd_topic_input_var,
+            add_command=lambda: self._add_to_list(self.cmd_topics_listbox, self.cmd_topic_input_var),
+            remove_command=lambda: self._remove_selected(self.cmd_topics_listbox),
+            up_command=lambda: self._move_selected(self.cmd_topics_listbox, -1),
+            down_command=lambda: self._move_selected(self.cmd_topics_listbox, 1),
         )
+
         self.filters_listbox = self._build_list_panel(
             lists,
             col=1,
-            title="Nomes para filtro",
-            placeholder="Digite um nome para filtro",
+            title="Monitoramento leve (nomes)",
+            placeholder="Nomes/pivots para filtrar no payload",
             input_var=self.filter_input_var,
             add_command=lambda: self._add_to_list(self.filters_listbox, self.filter_input_var),
             remove_command=lambda: self._remove_selected(self.filters_listbox),
@@ -95,11 +101,24 @@ class ConfigUI:
             down_command=lambda: self._move_selected(self.filters_listbox, 1),
         )
 
+        self.topics_listbox = self._build_list_panel(
+            lists,
+            col=2,
+            title="Topicos de resposta",
+            placeholder="Topicos assinados para monitoramento leve",
+            input_var=self.topic_input_var,
+            add_command=lambda: self._add_to_list(self.topics_listbox, self.topic_input_var),
+            remove_command=lambda: self._remove_selected(self.topics_listbox),
+            up_command=lambda: self._move_selected(self.topics_listbox, -1),
+            down_command=lambda: self._move_selected(self.topics_listbox, 1),
+        )
+
         footer = tk.Frame(self.root, bg=BG, padx=16, pady=12)
         footer.pack(fill="x")
 
         self._button(footer, "Recarregar", self._load_data, outline=True).pack(side="left")
         self._button(footer, "Salvar configuracao", self._save_data).pack(side="left", padx=8)
+        self._button(footer, "Iniciar Monitoramento", self._start_monitoring).pack(side="left", padx=8)
         self._button(footer, "Fechar", self.root.destroy, outline=True).pack(side="right")
 
         tk.Label(
@@ -116,15 +135,14 @@ class ConfigUI:
 
         self._field(parent, "Broker MQTT", self.broker_var, row=0, col=0)
         self._field(parent, "Porta", self.port_var, row=0, col=2)
-        self._field(parent, "Topico comando (#11$)", self.cmd_topic_var, row=1, col=0)
-        self._field(parent, "Topico resposta", self.info_topic_var, row=1, col=2)
-        self._field(parent, "Minimo de minutos", self.min_minutes_var, row=2, col=0)
-        self._field(parent, "Maximo de minutos", self.max_minutes_var, row=2, col=2)
-        self._field(parent, "Timeout resposta (s)", self.timeout_var, row=3, col=0)
-        self._field(parent, "Intervalo ping (min)", self.ping_interval_var, row=3, col=2)
-        self._field(parent, "Topico ping", self.ping_topic_var, row=4, col=0)
-        self._field(parent, "Dashboard porta", self.dashboard_port_var, row=4, col=2)
-        self._history_mode_field(parent, row=5, col=0)
+        self._field(parent, "Topico resposta preciso", self.info_topic_var, row=1, col=0)
+        self._field(parent, "Minimo de minutos", self.min_minutes_var, row=1, col=2)
+        self._field(parent, "Maximo de minutos", self.max_minutes_var, row=2, col=0)
+        self._field(parent, "Timeout resposta (s)", self.timeout_var, row=2, col=2)
+        self._field(parent, "Intervalo ping (min)", self.ping_interval_var, row=3, col=0)
+        self._field(parent, "Topico ping", self.ping_topic_var, row=3, col=2)
+        self._field(parent, "Dashboard porta", self.dashboard_port_var, row=4, col=0)
+        self._history_mode_field(parent, row=4, col=2)
 
     def _field(self, parent, label, variable, row, col):
         tk.Label(
@@ -157,7 +175,7 @@ class ConfigUI:
         ).grid(row=row, column=col, sticky="w", padx=(0, 8), pady=(8, 4))
 
         choices = tk.Frame(parent, bg=PANEL)
-        choices.grid(row=row, column=col + 1, columnspan=3, sticky="w", pady=(8, 4))
+        choices.grid(row=row, column=col + 1, sticky="w", pady=(8, 4))
 
         tk.Radiobutton(
             choices,
@@ -346,7 +364,6 @@ class ConfigUI:
 
         self.broker_var.set(config["broker"])
         self.port_var.set(str(config["port"]))
-        self.cmd_topic_var.set(config["cmd_topic"])
         self.info_topic_var.set(config["info_topic"])
         self.min_minutes_var.set(str(config["min_minutes"]))
         self.max_minutes_var.set(str(config["max_minutes"]))
@@ -356,15 +373,19 @@ class ConfigUI:
         self.dashboard_port_var.set(str(config["dashboard_port"]))
         self.history_mode_var.set(config["history_mode"])
 
+        self._fill_listbox(self.cmd_topics_listbox, config["cmd_topics"])
         self._fill_listbox(self.topics_listbox, config["topics"])
         self._fill_listbox(self.filters_listbox, config["filter_names"])
         self.status_var.set(f"Configuracao carregada de {self.config_path}")
 
     def _save_data(self):
+        normalized = self._persist_config(show_success=True)
+        return normalized is not None
+
+    def _persist_config(self, show_success):
         raw_config = {
             "broker": self.broker_var.get().strip(),
             "port": self.port_var.get().strip(),
-            "cmd_topic": self.cmd_topic_var.get().strip(),
             "info_topic": self.info_topic_var.get().strip(),
             "min_minutes": self.min_minutes_var.get().strip(),
             "max_minutes": self.max_minutes_var.get().strip(),
@@ -373,6 +394,7 @@ class ConfigUI:
             "ping_topic": self.ping_topic_var.get().strip(),
             "dashboard_port": self.dashboard_port_var.get().strip(),
             "history_mode": self.history_mode_var.get().strip(),
+            "cmd_topics": self._listbox_values(self.cmd_topics_listbox),
             "topics": self._listbox_values(self.topics_listbox),
             "filter_names": self._listbox_values(self.filters_listbox),
         }
@@ -381,24 +403,26 @@ class ConfigUI:
 
         if not normalized["broker"]:
             messagebox.showerror("Erro", "Broker nao pode ficar vazio.")
-            return
+            return None
         if not normalized["topics"]:
             messagebox.showerror("Erro", "Inclua pelo menos um topico.")
-            return
+            return None
+        if not normalized["cmd_topics"]:
+            messagebox.showerror("Erro", "Inclua pelo menos um topico de comando (#11$).")
+            return None
         if not normalized["ping_topic"]:
             messagebox.showerror("Erro", "Topico ping nao pode ficar vazio.")
-            return
+            return None
 
         try:
             save_config(normalized, self.config_path)
         except OSError as exc:
             messagebox.showerror("Erro ao salvar", str(exc))
-            return
+            return None
 
         # Reaplica valores normalizados na tela para manter estado consistente.
         self.broker_var.set(normalized["broker"])
         self.port_var.set(str(normalized["port"]))
-        self.cmd_topic_var.set(normalized["cmd_topic"])
         self.info_topic_var.set(normalized["info_topic"])
         self.min_minutes_var.set(str(normalized["min_minutes"]))
         self.max_minutes_var.set(str(normalized["max_minutes"]))
@@ -407,11 +431,43 @@ class ConfigUI:
         self.ping_topic_var.set(normalized["ping_topic"])
         self.dashboard_port_var.set(str(normalized["dashboard_port"]))
         self.history_mode_var.set(normalized["history_mode"])
+        self._fill_listbox(self.cmd_topics_listbox, normalized["cmd_topics"])
         self._fill_listbox(self.topics_listbox, normalized["topics"])
         self._fill_listbox(self.filters_listbox, normalized["filter_names"])
 
         self.status_var.set(f"Configuracao salva em {self.config_path}")
-        messagebox.showinfo("Sucesso", "Configuracao salva com sucesso.")
+        if show_success:
+            messagebox.showinfo("Sucesso", "Configuracao salva com sucesso.")
+        return normalized
+
+    def _start_monitoring(self):
+        normalized = self._persist_config(show_success=False)
+        if not normalized:
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(base_dir, "cloudv2-ping-monitoring.py")
+        if not os.path.exists(script_path):
+            messagebox.showerror("Erro", f"Arquivo nao encontrado: {script_path}")
+            return
+
+        command = [sys.executable, script_path]
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+
+        try:
+            subprocess.Popen(
+                command,
+                cwd=base_dir,
+                start_new_session=True,
+                creationflags=creationflags,
+            )
+        except OSError as exc:
+            messagebox.showerror("Erro ao iniciar", str(exc))
+            return
+
+        dashboard_url = f"http://localhost:{normalized['dashboard_port']}/index.html"
+        self.status_var.set(f"Monitoramento iniciado. Abrindo {dashboard_url}")
+        self.root.after(900, lambda: webbrowser.open_new_tab(dashboard_url))
 
 
 def main():
