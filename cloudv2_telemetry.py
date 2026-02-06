@@ -7,7 +7,7 @@ from datetime import datetime
 from cloudv2_dashboard import DATA_DIR, ensure_dirs, slugify, write_json_atomic
 
 
-DEFAULT_MAX_EVENTS = 200
+DEFAULT_MAX_EVENTS = 5000
 DEFAULT_GRACE_SEC = 30
 
 
@@ -53,6 +53,7 @@ class TelemetryStore:
         if self.history_mode == "merge":
             self._load_existing_logs()
         else:
+            self._clear_dashboard_data_files()
             self._dirty = True
             self.write()
         self._writer.start()
@@ -136,6 +137,7 @@ class TelemetryStore:
             "ping": {
                 "expected_interval_sec": self.expected_ping_sec,
                 "last_ping_ts": None,
+                "events": [],
                 "missing_events": [],
                 "missing_count": 0,
                 "missing_total_sec": 0,
@@ -158,6 +160,8 @@ class TelemetryStore:
         info["last_at"] = _ts_to_str(ts)
 
     def _handle_ping(self, pivot, ts):
+        pivot["ping"]["events"].append({"ts": ts})
+        pivot["ping"]["events"] = pivot["ping"]["events"][-DEFAULT_MAX_EVENTS:]
         last_ping = pivot["ping"]["last_ping_ts"]
         if last_ping:
             gap = ts - last_ping
@@ -219,6 +223,7 @@ class TelemetryStore:
         }
 
         ping = dict(pivot["ping"])
+        ping["grace_sec"] = DEFAULT_GRACE_SEC
         ping["last_ping_at"] = _ts_to_str(last_ping_ts)
         ping["overdue"] = overdue
 
@@ -254,9 +259,11 @@ class TelemetryStore:
                 events.extend(self._parse_envios_file(path))
                 continue
 
-            if name.startswith("cloudv2-info_respostas_") and name.endswith(".txt"):
-                events.extend(self._parse_topic_file(path, "cloudv2-info"))
-                continue
+            if "_respostas_" in name and name.endswith(".txt"):
+                topic = name.split("_respostas_", 1)[0]
+                if topic:
+                    events.extend(self._parse_topic_file(path, topic))
+                    continue
 
             if name.endswith(".txt"):
                 topic = self._topic_from_filename(name)
@@ -280,6 +287,20 @@ class TelemetryStore:
 
         self._dirty = True
         self.write()
+
+    def _clear_dashboard_data_files(self):
+        if not os.path.isdir(DATA_DIR):
+            return
+        for name in os.listdir(DATA_DIR):
+            if not name.endswith(".json"):
+                continue
+            if name == "pivots.json":
+                continue
+            path = os.path.join(DATA_DIR, name)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def _topic_from_filename(self, name):
         if "_" not in name:
