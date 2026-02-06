@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import threading
 from datetime import datetime
@@ -31,7 +32,7 @@ class TelemetryStore:
         self.pivot_ids = list(pivot_ids)
         self.pivot_slugs = {pivot_id: slugify(pivot_id) for pivot_id in self.pivot_ids}
         self.log_dir = log_dir
-        self.cmd_topic = config.get("cmd_topic")
+        self.cmd_topics = self._normalize_cmd_topics(config)
         self.ping_topic = config.get("ping_topic", "cloudv2-ping")
         self.cloud2_topic = "cloud2"
         self.expected_ping_sec = int(config.get("ping_interval_minutes", 3)) * 60
@@ -58,6 +59,17 @@ class TelemetryStore:
 
     def stop(self):
         self._stop = True
+
+    def _normalize_cmd_topics(self, config):
+        configured = config.get("cmd_topics")
+        if isinstance(configured, list):
+            topics = [str(item).strip() for item in configured if str(item).strip()]
+            if topics:
+                return topics
+        legacy = str(config.get("cmd_topic", "")).strip()
+        if legacy:
+            return [legacy]
+        return []
 
     def detect_pivots(self, payload):
         matches = []
@@ -256,7 +268,14 @@ class TelemetryStore:
             if event["type"] == "message":
                 self.record_message(event["topic"], event["payload"], ts=event["ts"], mark_dirty=False)
             elif event["type"] == "ping_result":
-                pivot_id = self.cmd_topic or (self.pivot_ids[0] if self.pivot_ids else "pivot")
+                pivot_id = event.get("cmd_topic")
+                if not pivot_id:
+                    if self.cmd_topics:
+                        pivot_id = self.cmd_topics[0]
+                    elif self.pivot_ids:
+                        pivot_id = self.pivot_ids[0]
+                    else:
+                        pivot_id = "pivot"
                 self.record_ping_result(pivot_id, event["ok"], ts=event["ts"], source="log", mark_dirty=False)
 
         self._dirty = True
@@ -279,8 +298,18 @@ class TelemetryStore:
         events = []
         entries = self._read_log_entries(path)
         for ts, payload in entries:
-            ok = "SIM" in payload
-            events.append({"type": "ping_result", "ok": ok, "ts": ts})
+            cmd_topic = None
+            payload_text = payload.strip()
+            match = re.search(r"#11\$\s*\[(.+?)\]\s*-\s*(SIM|NAO)", payload_text, flags=re.IGNORECASE)
+            if match:
+                cmd_topic = match.group(1).strip()
+                result_text = match.group(2).upper()
+            else:
+                result_text = "SIM" if "SIM" in payload_text.upper() else "NAO"
+            ok = "SIM" in payload_text.upper()
+            if result_text == "NAO":
+                ok = False
+            events.append({"type": "ping_result", "ok": ok, "ts": ts, "cmd_topic": cmd_topic})
         return events
 
     def _read_log_entries(self, path):

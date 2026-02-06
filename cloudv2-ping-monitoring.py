@@ -21,7 +21,7 @@ BROKER = runtime_config["broker"]
 PORT = runtime_config["port"]
 TOPICS = runtime_config["topics"]
 FILTER_NAMES = runtime_config["filter_names"]
-CMD_TOPIC = runtime_config["cmd_topic"]
+CMD_TOPICS = runtime_config["cmd_topics"]
 INFO_TOPIC = runtime_config["info_topic"]
 MIN_MINUTES = runtime_config["min_minutes"]
 MAX_MINUTES = runtime_config["max_minutes"]
@@ -77,8 +77,9 @@ os.makedirs(LOG_DIR, exist_ok=True)
 telemetry = None
 if DASHBOARD_ENABLED:
     pivot_ids = list(FILTER_NAMES)
-    if CMD_TOPIC and CMD_TOPIC not in pivot_ids:
-        pivot_ids.append(CMD_TOPIC)
+    for cmd_topic in CMD_TOPICS:
+        if cmd_topic not in pivot_ids:
+            pivot_ids.append(cmd_topic)
     generate_dashboard_assets(pivot_ids, DASHBOARD_REFRESH_SEC)
     telemetry = TelemetryStore(runtime_config, pivot_ids, LOG_DIR)
     telemetry.start()
@@ -115,69 +116,73 @@ def salvar_resposta_info(payload):
     print(f"Resposta cloudv2-info salva em {log_path}")
 
 
-def salvar_envio_resultado(sim_ou_nao):
+def salvar_envio_resultado(cmd_topic, sim_ou_nao):
     data_hoje = datetime.now().strftime("%Y-%m-%d")
     log_path = os.path.join(LOG_DIR, f"envios_11_{data_hoje}.txt")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    linha = f"[{timestamp}]\n#11$ - {sim_ou_nao}\n\n"
+    linha = f"[{timestamp}]\n#11$ [{cmd_topic}] - {sim_ou_nao}\n\n"
     with open(log_path, "a", encoding="utf-8") as file:
         file.write(linha)
-    print(f"Envio registrado em {log_path}: #11$ - {sim_ou_nao}")
+    print(f"Envio registrado em {log_path}: #11$ [{cmd_topic}] - {sim_ou_nao}")
 
 
 # ------------------------------------
 # Estado da funcionalidade #11$
 # ------------------------------------
 
-_esperando_resposta = False
-_timer_resposta = None
+_aguardando_resposta = set()
+_timers_resposta = {}
 _lock = threading.Lock()
 
 
-def _iniciar_timeout_resposta():
-    """Inicia o timer para marcar 'NAO' se nao houver resposta."""
-    global _timer_resposta
-
+def _iniciar_timeout_resposta(cmd_topic):
+    """Inicia o timer para marcar 'NAO' se nao houver resposta para o topico."""
     def on_timeout():
-        global _esperando_resposta, _timer_resposta
         with _lock:
-            if _esperando_resposta:
-                salvar_envio_resultado("NAO")
+            if cmd_topic in _aguardando_resposta:
+                salvar_envio_resultado(cmd_topic, "NAO")
                 if telemetry:
-                    telemetry.record_ping_result(CMD_TOPIC, ok=False, ts=time.time(), source="timeout")
-            _esperando_resposta = False
-            _timer_resposta = None
+                    telemetry.record_ping_result(cmd_topic, ok=False, ts=time.time(), source="timeout")
+            _aguardando_resposta.discard(cmd_topic)
+            _timers_resposta.pop(cmd_topic, None)
 
-    _timer_resposta = threading.Timer(RESPONSE_TIMEOUT_SEC, on_timeout)
-    _timer_resposta.daemon = True
-    _timer_resposta.start()
+    timer = threading.Timer(RESPONSE_TIMEOUT_SEC, on_timeout)
+    timer.daemon = True
+    _timers_resposta[cmd_topic] = timer
+    timer.start()
 
 
-def _publicar_11(client):
-    """Publica '#11$' e arma a janela de resposta."""
-    global _esperando_resposta, _timer_resposta
+def _publicar_11(client, cmd_topic):
+    """Publica '#11$' e arma a janela de resposta por topico de comando."""
     try:
-        client.publish(CMD_TOPIC, "#11$")
-        print(f"#11$ publicado em {CMD_TOPIC}")
+        client.publish(cmd_topic, "#11$")
+        print(f"#11$ publicado em {cmd_topic}")
         if telemetry:
-            telemetry.record_ping_sent(CMD_TOPIC)
+            telemetry.record_ping_sent(cmd_topic)
         with _lock:
-            if _timer_resposta is not None:
+            timer = _timers_resposta.get(cmd_topic)
+            if timer is not None:
                 try:
-                    _timer_resposta.cancel()
+                    timer.cancel()
                 except Exception:
                     pass
-                _timer_resposta = None
-            _esperando_resposta = True
-            _iniciar_timeout_resposta()
+                _timers_resposta.pop(cmd_topic, None)
+            _aguardando_resposta.add(cmd_topic)
+            _iniciar_timeout_resposta(cmd_topic)
     except Exception as exc:
-        print(f"Erro ao publicar #11$: {exc}")
+        print(f"Erro ao publicar #11$ em {cmd_topic}: {exc}")
 
 
 def _agendador_11(client):
     """Thread que envia #11$ em intervalos aleatorios."""
     while True:
-        _publicar_11(client)
+        if not CMD_TOPICS:
+            print("Nenhum topico de comando (#11$) configurado.")
+            time.sleep(60)
+            continue
+        for cmd_topic in CMD_TOPICS:
+            _publicar_11(client, cmd_topic)
+            time.sleep(0.2)
         prox_min = random.randint(MIN_MINUTES, MAX_MINUTES)
         print(f"Proximo #11$ em ~{prox_min} minuto(s).")
         time.sleep(prox_min * 60)
@@ -192,7 +197,7 @@ def on_connect(client, userdata, flags, rc):
         print("Conectado ao broker!")
 
         subscriptions = []
-        for topic in TOPICS + [INFO_TOPIC, CMD_TOPIC, PING_TOPIC]:
+        for topic in TOPICS + CMD_TOPICS + [INFO_TOPIC, PING_TOPIC]:
             topic = str(topic).strip()
             if topic and topic not in subscriptions:
                 subscriptions.append(topic)
@@ -205,7 +210,6 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_message(client, userdata, msg):
-    global _esperando_resposta, _timer_resposta
     try:
         payload = msg.payload.decode("utf-8")
         print(f"Recebido em {msg.topic}: {payload}")
@@ -219,21 +223,26 @@ def on_message(client, userdata, msg):
         if msg.topic == INFO_TOPIC:
             salvar_resposta_info(payload)
             with _lock:
-                if _esperando_resposta:
-                    salvar_envio_resultado("SIM")
+                responded_topics = []
+                for cmd_topic in CMD_TOPICS:
+                    if cmd_topic in payload and cmd_topic in _aguardando_resposta:
+                        responded_topics.append(cmd_topic)
+
+                # Fallback: se houver somente um topico aguardando, associa a resposta.
+                if not responded_topics and len(_aguardando_resposta) == 1:
+                    responded_topics.append(next(iter(_aguardando_resposta)))
+
+                for cmd_topic in responded_topics:
+                    salvar_envio_resultado(cmd_topic, "SIM")
                     if telemetry:
-                        pivot_id = CMD_TOPIC
-                        matches = telemetry.detect_pivots(payload)
-                        if matches:
-                            pivot_id = matches[0]
-                        telemetry.record_ping_result(pivot_id, ok=True, ts=time.time(), source="info")
-                    _esperando_resposta = False
-                    if _timer_resposta is not None:
+                        telemetry.record_ping_result(cmd_topic, ok=True, ts=time.time(), source="info")
+                    _aguardando_resposta.discard(cmd_topic)
+                    timer = _timers_resposta.pop(cmd_topic, None)
+                    if timer is not None:
                         try:
-                            _timer_resposta.cancel()
+                            timer.cancel()
                         except Exception:
                             pass
-                        _timer_resposta = None
 
     except Exception as exc:
         print(f"Erro ao processar mensagem: {exc}")
