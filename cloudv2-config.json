@@ -9,21 +9,31 @@
     "cloudv2-network"
   ],
   "filter_names": [
-    "DellaRiva_1",
     "NovaBahia_6",
     "NovaBahia_8",
     "NovaBahia_9",
     "LauroNoronha_1",
     "LauroNoronha_2",
     "FernandoBarbosa_2",
-    "FernandoBarbosa_3"
+    "FernandoBarbosa_3",
+    "PioneiraLEM_2",
+    "soilteste_1"
   ],
   "cmd_topics": [
-    "DellaRiva_1"
+    "DellaRiva_1",
+    "FernandoBarbosa_3",
+    "NovaBahia_6",
+    "NovaBahia_8",
+    "NovaBahia_9"
   ],
-  "info_topic": "cloudv2-network",
+  "info_topics": [
+    "cloudv2-info",
+    "cloudv2-network"
+  ],
   "min_minutes": 1,
   "max_minutes": 10,
+  "schedule_mode": "fixed",
+  "fixed_minutes": 5,
   "response_timeout_sec": 10,
   "ping_interval_minutes": 3,
   "ping_topic": "cloudv2-ping",

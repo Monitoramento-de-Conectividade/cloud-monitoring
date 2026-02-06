@@ -33,9 +33,11 @@ DEFAULT_CONFIG = {
         "Dileta_1",
     ],
     "cmd_topics": ["PioneiraLEM_1"],
-    "info_topic": "cloudv2-info",
+    "info_topics": ["cloudv2-info", "cloudv2-network"],
     "min_minutes": 1,
     "max_minutes": 10,
+    "schedule_mode": "random",
+    "fixed_minutes": 5,
     "response_timeout_sec": 10,
     "ping_interval_minutes": 3,
     "ping_topic": "cloudv2-ping",
@@ -94,6 +96,13 @@ def _normalize_history_mode(value):
     return "merge"
 
 
+def _normalize_schedule_mode(value):
+    text = str(value or "").strip().lower()
+    if text in ("fixed", "fixo", "periodic", "periodico"):
+        return "fixed"
+    return "random"
+
+
 def _read_config_file(path):
     if not os.path.exists(path):
         return {}
@@ -114,9 +123,12 @@ def _apply_env_overrides(config):
     overrides = {
         "BROKER": "broker",
         "PORT": "port",
+        "INFO_TOPICS": "info_topics",
         "INFO_TOPIC": "info_topic",
         "MIN_MINUTES": "min_minutes",
         "MAX_MINUTES": "max_minutes",
+        "SCHEDULE_MODE": "schedule_mode",
+        "FIXED_MINUTES": "fixed_minutes",
         "RESPONSE_TIMEOUT_SEC": "response_timeout_sec",
         "PING_INTERVAL_MINUTES": "ping_interval_minutes",
         "PING_TOPIC": "ping_topic",
@@ -155,9 +167,16 @@ def normalize_config(raw_config):
             base[key] = raw_config[key]
 
     base["broker"] = str(base.get("broker", DEFAULT_CONFIG["broker"])).strip() or DEFAULT_CONFIG["broker"]
-    base["info_topic"] = str(base.get("info_topic", DEFAULT_CONFIG["info_topic"])).strip() or DEFAULT_CONFIG["info_topic"]
+    info_topics = _normalize_string_list(base.get("info_topics"))
+    legacy_info_topic = str(base.get("info_topic", "")).strip()
+    if not info_topics and legacy_info_topic:
+        info_topics = [legacy_info_topic]
+    if not info_topics:
+        info_topics = list(DEFAULT_CONFIG["info_topics"])
+    base["info_topics"] = info_topics
     base["ping_topic"] = str(base.get("ping_topic", DEFAULT_CONFIG["ping_topic"])).strip() or DEFAULT_CONFIG["ping_topic"]
     base["history_mode"] = _normalize_history_mode(base.get("history_mode", DEFAULT_CONFIG["history_mode"]))
+    base["schedule_mode"] = _normalize_schedule_mode(base.get("schedule_mode", DEFAULT_CONFIG["schedule_mode"]))
 
     base["port"] = _to_int(base.get("port"), DEFAULT_CONFIG["port"], minimum=1)
     base["min_minutes"] = _to_int(base.get("min_minutes"), DEFAULT_CONFIG["min_minutes"], minimum=1)
@@ -165,6 +184,11 @@ def normalize_config(raw_config):
     base["response_timeout_sec"] = _to_int(
         base.get("response_timeout_sec"),
         DEFAULT_CONFIG["response_timeout_sec"],
+        minimum=1,
+    )
+    base["fixed_minutes"] = _to_int(
+        base.get("fixed_minutes"),
+        DEFAULT_CONFIG["fixed_minutes"],
         minimum=1,
     )
     base["ping_interval_minutes"] = _to_int(
