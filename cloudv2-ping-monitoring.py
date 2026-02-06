@@ -32,6 +32,7 @@ RESPONSE_TIMEOUT_SEC = runtime_config["response_timeout_sec"]
 PING_INTERVAL_MINUTES = runtime_config["ping_interval_minutes"]
 PING_TOPIC = runtime_config["ping_topic"]
 DASHBOARD_ENABLED = runtime_config["dashboard_enabled"]
+DASHBOARD_HOST = runtime_config["dashboard_host"]
 DASHBOARD_PORT = runtime_config["dashboard_port"]
 DASHBOARD_REFRESH_SEC = runtime_config["dashboard_refresh_sec"]
 HISTORY_MODE = runtime_config["history_mode"]
@@ -129,6 +130,14 @@ def preparar_certificados():
 LOG_DIR = "logs_mqtt"
 os.makedirs(LOG_DIR, exist_ok=True)
 
+
+def _dashboard_url_for_log(host, port):
+    host_text = str(host or "").strip().lower()
+    if host_text in ("", "0.0.0.0", "::", "*"):
+        return f"http://<IP_DO_SERVIDOR>:{port}/index.html"
+    return f"http://{host}:{port}/index.html"
+
+
 telemetry = None
 if DASHBOARD_ENABLED:
     pivot_ids = list(FILTER_NAMES)
@@ -143,8 +152,9 @@ if DASHBOARD_ENABLED:
     else:
         print("Dashboard iniciado em modo historico acumulado.")
     try:
-        start_dashboard_server(DASHBOARD_PORT)
-        print(f"Dashboard ativo em http://localhost:{DASHBOARD_PORT}/index.html")
+        start_dashboard_server(DASHBOARD_PORT, host=DASHBOARD_HOST)
+        dashboard_url = _dashboard_url_for_log(DASHBOARD_HOST, DASHBOARD_PORT)
+        print(f"Dashboard ativo em {dashboard_url} (bind {DASHBOARD_HOST}:{DASHBOARD_PORT})")
     except OSError as exc:
         print(f"Falha ao iniciar o dashboard: {exc}")
 

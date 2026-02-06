@@ -1,7 +1,9 @@
 import json
 import os
 import re
+import struct
 import threading
+import zlib
 from datetime import datetime
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -9,10 +11,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 DASHBOARD_DIR = "dashboards"
 DATA_DIR = os.path.join(DASHBOARD_DIR, "data")
+ICONS_DIR = os.path.join(DASHBOARD_DIR, "icons")
 
 
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(ICONS_DIR, exist_ok=True)
 
 
 def slugify(value):
@@ -34,6 +38,41 @@ def write_json_atomic(path, data):
     os.replace(temp, path)
 
 
+def write_bytes_atomic(path, content):
+    temp = f"{path}.tmp"
+    with open(temp, "wb") as file:
+        file.write(content)
+    os.replace(temp, path)
+
+
+def _png_chunk(chunk_type, data):
+    chunk = chunk_type + data
+    return struct.pack(">I", len(data)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
+
+
+def _solid_icon_png(size, color=(27, 94, 32)):
+    width = int(size)
+    height = int(size)
+    red, green, blue = color
+    row = b"\x00" + bytes([red, green, blue, 255]) * width
+    raw = row * height
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    compressed = zlib.compress(raw, level=9)
+    return b"".join(
+        [
+            b"\x89PNG\r\n\x1a\n",
+            _png_chunk(b"IHDR", header),
+            _png_chunk(b"IDAT", compressed),
+            _png_chunk(b"IEND", b""),
+        ]
+    )
+
+
+def _write_pwa_icons():
+    write_bytes_atomic(os.path.join(ICONS_DIR, "icon-192.png"), _solid_icon_png(192))
+    write_bytes_atomic(os.path.join(ICONS_DIR, "icon-512.png"), _solid_icon_png(512))
+
+
 def _render_index_html(pivot_entries):
     cards = []
     for pivot_id, file_name in pivot_entries:
@@ -53,7 +92,13 @@ def _render_index_html(pivot_entries):
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#1b5e20"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-title" content="CloudV2"/>
     <title>CloudV2 - Painel</title>
+    <link rel="manifest" href="manifest.json"/>
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
+    <link rel="apple-touch-icon" href="icons/icon-192.png"/>
     <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body class="index">
@@ -63,11 +108,18 @@ def _render_index_html(pivot_entries):
                 <h1>CloudV2 - Painel de Monitoramento</h1>
                 <p>Selecione um pivot para visualizar respostas, falhas de ping e atividade por topico.</p>
             </div>
+            <div class="hero-actions">
+                <button id="installAppBtn" class="install-btn hidden" type="button">Instalar app</button>
+                <div id="installIosHint" class="ios-hint hidden">
+                    iPhone/iPad: Compartilhar -> Adicionar a Tela de Inicio
+                </div>
+            </div>
         </header>
         <section class="grid">
             {cards_html}
         </section>
     </div>
+    <script src="pwa.js"></script>
 </body>
 </html>
 """
@@ -79,7 +131,13 @@ def _render_pivot_html(pivot_id, pivot_file, refresh_sec):
 <head>
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#1b5e20"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-title" content="CloudV2"/>
     <title>CloudV2 - {pivot_id}</title>
+    <link rel="manifest" href="manifest.json"/>
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
+    <link rel="apple-touch-icon" href="icons/icon-192.png"/>
     <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body data-pivot-id="{pivot_id}" data-pivot-file="{pivot_file}" data-refresh-sec="{refresh_sec}">
@@ -93,6 +151,7 @@ def _render_pivot_html(pivot_id, pivot_file, refresh_sec):
             <div class="updated">
                 <span>Ultima atualizacao</span>
                 <strong id="lastUpdated">-</strong>
+                <button id="installAppBtn" class="install-btn hidden" type="button">Instalar app</button>
             </div>
         </header>
 
@@ -189,9 +248,172 @@ def _render_pivot_html(pivot_id, pivot_file, refresh_sec):
             </div>
         </section>
     </div>
+    <script src="pwa.js"></script>
     <script src="dashboard.js"></script>
 </body>
 </html>
+"""
+
+
+def _render_pwa_manifest():
+    return {
+        "name": "CloudV2 Monitoramento",
+        "short_name": "CloudV2",
+        "description": "Painel de monitoramento MQTT com atualizacao em tempo real.",
+        "lang": "pt-BR",
+        "id": "./index.html",
+        "start_url": "./index.html",
+        "scope": "./",
+        "display": "standalone",
+        "background_color": "#e6f5ea",
+        "theme_color": "#1b5e20",
+        "icons": [
+            {
+                "src": "icons/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src": "icons/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable",
+            },
+        ],
+    }
+
+
+def _pwa_js():
+    return """
+let deferredInstallPrompt = null;
+
+function setInstallButtonVisible(visible) {
+  const button = document.getElementById("installAppBtn");
+  if (!button) return;
+  button.classList.toggle("hidden", !visible);
+}
+
+function showIosHintIfNeeded() {
+  const hint = document.getElementById("installIosHint");
+  if (!hint) return;
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
+  if (isIos && !standalone) {
+    hint.classList.remove("hidden");
+  }
+}
+
+async function onInstallClick() {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  try {
+    await deferredInstallPrompt.userChoice;
+  } catch (err) {
+    // Ignora erros de cancelamento do prompt.
+  }
+  deferredInstallPrompt = null;
+  setInstallButtonVisible(false);
+}
+
+function setupInstallPrompt() {
+  const button = document.getElementById("installAppBtn");
+  if (button) {
+    button.addEventListener("click", onInstallClick);
+  }
+
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    setInstallButtonVisible(true);
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    setInstallButtonVisible(false);
+  });
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("service-worker.js").catch(() => {
+    // Falha de registro nao impede uso normal do dashboard.
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  setupInstallPrompt();
+  showIosHintIfNeeded();
+  registerServiceWorker();
+});
+"""
+
+
+def _service_worker_js():
+    return """
+const CACHE_NAME = "cloudv2-dashboard-v1";
+const APP_SHELL = [
+  "./",
+  "./index.html",
+  "./dashboard.css",
+  "./dashboard.js",
+  "./pwa.js",
+  "./manifest.json",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
+];
+
+self.addEventListener("install", event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys().then(keys => Promise.all(
+      keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+    )).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", event => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (url.pathname.includes("/data/")) {
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then(cached => {
+      if (cached) return cached;
+      return fetch(request)
+        .then(response => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match("./index.html"));
+    })
+  );
+});
 """
 
 
@@ -275,6 +497,37 @@ a {
   font-size: 16px;
   color: #ffffff;
   margin-top: 4px;
+}
+
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.install-btn {
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.install-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ios-hint {
+  max-width: 260px;
+  font-size: 12px;
+  color: #d9f5df;
+  text-align: right;
 }
 
 .stats {
@@ -488,6 +741,24 @@ th {
 .empty {
   font-size: 14px;
   color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .updated,
+  .hero-actions {
+    width: 100%;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .ios-hint {
+    text-align: left;
+  }
 }
 """
 
@@ -855,6 +1126,10 @@ def generate_dashboard_assets(pivot_ids, refresh_sec):
     ensure_dirs()
     write_text_atomic(os.path.join(DASHBOARD_DIR, "dashboard.css"), _dashboard_css())
     write_text_atomic(os.path.join(DASHBOARD_DIR, "dashboard.js"), _dashboard_js())
+    write_text_atomic(os.path.join(DASHBOARD_DIR, "pwa.js"), _pwa_js())
+    write_text_atomic(os.path.join(DASHBOARD_DIR, "service-worker.js"), _service_worker_js())
+    write_json_atomic(os.path.join(DASHBOARD_DIR, "manifest.json"), _render_pwa_manifest())
+    _write_pwa_icons()
 
     pivot_entries = []
     for pivot_id in pivot_ids:
@@ -872,10 +1147,11 @@ def generate_dashboard_assets(pivot_ids, refresh_sec):
     write_json_atomic(os.path.join(DATA_DIR, "pivots.json"), mapping)
 
 
-def start_dashboard_server(port):
+def start_dashboard_server(port, host="127.0.0.1"):
     ensure_dirs()
     handler = partial(SimpleHTTPRequestHandler, directory=DASHBOARD_DIR)
-    server = ThreadingHTTPServer(("127.0.0.1", int(port)), handler)
+    bind_host = str(host or "127.0.0.1").strip()
+    server = ThreadingHTTPServer((bind_host, int(port)), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
