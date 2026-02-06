@@ -212,3 +212,12 @@ private.pem.key
 logs_mqtt/*.txt
 dashboards/
 .cloudv2-monitor.pid
+
+# Mobile (Capacitor / Android)
+mobile/capacitor/node_modules/
+mobile/capacitor/android/
+mobile/capacitor/.gradle/
+mobile/capacitor/.idea/
+mobile/capacitor/local.properties
+mobile/capacitor/*.jks
+mobile/capacitor/*.keystore

@@ -1,0 +1,20 @@
+{
+  "packageId": "com.soil.cloudmonitoring.twa",
+  "host": "monitor.seudominio.com",
+  "name": "CloudV2 Monitor",
+  "launcherName": "CloudV2",
+  "display": "standalone",
+  "themeColor": "#1b5e20",
+  "navigationColor": "#1b5e20",
+  "backgroundColor": "#e6f5ea",
+  "startUrl": "/index.html",
+  "iconUrl": "https://monitor.seudominio.com/icons/icon-512.png",
+  "maskableIconUrl": "https://monitor.seudominio.com/icons/icon-512.png",
+  "monochromeIconUrl": "https://monitor.seudominio.com/icons/icon-512.png",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "fallbackType": "customtabs",
+  "enableNotifications": false,
+  "generatorApp": "bubblewrap",
+  "webManifestUrl": "https://monitor.seudominio.com/manifest.json"
+}

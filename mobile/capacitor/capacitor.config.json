@@ -1,0 +1,16 @@
+{
+  "appId": "com.soil.cloudmonitoring",
+  "appName": "CloudV2 Monitor",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://SEU_DOMINIO/index.html",
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}
