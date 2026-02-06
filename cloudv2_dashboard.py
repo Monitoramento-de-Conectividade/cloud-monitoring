@@ -130,26 +130,33 @@ def _render_pivot_html(pivot_id, pivot_file, refresh_sec):
         </section>
 
         <section class="charts">
-            <div class="card">
+            <div class="card chart-card" id="responseChartCard">
                 <div class="card-header">
                     <h2>Resposta #11$</h2>
                     <span class="badge">SIM vs NAO</span>
                 </div>
-                <canvas id="responseChart"></canvas>
+                <div class="timeline-wrap">
+                    <canvas id="responseChart"></canvas>
+                </div>
+                <div id="responseTooltip" class="chart-tooltip hidden"></div>
                 <div class="legend">
                     <span class="dot ok"></span> Respondeu
                     <span class="dot fail"></span> Nao respondeu
                 </div>
             </div>
 
-            <div class="card">
+            <div class="card chart-card" id="pingChartCard">
                 <div class="card-header">
                     <h2>Falhas de ping cloudv2-ping</h2>
                     <span class="badge" id="missingCount">0 falhas</span>
                 </div>
-                <canvas id="pingChart"></canvas>
+                <div class="timeline-wrap">
+                    <canvas id="pingChart"></canvas>
+                </div>
+                <div id="pingTooltip" class="chart-tooltip hidden"></div>
                 <div class="legend">
-                    <span class="dot miss"></span> Intervalo sem ping
+                    <span class="dot ok"></span> Comunicando
+                    <span class="dot miss"></span> Sem conexao
                 </div>
             </div>
         </section>
@@ -285,6 +292,10 @@ a {
   border: 1px solid rgba(46, 125, 50, 0.15);
 }
 
+.chart-card {
+  position: relative;
+}
+
 .label {
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -334,6 +345,42 @@ canvas {
   border-radius: 12px;
   background: #f6fbf7;
   border: 1px solid rgba(46, 125, 50, 0.12);
+  display: block;
+}
+
+.chart-tooltip {
+  position: absolute;
+  min-width: 148px;
+  max-width: 240px;
+  background: rgba(20, 56, 34, 0.95);
+  color: #f2fff4;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  z-index: 20;
+}
+
+.chart-tooltip strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.chart-tooltip span {
+  display: block;
+  color: #d9f5df;
+}
+
+.timeline-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+}
+
+.hidden {
+  display: none;
 }
 
 .legend {
@@ -451,7 +498,12 @@ const pivotId = document.body.dataset.pivotId;
 const pivotFile = document.body.dataset.pivotFile;
 const refreshSec = parseInt(document.body.dataset.refreshSec || "5", 10);
 
+const TIMELINE_PX_PER_MIN = 10;
+const TIMELINE_PAD = 16;
+
 let lastData = null;
+let responseTimelineState = { segments: [] };
+let pingTimelineState = { segments: [] };
 
 function toLocal(ts) {
   if (!ts) return "-";
@@ -471,7 +523,10 @@ function setText(id, value) {
   if (node) node.textContent = value;
 }
 
-function resizeCanvas(canvas) {
+function resizeCanvas(canvas, widthPx) {
+  if (widthPx) {
+    canvas.style.width = `${widthPx}px`;
+  }
   const rect = canvas.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
   canvas.width = Math.floor(rect.width * ratio);
@@ -481,63 +536,220 @@ function resizeCanvas(canvas) {
   return { width: rect.width, height: rect.height, ctx };
 }
 
-function drawResponseChart(events) {
-  const canvas = document.getElementById("responseChart");
-  if (!canvas) return;
-  const { width, height, ctx } = resizeCanvas(canvas);
-  ctx.clearRect(0, 0, width, height);
+function hideTooltip(tooltipId) {
+  const tooltip = document.getElementById(tooltipId);
+  if (!tooltip) return;
+  tooltip.classList.add("hidden");
+}
 
-  if (!events || events.length === 0) {
-    ctx.fillStyle = "#6a8672";
-    ctx.font = "12px Trebuchet MS";
-    ctx.fillText("Sem dados de resposta", 12, height / 2);
-    return;
-  }
+function showTooltip(cardId, tooltipId, event, segment, label) {
+  const tooltip = document.getElementById(tooltipId);
+  const chartCard = document.getElementById(cardId);
+  if (!tooltip || !chartCard || !segment) return;
 
-  const maxEvents = Math.min(events.length, 160);
-  const start = events.length - maxEvents;
-  const spacing = (width - 24) / Math.max(1, maxEvents - 1);
-  const top = 12;
-  const bottom = height - 12;
+  const duration = formatDuration(segment.end - segment.start);
+  const source = segment.source ? ` | origem: ${segment.source}` : "";
+  tooltip.innerHTML = `<strong>${label}</strong><span>${toLocal(segment.start)} ate ${toLocal(segment.end)} (${duration})${source}</span>`;
+  tooltip.classList.remove("hidden");
 
-  for (let i = 0; i < maxEvents; i += 1) {
-    const evt = events[start + i];
-    const x = 12 + i * spacing;
-    ctx.strokeStyle = evt.ok ? "#2e7d32" : "#9b8d1f";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, bottom);
-    ctx.lineTo(x, top);
-    ctx.stroke();
+  const cardRect = chartCard.getBoundingClientRect();
+  let left = event.clientX - cardRect.left + 14;
+  let top = event.clientY - cardRect.top - 48;
+
+  const maxLeft = Math.max(8, chartCard.clientWidth - tooltip.offsetWidth - 8);
+  const maxTop = Math.max(8, chartCard.clientHeight - tooltip.offsetHeight - 8);
+  left = Math.max(8, Math.min(left, maxLeft));
+  top = Math.max(8, Math.min(top, maxTop));
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
+function attachTimelineHover(canvas, state, cardId, tooltipId, labelForSegment) {
+  if (!canvas || canvas.dataset.hoverReady === "1") return;
+  canvas.dataset.hoverReady = "1";
+
+  canvas.addEventListener("mousemove", event => {
+    if (!state.segments.length) {
+      hideTooltip(tooltipId);
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const segment = state.segments.find(item => localX >= item.x0 && localX <= item.x1);
+    if (!segment) {
+      hideTooltip(tooltipId);
+      return;
+    }
+    showTooltip(cardId, tooltipId, event, segment, labelForSegment(segment));
+  });
+
+  canvas.addEventListener("mouseleave", () => hideTooltip(tooltipId));
+}
+
+function computeTimelineSize(startTs, endTs, containerWidth) {
+  const duration = Math.max(1, endTs - startTs);
+  const pxPerSec = TIMELINE_PX_PER_MIN / 60;
+  const width = Math.max(containerWidth, Math.ceil(duration * pxPerSec) + TIMELINE_PAD * 2);
+  return { duration, pxPerSec, width };
+}
+
+function autoScrollTimeline(canvas) {
+  const wrap = canvas?.parentElement;
+  if (!wrap || !wrap.classList.contains("timeline-wrap")) return;
+  const distanceToEnd = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft;
+  if (distanceToEnd < 40) {
+    wrap.scrollLeft = wrap.scrollWidth;
   }
 }
 
-function drawMissingChart(missing, expectedSec) {
-  const canvas = document.getElementById("pingChart");
-  if (!canvas) return;
-  const { width, height, ctx } = resizeCanvas(canvas);
-  ctx.clearRect(0, 0, width, height);
+function buildResponseSegments(events, nowTs) {
+  if (!events || events.length === 0) return [];
+  const sorted = [...events].filter(item => item && item.ts).sort((a, b) => a.ts - b.ts);
+  if (!sorted.length) return [];
+  const segments = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    const current = sorted[i];
+    const next = sorted[i + 1];
+    const start = current.ts;
+    const end = next ? next.ts : nowTs;
+    if (end <= start) continue;
+    segments.push({
+      start,
+      end,
+      ok: !!current.ok,
+      source: current.source || "",
+    });
+  }
+  return segments;
+}
 
-  if (!missing || missing.length === 0) {
+function buildPingSegments(events, expectedSec, graceSec, nowTs) {
+  if (!events || events.length === 0) return [];
+  const sorted = [...events].filter(item => item && item.ts).sort((a, b) => a.ts - b.ts);
+  if (!sorted.length) return [];
+  const expected = Math.max(1, expectedSec || 0);
+  const grace = Math.max(0, graceSec || 0);
+  const segments = [];
+
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const prev = sorted[i].ts;
+    const next = sorted[i + 1].ts;
+    const gap = next - prev;
+    if (gap > expected + grace) {
+      const okEnd = prev + expected;
+      if (okEnd > prev) {
+        segments.push({ start: prev, end: okEnd, ok: true });
+      }
+      if (next > okEnd) {
+        segments.push({ start: okEnd, end: next, ok: false });
+      }
+    } else if (next > prev) {
+      segments.push({ start: prev, end: next, ok: true });
+    }
+  }
+
+  const last = sorted[sorted.length - 1].ts;
+  const tailGap = nowTs - last;
+  if (tailGap > expected + grace) {
+    const okEnd = last + expected;
+    if (okEnd > last) {
+      segments.push({ start: last, end: okEnd, ok: true });
+    }
+    if (nowTs > okEnd) {
+      segments.push({ start: okEnd, end: nowTs, ok: false });
+    }
+  } else if (nowTs > last) {
+    segments.push({ start: last, end: nowTs, ok: true });
+  }
+
+  return segments;
+}
+
+function drawTimeline(canvasId, cardId, tooltipId, segments, colors, labelForSegment, emptyLabel) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const wrap = canvas.parentElement;
+  const containerWidth = wrap ? wrap.clientWidth : canvas.getBoundingClientRect().width;
+
+  if (!segments || segments.length === 0) {
+    const { width, height, ctx } = resizeCanvas(canvas, containerWidth);
+    ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "#6a8672";
     ctx.font = "12px Trebuchet MS";
-    ctx.fillText("Sem falhas de ping", 12, height / 2);
+    ctx.fillText(emptyLabel, 12, height / 2);
+    hideTooltip(tooltipId);
     return;
   }
 
-  const maxEvents = Math.min(missing.length, 24);
-  const slice = missing.slice(-maxEvents);
-  const maxDur = Math.max(expectedSec || 1, ...slice.map(item => item.duration_sec || 0));
-  const barWidth = Math.max(8, (width - 24) / maxEvents - 6);
-  const base = height - 18;
+  const startTs = segments[0].start;
+  const endTs = segments[segments.length - 1].end;
+  const { pxPerSec, width } = computeTimelineSize(startTs, endTs, containerWidth);
+  const { height, ctx } = resizeCanvas(canvas, width);
 
-  slice.forEach((item, index) => {
-    const heightRatio = (item.duration_sec || 0) / maxDur;
-    const barHeight = Math.max(6, (height - 36) * heightRatio);
-    const x = 12 + index * (barWidth + 6);
-    ctx.fillStyle = "#688b4f";
-    ctx.fillRect(x, base - barHeight, barWidth, barHeight);
+  ctx.clearRect(0, 0, width, height);
+  const trackHeight = 40;
+  const trackTop = Math.round(height / 2 - trackHeight / 2);
+  const trackWidth = Math.max(10, width - TIMELINE_PAD * 2);
+  ctx.fillStyle = "#edf6ef";
+  ctx.fillRect(TIMELINE_PAD, trackTop, trackWidth, trackHeight);
+  ctx.strokeStyle = "rgba(46, 125, 50, 0.2)";
+  ctx.strokeRect(TIMELINE_PAD, trackTop, trackWidth, trackHeight);
+
+  const hoverSegments = [];
+  segments.forEach(segment => {
+    const x0 = TIMELINE_PAD + (segment.start - startTs) * pxPerSec;
+    const x1 = TIMELINE_PAD + (segment.end - startTs) * pxPerSec;
+    const widthSeg = Math.max(2, x1 - x0);
+    ctx.fillStyle = segment.ok ? colors.ok : colors.fail;
+    ctx.fillRect(x0, trackTop, widthSeg, trackHeight);
+    hoverSegments.push({ ...segment, x0, x1 });
   });
+
+  ctx.fillStyle = "#5b7a66";
+  ctx.font = "11px Trebuchet MS";
+  ctx.fillText(toLocal(startTs), TIMELINE_PAD, height - 8);
+  const endLabel = toLocal(endTs);
+  const textWidth = ctx.measureText(endLabel).width;
+  ctx.fillText(endLabel, width - TIMELINE_PAD - textWidth, height - 8);
+
+  const state = canvasId === "responseChart" ? responseTimelineState : pingTimelineState;
+  state.segments = hoverSegments;
+  attachTimelineHover(canvas, state, cardId, tooltipId, labelForSegment);
+  autoScrollTimeline(canvas);
+}
+
+function drawResponseTimeline(events) {
+  const nowTs = Date.now() / 1000;
+  const segments = buildResponseSegments(events || [], nowTs);
+  drawTimeline(
+    "responseChart",
+    "responseChartCard",
+    "responseTooltip",
+    segments,
+    { ok: "#2e7d32", fail: "#9b8d1f" },
+    segment => (segment.ok ? "Respondeu" : "Nao respondeu"),
+    "Sem dados de resposta"
+  );
+}
+
+function drawPingTimeline(ping) {
+  const nowTs = Date.now() / 1000;
+  const segments = buildPingSegments(
+    (ping && ping.events) || [],
+    ping?.expected_interval_sec || 0,
+    ping?.grace_sec || 0,
+    nowTs
+  );
+  drawTimeline(
+    "pingChart",
+    "pingChartCard",
+    "pingTooltip",
+    segments,
+    { ok: "#2e7d32", fail: "#688b4f" },
+    segment => (segment.ok ? "Comunicando" : "Sem conexao"),
+    "Sem dados de ping"
+  );
 }
 
 function updateTopics(topics) {
@@ -613,8 +825,8 @@ function updateDashboard(data) {
   setText("sentCount", summary.sent_count || 0);
   setText("lastResponseAt", summary.last_response_at ? `Ultima resposta: ${summary.last_response_at}` : "Ultima resposta: -");
 
-  drawResponseChart(responses.events || []);
-  drawMissingChart(ping.missing_events || [], ping.expected_interval_sec || 0);
+  drawResponseTimeline(responses.events || []);
+  drawPingTimeline(ping || {});
   updateTopics(data.topics || {});
   updateMissingList(ping.missing_events || []);
 }
