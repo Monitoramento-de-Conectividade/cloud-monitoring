@@ -209,3 +209,5 @@ __marimo__/
 amazon_ca.pem
 device.pem.crt
 private.pem.key
+logs_mqtt/*.txt
+dashboards/
