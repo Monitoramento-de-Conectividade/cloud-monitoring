@@ -38,7 +38,7 @@ class ConfigUI:
         self.ping_interval_var = tk.StringVar()
         self.ping_topic_var = tk.StringVar()
         self.dashboard_port_var = tk.StringVar()
-        self.history_mode_var = tk.StringVar(value="merge")
+        self.history_mode_var = tk.StringVar(value="fresh")
         self.cmd_topic_input_var = tk.StringVar()
         self.topic_input_var = tk.StringVar()
         self.filter_input_var = tk.StringVar()

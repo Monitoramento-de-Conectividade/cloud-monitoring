@@ -211,3 +211,4 @@ device.pem.crt
 private.pem.key
 logs_mqtt/*.txt
 dashboards/
+.cloudv2-monitor.pid

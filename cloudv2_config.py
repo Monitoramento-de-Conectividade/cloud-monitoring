@@ -42,9 +42,10 @@ DEFAULT_CONFIG = {
     "ping_interval_minutes": 3,
     "ping_topic": "cloudv2-ping",
     "dashboard_enabled": True,
+    "dashboard_host": "0.0.0.0",
     "dashboard_port": 8008,
     "dashboard_refresh_sec": 5,
-    "history_mode": "merge",
+    "history_mode": "fresh",
 }
 
 
@@ -103,6 +104,18 @@ def _normalize_schedule_mode(value):
     return "random"
 
 
+def _normalize_dashboard_host(value):
+    text = str(value or "").strip()
+    if not text:
+        return DEFAULT_CONFIG["dashboard_host"]
+    lowered = text.lower()
+    if lowered in ("*", "all"):
+        return "0.0.0.0"
+    if lowered == "localhost":
+        return "127.0.0.1"
+    return text
+
+
 def _read_config_file(path):
     if not os.path.exists(path):
         return {}
@@ -133,6 +146,7 @@ def _apply_env_overrides(config):
         "PING_INTERVAL_MINUTES": "ping_interval_minutes",
         "PING_TOPIC": "ping_topic",
         "DASHBOARD_ENABLED": "dashboard_enabled",
+        "DASHBOARD_HOST": "dashboard_host",
         "DASHBOARD_PORT": "dashboard_port",
         "DASHBOARD_REFRESH_SEC": "dashboard_refresh_sec",
         "HISTORY_MODE": "history_mode",
@@ -175,6 +189,7 @@ def normalize_config(raw_config):
         info_topics = list(DEFAULT_CONFIG["info_topics"])
     base["info_topics"] = info_topics
     base["ping_topic"] = str(base.get("ping_topic", DEFAULT_CONFIG["ping_topic"])).strip() or DEFAULT_CONFIG["ping_topic"]
+    base["dashboard_host"] = _normalize_dashboard_host(base.get("dashboard_host", DEFAULT_CONFIG["dashboard_host"]))
     base["history_mode"] = _normalize_history_mode(base.get("history_mode", DEFAULT_CONFIG["history_mode"]))
     base["schedule_mode"] = _normalize_schedule_mode(base.get("schedule_mode", DEFAULT_CONFIG["schedule_mode"]))
 

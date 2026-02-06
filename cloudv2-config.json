@@ -38,6 +38,7 @@
   "ping_interval_minutes": 3,
   "ping_topic": "cloudv2-ping",
   "dashboard_enabled": true,
+  "dashboard_host": "0.0.0.0",
   "dashboard_port": 8008,
   "dashboard_refresh_sec": 5,
   "history_mode": "fresh"
