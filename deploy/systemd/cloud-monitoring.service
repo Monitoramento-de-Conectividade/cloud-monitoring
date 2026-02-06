@@ -1,0 +1,26 @@
+[Unit]
+Description=Cloud Monitoring MQTT Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloud-monitor
+Group=cloud-monitor
+WorkingDirectory=/opt/cloud-monitoring
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=HISTORY_MODE=fresh
+Environment=DASHBOARD_HOST=0.0.0.0
+Environment=DASHBOARD_PORT=8008
+EnvironmentFile=-/etc/cloud-monitoring/cloud-monitoring.env
+ExecStart=/opt/cloud-monitoring/.venv/bin/python /opt/cloud-monitoring/cloudv2-ping-monitoring.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
