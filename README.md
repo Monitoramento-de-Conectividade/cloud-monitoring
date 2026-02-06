@@ -15,8 +15,12 @@ Monitoramento MQTT com logs e ping ativo (`#11$`) para validar resposta.
 2. Edite os campos principais (broker, tempos e topico de resposta preciso).
 3. Preencha `Monitoramento mais preciso` com um ou mais destinos para envio do `#11$`.
 4. Edite `Monitoramento leve (nomes)` e `Topicos de resposta` conforme a necessidade.
-5. Escolha o modo de historico `Juntar com historico salvo` (`history_mode = merge`) ou `Comecar monitoramento novo (zero)` (`history_mode = fresh`).
-6. Clique em `Salvar configuracao` para apenas salvar, ou em `Iniciar Monitoramento` para salvar, iniciar o monitor e abrir o dashboard local.
+5. Defina o modo de envio do `#11$`:
+   - `Aleatorio (min/max)` usa `min_minutes` e `max_minutes`.
+   - `Fixo (periodico)` usa `fixed_minutes`.
+6. Escolha o modo de historico `Juntar com historico salvo` (`history_mode = merge`) ou `Comecar monitoramento novo (zero)` (`history_mode = fresh`).
+7. Clique em `Salvar configuracao` para apenas salvar, ou em `Iniciar Monitoramento` para salvar, iniciar o monitor e abrir o dashboard local.
+8. Se ja existir monitor rodando, a interface pergunta se deseja reiniciar a instancia para aplicar a nova configuracao.
 
 ## Como iniciar o monitor
 
