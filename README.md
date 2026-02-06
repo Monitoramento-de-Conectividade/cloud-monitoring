@@ -12,9 +12,11 @@ Monitoramento MQTT com logs e ping ativo (`#11$`) para validar resposta.
 ## Como usar a interface
 
 1. Execute `python cloudv2-config-ui.py`.
-2. Edite os campos e listas de topicos/filtros.
-3. Escolha o modo de historico `Juntar com historico salvo` (`history_mode = merge`) ou `Comecar monitoramento novo (zero)` (`history_mode = fresh`).
-4. Clique em `Salvar configuracao`.
+2. Edite os campos principais (broker, tempos e topico de resposta preciso).
+3. Preencha `Monitoramento mais preciso` com um ou mais destinos para envio do `#11$`.
+4. Edite `Monitoramento leve (nomes)` e `Topicos de resposta` conforme a necessidade.
+5. Escolha o modo de historico `Juntar com historico salvo` (`history_mode = merge`) ou `Comecar monitoramento novo (zero)` (`history_mode = fresh`).
+6. Clique em `Salvar configuracao` para apenas salvar, ou em `Iniciar Monitoramento` para salvar, iniciar o monitor e abrir o dashboard local.
 
 ## Como iniciar o monitor
 
