@@ -541,9 +541,6 @@ class ConfigUI:
         if not normalized["topics"]:
             messagebox.showerror("Erro", "Inclua pelo menos um topico.")
             return None
-        if not normalized["cmd_topics"]:
-            messagebox.showerror("Erro", "Inclua pelo menos um topico de comando (#11$).")
-            return None
         if not normalized["ping_topic"]:
             messagebox.showerror("Erro", "Topico ping nao pode ficar vazio.")
             return None
