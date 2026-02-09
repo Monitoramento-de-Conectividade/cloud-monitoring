@@ -24,6 +24,7 @@ const ui = {
   connApply: document.getElementById("connApply"),
   connSummary: document.getElementById("connSummary"),
   connTrack: document.getElementById("connTrack"),
+  connSegmentCard: document.getElementById("connSegmentCard"),
   connStartLabel: document.getElementById("connStartLabel"),
   connEndLabel: document.getElementById("connEndLabel"),
   probeEnabled: document.getElementById("probeEnabled"),
@@ -50,6 +51,7 @@ const state = {
   connPreset: "30d",
   connCustomFrom: "",
   connCustomTo: "",
+  connSelectedSegmentKey: null,
   timelinePage: 1,
   timelinePageSize: 25,
   refreshMs: 5000,
@@ -492,6 +494,75 @@ function buildConnectivitySegments(pivot, startTs, endTs) {
   };
 }
 
+function hideConnectivitySegmentCard() {
+  ui.connSegmentCard.hidden = true;
+  ui.connSegmentCard.innerHTML = "";
+}
+
+function clearConnectivitySegmentSelection() {
+  state.connSelectedSegmentKey = null;
+  for (const item of ui.connTrack.querySelectorAll(".conn-segment.selected")) {
+    item.classList.remove("selected");
+  }
+  hideConnectivitySegmentCard();
+}
+
+function positionConnectivitySegmentCard(segmentEl) {
+  const wrapEl = ui.connTrack.parentElement;
+  if (!wrapEl || !segmentEl || ui.connSegmentCard.hidden) return;
+
+  const segmentRect = segmentEl.getBoundingClientRect();
+  const wrapRect = wrapEl.getBoundingClientRect();
+  const centerX = segmentRect.left - wrapRect.left + segmentRect.width / 2;
+  const topY = segmentRect.top - wrapRect.top;
+
+  ui.connSegmentCard.style.top = `${Math.max(0, topY)}px`;
+  ui.connSegmentCard.style.left = `${centerX}px`;
+
+  const cardWidth = ui.connSegmentCard.offsetWidth || 0;
+  const halfWidth = cardWidth / 2;
+  const minCenter = halfWidth + 6;
+  const maxCenter = Math.max(minCenter, wrapRect.width - halfWidth - 6);
+  const clampedCenter = Math.min(maxCenter, Math.max(minCenter, centerX));
+  ui.connSegmentCard.style.left = `${clampedCenter}px`;
+}
+
+function showConnectivitySegmentCard(segmentEl) {
+  const segmentState = String(segmentEl.dataset.state || "disconnected");
+  const startTs = Number(segmentEl.dataset.startTs || 0);
+  const endTs = Number(segmentEl.dataset.endTs || 0);
+  const durationSec = Number(segmentEl.dataset.durationSec || 0);
+  const stateLabel = segmentState === "connected" ? "Conectado" : "Desconectado";
+
+  ui.connSegmentCard.innerHTML = `
+    <div class="conn-segment-card-title ${escapeHtml(segmentState)}">${escapeHtml(stateLabel)}</div>
+    <div class="conn-segment-card-row"><span>Inicio</span><strong>${escapeHtml(formatShortDateTime(startTs))}</strong></div>
+    <div class="conn-segment-card-row"><span>Fim</span><strong>${escapeHtml(formatShortDateTime(endTs))}</strong></div>
+    <div class="conn-segment-card-row"><span>Duracao</span><strong>${escapeHtml(fmtDuration(durationSec))}</strong></div>
+  `;
+  ui.connSegmentCard.hidden = false;
+  positionConnectivitySegmentCard(segmentEl);
+}
+
+function restoreConnectivitySegmentSelection() {
+  if (!state.connSelectedSegmentKey) {
+    hideConnectivitySegmentCard();
+    return;
+  }
+
+  const selectedEl = [...ui.connTrack.querySelectorAll(".conn-segment")].find(
+    (item) => (item.dataset.key || "") === state.connSelectedSegmentKey
+  );
+  if (!selectedEl) {
+    state.connSelectedSegmentKey = null;
+    hideConnectivitySegmentCard();
+    return;
+  }
+
+  selectedEl.classList.add("selected");
+  showConnectivitySegmentCard(selectedEl);
+}
+
 function renderConnectivityTimeline(pivot) {
   const range = normalizeRange(pivot);
   const startTs = range.startTs;
@@ -509,12 +580,11 @@ function renderConnectivityTimeline(pivot) {
       const widthPct = Math.max(0.15, (segment.duration / duration) * 100);
       if (segment.state === "connected") connectedSec += segment.duration;
       else disconnectedSec += segment.duration;
-      const label = `${segment.state === "connected" ? "Conectado" : "Desconectado"} | ${formatShortDateTime(
-        segment.start
-      )} -> ${formatShortDateTime(segment.end)} | ${fmtDuration(segment.duration)}`;
-      return `<div class="conn-segment ${segment.state}" style="left:${leftPct}%;width:${widthPct}%;" data-label="${escapeHtml(
-        label
-      )}"></div>`;
+      const segmentKey = `${segment.state}:${segment.start}:${segment.end}`;
+      const selectedClass = state.connSelectedSegmentKey === segmentKey ? " selected" : "";
+      return `<div class="conn-segment ${segment.state}${selectedClass}" style="left:${leftPct}%;width:${widthPct}%;" data-key="${escapeHtml(
+        segmentKey
+      )}" data-state="${escapeHtml(segment.state)}" data-start-ts="${segment.start}" data-end-ts="${segment.end}" data-duration-sec="${segment.duration}"></div>`;
     })
     .join("");
 
@@ -539,6 +609,7 @@ function renderConnectivityTimeline(pivot) {
   }
   ui.connFrom.value = state.connCustomFrom;
   ui.connTo.value = state.connCustomTo;
+  restoreConnectivitySegmentSelection();
 }
 
 function renderTimeline(pivot) {
@@ -605,6 +676,7 @@ function renderPivotView() {
   const pivot = state.pivotData;
   if (!pivot || !state.selectedPivot) {
     ui.pivotView.hidden = true;
+    clearConnectivitySegmentSelection();
     return;
   }
 
@@ -682,6 +754,7 @@ async function refreshAll() {
 async function openPivot(pivotId) {
   const id = String(pivotId || "").trim();
   if (!id) return;
+  state.connSelectedSegmentKey = null;
   state.selectedPivot = id;
   state.timelinePage = 1;
   setHashPivot(id);
@@ -690,6 +763,7 @@ async function openPivot(pivotId) {
 }
 
 function closePivot() {
+  state.connSelectedSegmentKey = null;
   state.selectedPivot = null;
   state.pivotData = null;
   setHashPivot("");
@@ -783,6 +857,33 @@ function wireEvents() {
     renderPivotView();
   });
 
+  ui.connTrack.addEventListener("click", (event) => {
+    const segmentEl = event.target.closest(".conn-segment");
+    if (!segmentEl || !ui.connTrack.contains(segmentEl)) return;
+
+    const clickedKey = segmentEl.dataset.key || "";
+    if (!clickedKey) return;
+
+    if (state.connSelectedSegmentKey === clickedKey) {
+      clearConnectivitySegmentSelection();
+      return;
+    }
+
+    for (const item of ui.connTrack.querySelectorAll(".conn-segment.selected")) {
+      item.classList.remove("selected");
+    }
+    state.connSelectedSegmentKey = clickedKey;
+    segmentEl.classList.add("selected");
+    showConnectivitySegmentCard(segmentEl);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!state.connSelectedSegmentKey) return;
+    const wrapEl = ui.connTrack.parentElement;
+    if (wrapEl && wrapEl.contains(event.target)) return;
+    clearConnectivitySegmentSelection();
+  });
+
   ui.timelinePrev.addEventListener("click", () => {
     state.timelinePage = Math.max(1, state.timelinePage - 1);
     renderPivotView();
@@ -800,6 +901,18 @@ function wireEvents() {
       return;
     }
     openPivot(hashPivot);
+  });
+
+  window.addEventListener("resize", () => {
+    if (!state.connSelectedSegmentKey || ui.connSegmentCard.hidden) return;
+    const selectedEl = [...ui.connTrack.querySelectorAll(".conn-segment")].find(
+      (item) => (item.dataset.key || "") === state.connSelectedSegmentKey
+    );
+    if (!selectedEl) {
+      clearConnectivitySegmentSelection();
+      return;
+    }
+    positionConnectivitySegmentCard(selectedEl);
   });
 }
 
