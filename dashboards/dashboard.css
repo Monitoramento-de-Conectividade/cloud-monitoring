@@ -404,6 +404,7 @@ select:focus {
 }
 
 .probe-panel,
+.probe-delay-panel,
 .connectivity-panel,
 .timeline-panel,
 .table-panel {
@@ -418,6 +419,13 @@ select:focus {
 }
 
 .conn-controls {
+  display: grid;
+  grid-template-columns: minmax(170px, 210px) minmax(170px, 220px) minmax(170px, 220px) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.probe-delay-controls {
   display: grid;
   grid-template-columns: minmax(170px, 210px) minmax(170px, 220px) minmax(170px, 220px) auto;
   gap: 8px;
@@ -573,6 +581,48 @@ select:focus {
   font-size: 12px;
 }
 
+.probe-delay-chart {
+  margin-top: 8px;
+  border: 1px solid #d4e4da;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f6fbf8 0%, #ffffff 100%);
+  min-height: 250px;
+  overflow: hidden;
+}
+
+.probe-delay-svg {
+  width: 100%;
+  height: 250px;
+  display: block;
+}
+
+.probe-delay-grid {
+  stroke: #d8e8de;
+  stroke-width: 1;
+}
+
+.probe-delay-ylabel {
+  font-size: 9px;
+  fill: #4b6d5c;
+  text-anchor: end;
+}
+
+.probe-delay-line {
+  fill: none;
+  stroke: #1f754b;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.probe-delay-axis {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+}
+
 .timeline {
   display: grid;
   gap: 8px;
@@ -709,7 +759,8 @@ th {
 @media (max-width: 960px) {
   .control-row,
   .probe-controls,
-  .conn-controls {
+  .conn-controls,
+  .probe-delay-controls {
     grid-template-columns: 1fr;
   }
 
