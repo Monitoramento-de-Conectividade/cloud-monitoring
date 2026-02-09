@@ -46,6 +46,7 @@ const ui = {
   timelineNext: document.getElementById("timelineNext"),
   timelinePageInfo: document.getElementById("timelinePageInfo"),
   cloud2Table: document.getElementById("cloud2Table"),
+  toastRegion: document.getElementById("toastRegion"),
 };
 
 const state = {
@@ -69,6 +70,8 @@ const state = {
   timelinePageSize: 25,
   refreshMs: 5000,
   devReloadToken: null,
+  toastSeq: 0,
+  lastRefreshToastAtMs: 0,
 };
 
 const STATUS_META = {
@@ -182,6 +185,32 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function showToast(message, level = "success", ttlMs = 3200) {
+  if (!ui.toastRegion) return;
+  const textMessage = String(message || "").trim();
+  if (!textMessage) return;
+
+  const toast = document.createElement("div");
+  const normalizedLevel = ["success", "error", "warn"].includes(level) ? level : "success";
+  toast.className = `toast ${normalizedLevel}`;
+  toast.setAttribute("role", normalizedLevel === "error" ? "alert" : "status");
+  toast.setAttribute("aria-live", normalizedLevel === "error" ? "assertive" : "polite");
+  toast.innerHTML = `
+    <span class="toast-dot" aria-hidden="true"></span>
+    <div>${escapeHtml(textMessage)}</div>
+  `;
+  toast.dataset.toastId = `toast-${Date.now()}-${state.toastSeq++}`;
+  ui.toastRegion.appendChild(toast);
+
+  const leaveDelay = Math.max(850, Number(ttlMs) - 260);
+  window.setTimeout(() => {
+    toast.classList.add("leave");
+  }, leaveDelay);
+  window.setTimeout(() => {
+    toast.remove();
+  }, Math.max(900, Number(ttlMs)));
 }
 
 async function getJson(url) {
@@ -1014,8 +1043,14 @@ async function refreshAll() {
   try {
     await refreshState();
     await refreshPivot();
+    state.lastRefreshToastAtMs = 0;
   } catch (err) {
     ui.cardsGrid.innerHTML = `<div class="empty">Falha ao carregar dados do monitor. Tentando novamente...</div>`;
+    const now = Date.now();
+    if (now - Number(state.lastRefreshToastAtMs || 0) > 15000) {
+      showToast("Falha ao carregar dados do monitor.", "error", 3800);
+      state.lastRefreshToastAtMs = now;
+    }
   }
 }
 
@@ -1059,9 +1094,11 @@ async function saveProbeSetting() {
       throw new Error(data.error || `HTTP ${response.status}`);
     }
     ui.probeHint.textContent = "Configuracao de probe salva com sucesso.";
+    showToast("Configuracao de probe salva.", "success", 3000);
     await refreshAll();
   } catch (err) {
     ui.probeHint.textContent = `Falha ao salvar probe: ${err.message}`;
+    showToast(`Falha ao salvar probe: ${err.message}`, "error", 4200);
   } finally {
     ui.saveProbe.disabled = false;
   }

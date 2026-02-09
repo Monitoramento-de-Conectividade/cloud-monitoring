@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
@@ -7,28 +7,44 @@
   <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body>
+  <a class="skip-link" href="#cardsSection">Ir para lista de pivots</a>
   <div class="bg-shape shape-a"></div>
   <div class="bg-shape shape-b"></div>
+
   <main class="layout">
     <header class="hero">
-      <div>
+      <div class="hero-main">
         <p class="kicker">CloudV2 Connectivity</p>
-        <h1>Painel de Saúde dos Pivots</h1>
+        <h1>Painel de Saude dos Pivots</h1>
         <p class="subtitle">
-          Auto-descoberta via <code>cloudv2</code>, alertas de tráfego e monitoramento seletivo de probe <code>#11$</code>.
+          Auto-descoberta via <code>cloudv2</code>, alertas de trafego e monitoramento seletivo de probe <code>#11$</code>.
         </p>
       </div>
-      <div class="hero-meta">
+      <div class="hero-meta" role="status" aria-live="polite">
         <span class="chip" id="updatedAt">Atualizando...</span>
         <span class="chip" id="countsMeta">0 pivots</span>
       </div>
     </header>
 
-    <section class="panel controls">
+    <nav class="panel section-nav" aria-label="Navegacao de secoes">
+      <a href="#overviewSection">Visao geral</a>
+      <a href="#pendingPanel">Pendencias</a>
+      <a href="#cardsSection">Pivots</a>
+      <a href="#pivotView">Detalhe do pivot</a>
+    </nav>
+
+    <section id="overviewSection" class="panel controls">
+      <div class="panel-head block">
+        <div>
+          <h2>Visao geral e filtros</h2>
+          <p class="section-copy">Filtre por status, busque por pivot_id e ordene por criticidade ou atividade.</p>
+        </div>
+      </div>
+
       <div class="control-row">
         <label class="field">
           <span>Buscar pivot_id</span>
-          <input id="searchInput" type="search" placeholder="Ex.: PioneiraLEM_2"/>
+          <input id="searchInput" type="search" placeholder="Ex.: PioneiraLEM_2" autocomplete="off"/>
         </label>
         <label class="field">
           <span>Ordenar por</span>
@@ -40,163 +56,178 @@
           </select>
         </label>
       </div>
-      <div class="filters" id="statusFilters">
+
+      <div class="filters" id="statusFilters" role="toolbar" aria-label="Filtro de status">
         <button data-status="all" class="filter active">Todos</button>
         <button data-status="green" class="filter green">Conectado</button>
         <button data-status="yellow" class="filter yellow">Atencao</button>
         <button data-status="red" class="filter red">Offline</button>
         <button data-status="gray" class="filter gray">Inicial</button>
       </div>
+
       <div class="status-summary" id="statusSummary"></div>
     </section>
 
     <section class="panel" id="pendingPanel" hidden>
-      <div class="panel-head">
+      <div class="panel-head tight">
         <h2>Pivots vistos em ping e ainda nao descobertos</h2>
       </div>
       <div id="pendingList" class="list"></div>
     </section>
 
-    <section class="cards-wrap">
-      <div id="cardsGrid" class="cards-grid"></div>
-      <div class="pager">
-        <button id="cardsPrev" class="ghost">Anterior</button>
-        <span id="cardsPageInfo">Pagina 1/1</span>
-        <button id="cardsNext" class="ghost">Proxima</button>
+    <section id="cardsSection" class="panel cards-wrap">
+      <div class="panel-head tight">
+        <div>
+          <h2>Pivots monitorados</h2>
+          <p class="section-copy">Selecione um pivot para abrir a visao detalhada com timeline, metricas e probe.</p>
+        </div>
+        <div class="pager">
+          <button id="cardsPrev" class="ghost">Anterior</button>
+          <span id="cardsPageInfo">Pagina 1/1</span>
+          <button id="cardsNext" class="ghost">Proxima</button>
+        </div>
       </div>
+      <div id="cardsGrid" class="cards-grid"></div>
     </section>
 
     <section id="pivotView" class="panel pivot-view" hidden>
       <div class="panel-head">
-        <button id="closePivot" class="ghost">Fechar visao</button>
-        <h2 id="pivotTitle">Pivot</h2>
-        <span id="pivotStatus" class="badge gray">Inicial</span>
+        <div class="pivot-title-wrap">
+          <button id="closePivot" class="ghost">Fechar visao</button>
+          <h2 id="pivotTitle">Pivot</h2>
+          <span id="pivotStatus" class="badge gray">Inicial</span>
+        </div>
       </div>
 
       <div class="metrics-grid" id="pivotMetrics"></div>
 
-      <div class="connectivity-panel">
-        <div class="panel-head tight">
-          <h3>Timeline de Conectividade</h3>
-          <div class="conn-controls">
+      <div class="pivot-sections">
+        <section class="connectivity-panel">
+          <div class="panel-head tight">
+            <h3>Timeline de conectividade</h3>
+            <div class="conn-controls">
+              <label class="field compact">
+                <span>Periodo</span>
+                <select id="connPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Ultimas 24h</option>
+                  <option value="48h">Ultimas 48h</option>
+                  <option value="7d">Ultimos 7 dias</option>
+                  <option value="15d">Ultimos 15 dias</option>
+                  <option value="30d" selected>Ultimos 30 dias</option>
+                  <option value="custom">Por periodo</option>
+                </select>
+              </label>
+              <label class="field compact conn-custom" id="connFromWrap" hidden>
+                <span>De</span>
+                <input id="connFrom" type="datetime-local"/>
+              </label>
+              <label class="field compact conn-custom" id="connToWrap" hidden>
+                <span>Ate</span>
+                <input id="connTo" type="datetime-local"/>
+              </label>
+              <button id="connApply" class="ghost">Carregar</button>
+            </div>
+          </div>
+          <div class="conn-summary" id="connSummary"></div>
+          <div class="conn-track-wrap">
+            <div id="connTrack" class="conn-track"></div>
+            <div id="connSegmentCard" class="conn-segment-card" hidden></div>
+          </div>
+          <div class="conn-axis">
+            <span id="connStartLabel">-</span>
+            <span id="connEndLabel">-</span>
+          </div>
+        </section>
+
+        <section class="probe-panel">
+          <h3>Monitoramento ativo (#11$)</h3>
+          <div class="probe-controls">
+            <label class="toggle">
+              <input id="probeEnabled" type="checkbox"/>
+              <span>Habilitar probe para este pivot</span>
+            </label>
             <label class="field compact">
-              <span>Periodo</span>
-              <select id="connPreset">
-                <option value="total">Total</option>
-                <option value="24h">Ultimas 24h</option>
-                <option value="48h">Ultimas 48h</option>
-                <option value="7d">Ultimos 7 dias</option>
-                <option value="15d">Ultimos 15 dias</option>
-                <option value="30d" selected>Ultimos 30 dias</option>
-                <option value="custom">Por periodo</option>
-              </select>
+              <span>Intervalo (segundos)</span>
+              <input id="probeInterval" type="number" min="10" step="1"/>
             </label>
-            <label class="field compact conn-custom" id="connFromWrap" hidden>
-              <span>De</span>
-              <input id="connFrom" type="datetime-local"/>
-            </label>
-            <label class="field compact conn-custom" id="connToWrap" hidden>
-              <span>Ate</span>
-              <input id="connTo" type="datetime-local"/>
-            </label>
-            <button id="connApply" class="ghost">Carregar</button>
+            <button id="saveProbe" class="primary">Salvar probe</button>
           </div>
-        </div>
-        <div class="conn-summary" id="connSummary"></div>
-        <div class="conn-track-wrap">
-          <div id="connTrack" class="conn-track"></div>
-          <div id="connSegmentCard" class="conn-segment-card" hidden></div>
-        </div>
-        <div class="conn-axis">
-          <span id="connStartLabel">-</span>
-          <span id="connEndLabel">-</span>
-        </div>
-      </div>
+          <p id="probeHint" class="hint" aria-live="polite"></p>
+        </section>
 
-      <div class="probe-panel">
-        <h3>Monitoramento ativo (#11$)</h3>
-        <div class="probe-controls">
-          <label class="toggle">
-            <input id="probeEnabled" type="checkbox"/>
-            <span>Habilitar probe para este pivot</span>
-          </label>
-          <label class="field compact">
-            <span>Intervalo (segundos)</span>
-            <input id="probeInterval" type="number" min="10" step="1"/>
-          </label>
-          <button id="saveProbe" class="primary">Salvar probe</button>
-        </div>
-        <p id="probeHint" class="hint"></p>
-      </div>
-
-      <div class="probe-delay-panel">
-        <div class="panel-head tight">
-          <h3>Delay medio do probe (#11$) no tempo</h3>
-          <div class="probe-delay-controls">
-            <label class="field compact">
-              <span>Periodo</span>
-              <select id="probeDelayPreset">
-                <option value="total">Total</option>
-                <option value="24h">Ultimas 24h</option>
-                <option value="48h">Ultimas 48h</option>
-                <option value="7d">Ultimos 7 dias</option>
-                <option value="15d">Ultimos 15 dias</option>
-                <option value="30d" selected>Ultimos 30 dias</option>
-                <option value="custom">Por periodo</option>
-              </select>
-            </label>
-            <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
-              <span>De</span>
-              <input id="probeDelayFrom" type="datetime-local"/>
-            </label>
-            <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
-              <span>Ate</span>
-              <input id="probeDelayTo" type="datetime-local"/>
-            </label>
-            <button id="probeDelayApply" class="ghost">Carregar</button>
+        <section class="probe-delay-panel">
+          <div class="panel-head tight">
+            <h3>Delay medio do probe (#11$) no tempo</h3>
+            <div class="probe-delay-controls">
+              <label class="field compact">
+                <span>Periodo</span>
+                <select id="probeDelayPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Ultimas 24h</option>
+                  <option value="48h">Ultimas 48h</option>
+                  <option value="7d">Ultimos 7 dias</option>
+                  <option value="15d">Ultimos 15 dias</option>
+                  <option value="30d" selected>Ultimos 30 dias</option>
+                  <option value="custom">Por periodo</option>
+                </select>
+              </label>
+              <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
+                <span>De</span>
+                <input id="probeDelayFrom" type="datetime-local"/>
+              </label>
+              <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
+                <span>Ate</span>
+                <input id="probeDelayTo" type="datetime-local"/>
+              </label>
+              <button id="probeDelayApply" class="ghost">Carregar</button>
+            </div>
           </div>
-        </div>
-        <p id="probeDelayHint" class="hint"></p>
-        <div id="probeDelayChart" class="probe-delay-chart"></div>
-        <div class="probe-delay-axis">
-          <span id="probeDelayStartLabel">-</span>
-          <span id="probeDelayEndLabel">-</span>
-        </div>
-      </div>
-
-      <div class="timeline-panel">
-        <div class="panel-head tight">
-          <h3>Timeline de eventos</h3>
-          <div class="pager">
-            <button id="timelinePrev" class="ghost">Anterior</button>
-            <span id="timelinePageInfo">Pagina 1/1</span>
-            <button id="timelineNext" class="ghost">Proxima</button>
+          <p id="probeDelayHint" class="hint"></p>
+          <div id="probeDelayChart" class="probe-delay-chart"></div>
+          <div class="probe-delay-axis">
+            <span id="probeDelayStartLabel">-</span>
+            <span id="probeDelayEndLabel">-</span>
           </div>
-        </div>
-        <div id="timelineList" class="timeline"></div>
-      </div>
+        </section>
 
-      <div class="table-panel">
-        <div class="panel-head tight">
-          <h3>Historico cloud2 recente</h3>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>RSSI</th>
-                <th>Tecnologia</th>
-                <th>Duracao queda</th>
-                <th>Firmware</th>
-              </tr>
-            </thead>
-            <tbody id="cloud2Table"></tbody>
-          </table>
-        </div>
+        <section class="timeline-panel">
+          <div class="panel-head tight">
+            <h3>Timeline de eventos</h3>
+            <div class="pager">
+              <button id="timelinePrev" class="ghost">Anterior</button>
+              <span id="timelinePageInfo">Pagina 1/1</span>
+              <button id="timelineNext" class="ghost">Proxima</button>
+            </div>
+          </div>
+          <div id="timelineList" class="timeline"></div>
+        </section>
+
+        <section class="table-panel">
+          <div class="panel-head tight">
+            <h3>Historico cloud2 recente</h3>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>RSSI</th>
+                  <th>Tecnologia</th>
+                  <th>Duracao queda</th>
+                  <th>Firmware</th>
+                </tr>
+              </thead>
+              <tbody id="cloud2Table"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </section>
   </main>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+
   <script src="dashboard.js"></script>
 </body>
 </html>
