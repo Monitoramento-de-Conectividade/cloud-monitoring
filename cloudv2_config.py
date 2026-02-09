@@ -36,6 +36,8 @@ DEFAULT_CONFIG = {
     "history_mode": "merge",
     "history_retention_hours": 24,
     "tolerance_factor": 1.25,
+    "attention_disconnected_pct_threshold": 20.0,
+    "attention_disconnected_window_hours": 24,
     "cloudv2_median_window": 20,
     "cloudv2_min_samples": 3,
     "dedupe_window_sec": 8,
@@ -190,6 +192,8 @@ def _apply_env_overrides(config):
         "HISTORY_MODE": "history_mode",
         "HISTORY_RETENTION_HOURS": "history_retention_hours",
         "TOLERANCE_FACTOR": "tolerance_factor",
+        "ATTENTION_DISCONNECTED_PCT_THRESHOLD": "attention_disconnected_pct_threshold",
+        "ATTENTION_DISCONNECTED_WINDOW_HOURS": "attention_disconnected_window_hours",
         "CLOUDV2_MEDIAN_WINDOW": "cloudv2_median_window",
         "CLOUDV2_MIN_SAMPLES": "cloudv2_min_samples",
         "DEDUPE_WINDOW_SEC": "dedupe_window_sec",
@@ -275,6 +279,18 @@ def normalize_config(raw_config):
         base.get("tolerance_factor"),
         DEFAULT_CONFIG["tolerance_factor"],
         minimum=1.0,
+    )
+    base["attention_disconnected_pct_threshold"] = _to_float(
+        base.get("attention_disconnected_pct_threshold"),
+        DEFAULT_CONFIG["attention_disconnected_pct_threshold"],
+        minimum=0.0,
+    )
+    if base["attention_disconnected_pct_threshold"] > 100.0:
+        base["attention_disconnected_pct_threshold"] = 100.0
+    base["attention_disconnected_window_hours"] = _to_int(
+        base.get("attention_disconnected_window_hours"),
+        DEFAULT_CONFIG["attention_disconnected_window_hours"],
+        minimum=1,
     )
     base["cloudv2_median_window"] = _to_int(
         base.get("cloudv2_median_window"),

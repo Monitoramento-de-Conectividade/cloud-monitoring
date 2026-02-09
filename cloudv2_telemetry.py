@@ -142,6 +142,15 @@ class TelemetryStore:
 
         self.ping_expected_sec = max(1, int(config.get("ping_interval_minutes", 3)) * 60)
         self.tolerance_factor = max(1.0, float(config.get("tolerance_factor", 1.25)))
+        self.attention_disconnected_pct_threshold = min(
+            100.0,
+            max(0.0, float(config.get("attention_disconnected_pct_threshold", 20.0))),
+        )
+        self.attention_disconnected_window_hours = max(
+            1,
+            int(config.get("attention_disconnected_window_hours", 24)),
+        )
+        self.attention_disconnected_window_sec = self.attention_disconnected_window_hours * 3600
         self.cloudv2_window = max(3, int(config.get("cloudv2_median_window", 20)))
         self.cloudv2_min_samples = max(2, int(config.get("cloudv2_min_samples", 3)))
         if self.cloudv2_min_samples > self.cloudv2_window:
@@ -953,6 +962,65 @@ class TelemetryStore:
         probe = pivot["probe"]
         probe["events"] = [event for event in probe["events"] if _safe_float(event.get("ts"), 0) >= cutoff]
 
+    def _compute_disconnected_pct_locked(self, pivot, now, disconnect_threshold_sec):
+        if disconnect_threshold_sec is None or disconnect_threshold_sec <= 0:
+            return None
+
+        window_sec = min(self.attention_disconnected_window_sec, self.retention_sec)
+        if window_sec <= 0:
+            return None
+
+        start_ts = now - window_sec
+        min_relevant_ts = start_ts - disconnect_threshold_sec
+
+        message_ts = []
+        for event in pivot.get("timeline", []):
+            topic = str(event.get("topic") or "")
+            if topic not in CONNECTIVITY_TOPICS:
+                continue
+            ts = _safe_float(event.get("ts"), None)
+            if ts is None:
+                continue
+            if ts > now or ts < min_relevant_ts:
+                continue
+            message_ts.append(ts)
+
+        if not message_ts:
+            return 100.0
+
+        message_ts = sorted(set(message_ts))
+
+        connected_sec = 0.0
+        current_start = None
+        current_end = None
+
+        for ts in message_ts:
+            seg_start = max(start_ts, ts)
+            seg_end = min(now, ts + disconnect_threshold_sec)
+            if seg_end <= seg_start:
+                continue
+
+            if current_start is None:
+                current_start = seg_start
+                current_end = seg_end
+                continue
+
+            if seg_start <= current_end:
+                if seg_end > current_end:
+                    current_end = seg_end
+                continue
+
+            connected_sec += current_end - current_start
+            current_start = seg_start
+            current_end = seg_end
+
+        if current_start is not None:
+            connected_sec += current_end - current_start
+
+        connected_sec = max(0.0, min(float(window_sec), connected_sec))
+        disconnected_sec = max(0.0, float(window_sec) - connected_sec)
+        return (disconnected_sec / float(window_sec)) * 100.0
+
     def _compute_status_locked(self, pivot, now):
         topic_last_ts = pivot.get("topic_last_ts") or {}
         topic_intervals = pivot.get("topic_intervals_sec") or {}
@@ -1015,6 +1083,16 @@ class TelemetryStore:
         if disconnect_threshold_sec is not None and monitored_age_sec is not None:
             disconnected_by_inactivity = monitored_age_sec > disconnect_threshold_sec
 
+        attention_disconnected_pct = self._compute_disconnected_pct_locked(
+            pivot,
+            now,
+            disconnect_threshold_sec,
+        )
+        attention_by_disconnected_pct = (
+            attention_disconnected_pct is not None
+            and attention_disconnected_pct > self.attention_disconnected_pct_threshold
+        )
+
         if disconnected_by_inactivity:
             code = "red"
             reason = (
@@ -1027,6 +1105,13 @@ class TelemetryStore:
             reason = (
                 "Aguardando amostras de cloudv2 para estimar mediana "
                 f"({sample_count}/{self.cloudv2_min_samples})."
+            )
+        elif attention_by_disconnected_pct:
+            code = "yellow"
+            reason = (
+                "Percentual desconectado na janela de monitoramento "
+                f"({attention_disconnected_pct:.1f}%) acima do limite "
+                f"({self.attention_disconnected_pct_threshold:.1f}%)."
             )
         elif ping_ok and not cloudv2_ok:
             code = "yellow"
@@ -1058,6 +1143,10 @@ class TelemetryStore:
             "last_monitored_message_ts": last_monitored_message_ts,
             "last_monitored_message_age_sec": monitored_age_sec,
             "disconnected_by_inactivity": disconnected_by_inactivity,
+            "attention_disconnected_pct": attention_disconnected_pct,
+            "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+            "attention_window_sec": min(self.attention_disconnected_window_sec, self.retention_sec),
+            "attention_by_disconnected_pct": attention_by_disconnected_pct,
         }
 
     def _refresh_status_locked(self, pivot, now):
@@ -1126,6 +1215,8 @@ class TelemetryStore:
                 "connectivity_topics": list(CONNECTIVITY_TOPICS),
                 "tolerance_factor": self.tolerance_factor,
                 "ping_expected_sec": self.ping_expected_sec,
+                "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+                "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
                 "cloudv2_median_window": self.cloudv2_window,
                 "cloudv2_min_samples": self.cloudv2_min_samples,
                 "show_pending_ping_pivots": self.show_pending_ping_pivots,
@@ -1175,6 +1266,10 @@ class TelemetryStore:
             "max_expected_interval_sec": status["max_expected_interval_sec"],
             "disconnect_threshold_sec": status["disconnect_threshold_sec"],
             "disconnected_by_inactivity": status["disconnected_by_inactivity"],
+            "attention_disconnected_pct": status["attention_disconnected_pct"],
+            "attention_disconnected_pct_threshold": status["attention_disconnected_pct_threshold"],
+            "attention_window_sec": status["attention_window_sec"],
+            "attention_by_disconnected_pct": status["attention_by_disconnected_pct"],
             "last_monitored_message_ts": status["last_monitored_message_ts"],
             "last_monitored_message_at": _ts_to_str(status["last_monitored_message_ts"]),
             "last_monitored_message_age_sec": status["last_monitored_message_age_sec"],

@@ -19,6 +19,8 @@ def run_fixture():
             "probe_min_interval_sec": 60,
             "probe_timeout_factor": 1.25,
             "show_pending_ping_pivots": False,
+            "attention_disconnected_pct_threshold": 20.0,
+            "attention_disconnected_window_hours": 24,
         }
     )
 
@@ -121,13 +123,25 @@ def run_fixture():
     red_status = ((red_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
     check(red_status == "red", "inatividade acima da janela global vira vermelho")
 
-    # 8) Pivot novo com poucas amostras deve ficar cinza.
+    # 8) Regra nova: se percentual desconectado > 20%, status deve virar amarelo (quando nao estiver offline).
+    now += 5 * 3600
+    telemetry.tick(now)
+    emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping3$")
+    emit(1, "cloudv2", "#01-PioneiraLEM_2-dataE$")
+    attention_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
+    attention_summary = (attention_snapshot or {}).get("summary") or {}
+    attention_status = (attention_summary.get("status") or {}).get("code")
+    attention_pct = float(attention_summary.get("attention_disconnected_pct") or 0.0)
+    check(attention_pct > 20.0, "percentual desconectado na janela acima de 20%")
+    check(attention_status == "yellow", "status vira amarelo com percentual desconectado > 20%")
+
+    # 9) Pivot novo com poucas amostras deve ficar cinza.
     emit(1, "cloudv2", "#01-GrayPivot_1-first$")
     gray_snapshot = telemetry.get_pivot_snapshot("GrayPivot_1", now)
     gray_status = ((gray_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
     check(gray_status == "gray", "pivot novo sem amostras suficientes fica cinza")
 
-    # 9) Garantia final: nenhuma publicacao em topicos fixos.
+    # 10) Garantia final: nenhuma publicacao em topicos fixos.
     check(
         all(item["topic"] not in FIXED_MONITOR_TOPICS for item in published),
         "nenhum probe publicado em topicos fixos",
