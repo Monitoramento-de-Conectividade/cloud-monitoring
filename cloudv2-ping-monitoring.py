@@ -2,7 +2,9 @@ import atexit
 import logging
 import os
 import ssl
+import sys
 import threading
+import time
 
 import paho.mqtt.client as mqtt
 
@@ -27,6 +29,13 @@ MONITOR_TOPICS = tuple(runtime_config.get("monitor_topics") or FIXED_MONITOR_TOP
 DASHBOARD_ENABLED = runtime_config["dashboard_enabled"]
 DASHBOARD_PORT = runtime_config["dashboard_port"]
 DASHBOARD_REFRESH_SEC = runtime_config["dashboard_refresh_sec"]
+DEV_HOT_RELOAD = str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "0")).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+DEV_HOT_RELOAD_POLL_SEC = 1.0
 
 # Forca os topicos monitorados fixos e sem wildcard.
 if tuple(MONITOR_TOPICS) != tuple(FIXED_MONITOR_TOPICS):
@@ -38,6 +47,10 @@ telemetry = None
 dashboard_server = None
 mqtt_client = None
 mqtt_connected = threading.Event()
+restart_requested = threading.Event()
+restart_reason = None
+dev_reload_token = str(int(time.time() * 1000))
+hot_reload_watcher = None
 
 
 def _configure_logging():
@@ -180,10 +193,95 @@ def on_message(client, userdata, msg):
         logger.exception("Erro ao processar mensagem MQTT topic=%s: %s", msg.topic, exc)
 
 
+def _iter_watch_files():
+    root = os.getcwd()
+    watch_ext = {".py", ".html", ".css", ".js"}
+    skip_dirs = {
+        ".git",
+        ".vscode",
+        "__pycache__",
+        LOG_DIR,
+    }
+    skip_prefixes = {
+        os.path.join("dashboards", "data"),
+    }
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = os.path.relpath(dirpath, root)
+        rel_dir_norm = "." if rel_dir == "." else rel_dir.replace("/", os.sep).replace("\\", os.sep)
+
+        filtered_dirs = []
+        for item in dirnames:
+            if item in skip_dirs:
+                continue
+            item_rel = os.path.join(rel_dir_norm, item) if rel_dir_norm != "." else item
+            if any(item_rel == prefix or item_rel.startswith(prefix + os.sep) for prefix in skip_prefixes):
+                continue
+            filtered_dirs.append(item)
+        dirnames[:] = filtered_dirs
+
+        for filename in filenames:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in watch_ext:
+                continue
+            yield os.path.join(dirpath, filename)
+
+
+def _build_watch_snapshot():
+    snapshot = {}
+    for path in _iter_watch_files():
+        try:
+            snapshot[path] = os.path.getmtime(path)
+        except OSError:
+            continue
+    return snapshot
+
+
+def _request_restart(reason):
+    global restart_reason
+    if restart_requested.is_set():
+        return
+    restart_reason = str(reason or "mudanca de codigo detectada")
+    restart_requested.set()
+    logger.warning("Hot reload: %s", restart_reason)
+
+
+def _hot_reload_loop():
+    previous = _build_watch_snapshot()
+    while not restart_requested.is_set():
+        time.sleep(DEV_HOT_RELOAD_POLL_SEC)
+        current = _build_watch_snapshot()
+        changed = []
+
+        for path, mtime in current.items():
+            old_mtime = previous.get(path)
+            if old_mtime is None or mtime != old_mtime:
+                changed.append(path)
+
+        for path in previous:
+            if path not in current:
+                changed.append(path)
+
+        if changed:
+            changed_rel = []
+            cwd = os.getcwd()
+            for path in changed[:3]:
+                try:
+                    changed_rel.append(os.path.relpath(path, cwd))
+                except ValueError:
+                    changed_rel.append(path)
+            suffix = "..." if len(changed) > 3 else ""
+            _request_restart(f"arquivos alterados: {', '.join(changed_rel)}{suffix}")
+            return
+
+        previous = current
+
+
 def main():
     global telemetry
     global dashboard_server
     global mqtt_client
+    global hot_reload_watcher
 
     _configure_logging()
 
@@ -198,8 +296,14 @@ def main():
 
     if DASHBOARD_ENABLED:
         generate_dashboard_assets(DASHBOARD_REFRESH_SEC)
-        dashboard_server = start_dashboard_server(DASHBOARD_PORT, telemetry)
+        dashboard_server = start_dashboard_server(
+            DASHBOARD_PORT,
+            telemetry,
+            reload_token_getter=lambda: dev_reload_token,
+        )
         logger.info("Dashboard ativo em http://localhost:%s/index.html", DASHBOARD_PORT)
+        if DEV_HOT_RELOAD:
+            logger.info("Hot reload DEV ativo (poll %.1fs).", DEV_HOT_RELOAD_POLL_SEC)
 
     mqtt_client = mqtt.Client()
     mqtt_client.on_connect = on_connect
@@ -216,12 +320,26 @@ def main():
     logger.info("Conectando ao broker %s:%s ...", BROKER, PORT)
     mqtt_client.connect(BROKER, PORT)
 
+    if DEV_HOT_RELOAD:
+        hot_reload_watcher = threading.Thread(target=_hot_reload_loop, name="cloudv2-hot-reload", daemon=True)
+        hot_reload_watcher.start()
+
     try:
-        mqtt_client.loop_forever()
+        mqtt_client.loop_start()
+        while not restart_requested.is_set():
+            time.sleep(0.3)
     except KeyboardInterrupt:
         logger.info("Encerrando monitor por interrupcao do usuario.")
     finally:
         mqtt_connected.clear()
+        try:
+            mqtt_client.loop_stop()
+        except Exception:
+            pass
+        try:
+            mqtt_client.disconnect()
+        except Exception:
+            pass
         if telemetry is not None:
             telemetry.stop()
         if dashboard_server is not None:
@@ -229,6 +347,16 @@ def main():
                 dashboard_server.shutdown()
             except Exception:
                 pass
+            try:
+                dashboard_server.server_close()
+            except Exception:
+                pass
+
+        if restart_requested.is_set():
+            logger.info("Reiniciando monitor para aplicar alteracoes...")
+            if restart_reason:
+                logger.info("Motivo do reinicio: %s", restart_reason)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 if __name__ == "__main__":
