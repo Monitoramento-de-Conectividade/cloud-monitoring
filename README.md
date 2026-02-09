@@ -43,6 +43,13 @@ Ou seja, o limite usa a maior mediana entre esses tópicos para o pivot e aplica
 python cloudv2-ping-monitoring.py
 ```
 
+Por padrao o hot reload de desenvolvimento ja vem ativo (reinicia o processo em mudanca de `.py/.html/.css/.js`).
+Se quiser desativar:
+
+```bash
+$env:CLOUDV2_DEV_HOT_RELOAD="0"; python cloudv2-ping-monitoring.py
+```
+
 3. Abra:
 
 ```text
