@@ -55,6 +55,7 @@ const state = {
   timelinePage: 1,
   timelinePageSize: 25,
   refreshMs: 5000,
+  devReloadToken: null,
 };
 
 const STATUS_META = {
@@ -160,6 +161,41 @@ async function getJson(url) {
   const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`);
   if (!response.ok) throw new Error(`${response.status}`);
   return response.json();
+}
+
+function isLocalhostRuntime() {
+  const host = String(location.hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+async function checkDevReloadToken() {
+  const payload = await getJson("/api/dev/reload-token");
+  return String(payload.token || "");
+}
+
+function startDevAutoReload() {
+  if (!isLocalhostRuntime()) return;
+
+  const pollReloadToken = async () => {
+    try {
+      const token = await checkDevReloadToken();
+      if (!token) return;
+
+      if (!state.devReloadToken) {
+        state.devReloadToken = token;
+        return;
+      }
+
+      if (state.devReloadToken !== token) {
+        location.reload();
+      }
+    } catch (err) {
+      return;
+    }
+  };
+
+  pollReloadToken();
+  setInterval(pollReloadToken, 1500);
 }
 
 function applyFilterSort() {
@@ -918,6 +954,7 @@ function wireEvents() {
 
 async function boot() {
   wireEvents();
+  startDevAutoReload();
   await loadUiConfig();
   ui.connPreset.value = state.connPreset;
   ui.connFromWrap.hidden = true;
