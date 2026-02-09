@@ -63,7 +63,7 @@ O simulador valida:
 - auto-descoberta por `cloudv2`;
 - deduplicação;
 - mediana móvel;
-- estados `gray`, `yellow`, `red`;
+- estados `gray`, `yellow`, `critical`, `red`;
 - evento `cloud2` com tecnologia `wifi`;
 - ciclo completo de probe (`sent`/`response`/`timeout`);
 - garantia de publicação somente em tópico dinâmico.
@@ -81,7 +81,7 @@ O script imprime um JSON com todos os checks e retorna código `0` em sucesso.
 ### Visão principal
 
 - Busca por `pivot_id`.
-- Filtro de status (`green`, `yellow`, `red`, `gray`).
+- Filtro de status (`green`, `yellow`, `critical`, `red`, `gray`).
 - Ordenação por criticidade e atividade.
 - Cards com:
   - `pivot_id`;
@@ -113,6 +113,8 @@ Campos importantes em `cloudv2-config.json`:
 
 - `ping_interval_minutes` (base do cálculo de ping esperado).
 - `tolerance_factor` (padrão `1.25`).
+- `attention_disconnected_pct_threshold` (padrão `20.0` para status de atenção).
+- `critical_disconnected_pct_threshold` (padrão `50.0` para status crítico).
 - `cloudv2_median_window` e `cloudv2_min_samples`.
 - `probe_default_interval_sec`, `probe_min_interval_sec`, `probe_timeout_factor`.
 - `history_retention_hours` (mínimo 24h).
