@@ -1233,9 +1233,52 @@ class TelemetryStore:
             "malformed_recent": malformed_recent,
         }
 
+    def _summarize_probe_stats_locked(self, probe):
+        events = probe.get("events")
+        if not isinstance(events, list):
+            events = []
+
+        sent_count = 0
+        response_count = 0
+        timeout_count = 0
+        latency_samples = []
+
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+
+            event_type = str(event.get("type") or "").strip().lower()
+            if event_type == "sent":
+                sent_count += 1
+                continue
+            if event_type == "timeout":
+                timeout_count += 1
+                continue
+            if event_type != "response":
+                continue
+
+            response_count += 1
+            latency = _safe_float(event.get("latency_sec"), None)
+            if latency is not None and latency >= 0:
+                latency_samples.append(latency)
+
+        return {
+            "sent_count": sent_count,
+            "response_count": response_count,
+            "timeout_count": timeout_count,
+            "response_ratio_pct": ((response_count / sent_count) * 100.0) if sent_count > 0 else None,
+            "latency_sample_count": len(latency_samples),
+            "latency_last_sec": latency_samples[-1] if latency_samples else None,
+            "latency_avg_sec": (sum(latency_samples) / len(latency_samples)) if latency_samples else None,
+            "latency_median_sec": statistics.median(latency_samples) if latency_samples else None,
+            "latency_min_sec": min(latency_samples) if latency_samples else None,
+            "latency_max_sec": max(latency_samples) if latency_samples else None,
+        }
+
     def _build_pivot_summary_locked(self, pivot, now):
         status = self._compute_status_locked(pivot, now)
         probe = pivot["probe"]
+        probe_stats = self._summarize_probe_stats_locked(probe)
         last_activity_ts = max(
             [
                 _safe_float(pivot.get("last_seen_ts"), 0) or 0,
@@ -1296,6 +1339,16 @@ class TelemetryStore:
                 "timeout_streak": int(probe.get("timeout_streak", 0)),
                 "last_result": probe.get("last_result"),
                 "alert": probe_alert,
+                "sent_count": int(probe_stats["sent_count"]),
+                "response_count": int(probe_stats["response_count"]),
+                "timeout_count": int(probe_stats["timeout_count"]),
+                "response_ratio_pct": probe_stats["response_ratio_pct"],
+                "latency_sample_count": int(probe_stats["latency_sample_count"]),
+                "latency_last_sec": probe_stats["latency_last_sec"],
+                "latency_avg_sec": probe_stats["latency_avg_sec"],
+                "latency_median_sec": probe_stats["latency_median_sec"],
+                "latency_min_sec": probe_stats["latency_min_sec"],
+                "latency_max_sec": probe_stats["latency_max_sec"],
             },
         }
 
