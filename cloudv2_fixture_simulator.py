@@ -94,6 +94,13 @@ def run_fixture():
     pivot_after_response = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
     probe_after_response = (pivot_after_response or {}).get("summary", {}).get("probe") or {}
     check(probe_after_response.get("last_result") == "response", "probe correlacionado com resposta")
+    check(int(probe_after_response.get("sent_count") or 0) == 1, "contador de envios do probe atualizado")
+    check(int(probe_after_response.get("response_count") or 0) == 1, "contador de respostas do probe atualizado")
+    check(int(probe_after_response.get("latency_sample_count") or 0) == 1, "amostras de delay registradas")
+    latency_last = float(probe_after_response.get("latency_last_sec") or 0.0)
+    latency_avg = float(probe_after_response.get("latency_avg_sec") or 0.0)
+    check(abs(latency_last - 20.0) <= 0.001, "delay da resposta do probe registrado")
+    check(abs(latency_avg - 20.0) <= 0.001, "media de delay do probe atualizada")
 
     # Novo envio e timeout.
     now += 121
@@ -104,6 +111,9 @@ def run_fixture():
     pivot_after_timeout = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
     probe_after_timeout = (pivot_after_timeout or {}).get("summary", {}).get("probe") or {}
     check(probe_after_timeout.get("last_result") == "timeout", "timeout de probe registrado")
+    check(int(probe_after_timeout.get("sent_count") or 0) >= 2, "contador de envios inclui novo probe")
+    check(int(probe_after_timeout.get("response_count") or 0) == 1, "contador de respostas preservado apos timeout")
+    check(int(probe_after_timeout.get("timeout_count") or 0) >= 1, "contador de timeout atualizado")
 
     # 7) Estados: amarelo e vermelho por inatividade global monitorada.
     emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping2$")
