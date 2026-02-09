@@ -31,6 +31,16 @@ const ui = {
   probeInterval: document.getElementById("probeInterval"),
   saveProbe: document.getElementById("saveProbe"),
   probeHint: document.getElementById("probeHint"),
+  probeDelayPreset: document.getElementById("probeDelayPreset"),
+  probeDelayFromWrap: document.getElementById("probeDelayFromWrap"),
+  probeDelayToWrap: document.getElementById("probeDelayToWrap"),
+  probeDelayFrom: document.getElementById("probeDelayFrom"),
+  probeDelayTo: document.getElementById("probeDelayTo"),
+  probeDelayApply: document.getElementById("probeDelayApply"),
+  probeDelayHint: document.getElementById("probeDelayHint"),
+  probeDelayChart: document.getElementById("probeDelayChart"),
+  probeDelayStartLabel: document.getElementById("probeDelayStartLabel"),
+  probeDelayEndLabel: document.getElementById("probeDelayEndLabel"),
   timelineList: document.getElementById("timelineList"),
   timelinePrev: document.getElementById("timelinePrev"),
   timelineNext: document.getElementById("timelineNext"),
@@ -52,6 +62,9 @@ const state = {
   connCustomFrom: "",
   connCustomTo: "",
   connSelectedSegmentKey: null,
+  probeDelayPreset: "30d",
+  probeDelayCustomFrom: "",
+  probeDelayCustomTo: "",
   timelinePage: 1,
   timelinePageSize: 25,
   refreshMs: 5000,
@@ -464,6 +477,81 @@ function normalizeRange(pivot) {
   return { startTs, endTs, minTs, nowTs };
 }
 
+function normalizeProbeDelayRange(pivot) {
+  const nowTs = Number(pivot.updated_at_ts || Math.floor(Date.now() / 1000));
+  const probeEvents = pivot.probe_events || [];
+  let minTs = nowTs;
+
+  for (const event of probeEvents) {
+    if (String(event.type || "").toLowerCase() !== "response") continue;
+    const ts = Number(event.ts || 0);
+    if (Number.isFinite(ts) && ts > 0 && ts < minTs) minTs = ts;
+  }
+
+  if (minTs === nowTs) minTs = Math.max(0, nowTs - 24 * 3600);
+
+  let startTs = minTs;
+  let endTs = nowTs;
+
+  const preset = state.probeDelayPreset;
+  if (preset === "custom") {
+    const parsedFrom = parseDateTimeLocal(state.probeDelayCustomFrom);
+    const parsedTo = parseDateTimeLocal(state.probeDelayCustomTo);
+    if (parsedFrom !== null) startTs = parsedFrom;
+    if (parsedTo !== null) endTs = parsedTo;
+  } else if (preset !== "total") {
+    const windowSec = connectivityRangeSeconds(preset);
+    if (windowSec) startTs = nowTs - windowSec;
+  }
+
+  if (startTs < minTs) startTs = minTs;
+  if (endTs > nowTs) endTs = nowTs;
+  if (!Number.isFinite(startTs) || !Number.isFinite(endTs) || startTs >= endTs) {
+    startTs = Math.max(minTs, nowTs - 24 * 3600);
+    endTs = nowTs;
+  }
+
+  return { startTs, endTs, minTs, nowTs };
+}
+
+function buildProbeDelaySeries(pivot, startTs, endTs) {
+  const responses = (pivot.probe_events || [])
+    .filter((event) => String(event.type || "").toLowerCase() === "response")
+    .map((event) => ({
+      ts: Number(event.ts || 0),
+      latencySec: Number(event.latency_sec),
+    }))
+    .filter(
+      (event) =>
+        Number.isFinite(event.ts) &&
+        event.ts >= startTs &&
+        event.ts <= endTs &&
+        Number.isFinite(event.latencySec) &&
+        event.latencySec >= 0
+    )
+    .sort((a, b) => a.ts - b.ts);
+
+  const points = [];
+  let sum = 0;
+  let count = 0;
+  for (const response of responses) {
+    count += 1;
+    sum += response.latencySec;
+    points.push({
+      ts: response.ts,
+      latencySec: response.latencySec,
+      sampleCount: count,
+      avgLatencySec: sum / count,
+    });
+  }
+
+  return {
+    points,
+    responseCount: responses.length,
+    latestAvgSec: points.length ? points[points.length - 1].avgLatencySec : null,
+  };
+}
+
 function buildConnectivitySegments(pivot, startTs, endTs) {
   const summary = pivot.summary || {};
   const settings = (state.rawState || {}).settings || {};
@@ -680,6 +768,109 @@ function renderConnectivityTimeline(pivot) {
   restoreConnectivitySegmentSelection();
 }
 
+function renderProbeDelayChart(pivot) {
+  const summary = pivot.summary || {};
+  const probe = summary.probe || {};
+  const enabled = !!probe.enabled;
+
+  const range = normalizeProbeDelayRange(pivot);
+  const startTs = range.startTs;
+  const endTs = range.endTs;
+
+  if (!state.probeDelayCustomFrom) {
+    state.probeDelayCustomFrom = toDateTimeLocal(Math.max(range.minTs, endTs - 24 * 3600));
+  }
+  if (!state.probeDelayCustomTo) {
+    state.probeDelayCustomTo = toDateTimeLocal(endTs);
+  }
+
+  ui.probeDelayPreset.value = state.probeDelayPreset;
+  ui.probeDelayFrom.value = state.probeDelayCustomFrom;
+  ui.probeDelayTo.value = state.probeDelayCustomTo;
+  const custom = state.probeDelayPreset === "custom";
+  ui.probeDelayFromWrap.hidden = !custom;
+  ui.probeDelayToWrap.hidden = !custom;
+
+  ui.probeDelayStartLabel.textContent = formatShortDateTime(startTs);
+  ui.probeDelayEndLabel.textContent = formatShortDateTime(endTs);
+
+  if (!enabled) {
+    ui.probeDelayHint.textContent = "Monitoramento ativo desabilitado para este pivot.";
+    ui.probeDelayChart.innerHTML = `<div class="empty">Habilite o probe para acompanhar o delay medio no tempo.</div>`;
+    return;
+  }
+
+  const series = buildProbeDelaySeries(pivot, startTs, endTs);
+  const points = series.points;
+  if (!points.length) {
+    ui.probeDelayHint.textContent = "Sem respostas de probe na janela selecionada.";
+    ui.probeDelayChart.innerHTML = `<div class="empty">Nenhuma resposta #11$ no periodo selecionado.</div>`;
+    return;
+  }
+
+  const width = 980;
+  const height = 250;
+  const padLeft = 52;
+  const padRight = 14;
+  const padTop = 16;
+  const padBottom = 30;
+  const innerWidth = width - padLeft - padRight;
+  const innerHeight = height - padTop - padBottom;
+  const duration = Math.max(1, endTs - startTs);
+
+  const avgValues = points.map((item) => item.avgLatencySec);
+  let minY = Math.min(...avgValues);
+  let maxY = Math.max(...avgValues);
+  let spread = maxY - minY;
+  if (!Number.isFinite(spread) || spread <= 0) {
+    spread = Math.max(0.05, maxY * 0.1);
+  }
+  const domainMin = Math.max(0, minY - spread * 0.2);
+  let domainMax = maxY + spread * 0.2;
+  if (!(domainMax > domainMin)) domainMax = domainMin + 0.1;
+  const domainSpan = domainMax - domainMin;
+
+  const xForTs = (ts) => padLeft + ((ts - startTs) / duration) * innerWidth;
+  const yForDelay = (delaySec) => padTop + ((domainMax - delaySec) / domainSpan) * innerHeight;
+
+  const pathData = points
+    .map((point, idx) => `${idx === 0 ? "M" : "L"}${xForTs(point.ts).toFixed(2)} ${yForDelay(point.avgLatencySec).toFixed(2)}`)
+    .join(" ");
+
+  const yTickCount = 4;
+  const yTicks = [];
+  for (let idx = 0; idx <= yTickCount; idx += 1) {
+    const ratio = idx / yTickCount;
+    const value = domainMax - ratio * domainSpan;
+    const y = padTop + ratio * innerHeight;
+    yTicks.push({ value, y });
+  }
+  const lastPoint = points[points.length - 1];
+
+  ui.probeDelayChart.innerHTML = `
+    <svg class="probe-delay-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de delay medio do probe">
+      ${yTicks
+        .map(
+          (tick) => `
+            <line class="probe-delay-grid" x1="${padLeft}" y1="${tick.y.toFixed(2)}" x2="${(padLeft + innerWidth).toFixed(
+              2
+            )}" y2="${tick.y.toFixed(2)}"></line>
+            <text class="probe-delay-ylabel" x="${(padLeft - 8).toFixed(2)}" y="${(tick.y + 4).toFixed(2)}">${escapeHtml(
+            fmtSecondsPrecise(tick.value)
+          )}</text>
+          `
+        )
+        .join("")}
+      <path class="probe-delay-line" d="${pathData}"></path>
+    </svg>
+  `;
+
+  ui.probeDelayHint.textContent =
+    `Respostas na janela: ${series.responseCount} | ` +
+    `Delay medio final: ${fmtSecondsPrecise(lastPoint.avgLatencySec)} | ` +
+    `Ultima amostra: ${fmtSecondsPrecise(lastPoint.latencySec)} (${formatShortDateTime(lastPoint.ts)})`;
+}
+
 function renderTimeline(pivot) {
   const allEvents = pivot.timeline || [];
   const totalPages = Math.max(1, Math.ceil(allEvents.length / state.timelinePageSize));
@@ -777,6 +968,7 @@ function renderPivotView() {
 
   renderPivotMetrics(pivot);
   renderConnectivityTimeline(pivot);
+  renderProbeDelayChart(pivot);
   renderTimeline(pivot);
   renderCloud2Table(pivot);
 }
@@ -934,6 +1126,24 @@ function wireEvents() {
     renderPivotView();
   });
 
+  ui.probeDelayPreset.addEventListener("change", () => {
+    state.probeDelayPreset = ui.probeDelayPreset.value || "30d";
+    const custom = state.probeDelayPreset === "custom";
+    ui.probeDelayFromWrap.hidden = !custom;
+    ui.probeDelayToWrap.hidden = !custom;
+    renderPivotView();
+  });
+
+  ui.probeDelayApply.addEventListener("click", () => {
+    state.probeDelayPreset = ui.probeDelayPreset.value || "30d";
+    state.probeDelayCustomFrom = ui.probeDelayFrom.value || "";
+    state.probeDelayCustomTo = ui.probeDelayTo.value || "";
+    const custom = state.probeDelayPreset === "custom";
+    ui.probeDelayFromWrap.hidden = !custom;
+    ui.probeDelayToWrap.hidden = !custom;
+    renderPivotView();
+  });
+
   ui.connTrack.addEventListener("click", (event) => {
     const segmentEl = event.target.closest(".conn-segment");
     if (!segmentEl || !ui.connTrack.contains(segmentEl)) return;
@@ -1000,6 +1210,9 @@ async function boot() {
   ui.connPreset.value = state.connPreset;
   ui.connFromWrap.hidden = true;
   ui.connToWrap.hidden = true;
+  ui.probeDelayPreset.value = state.probeDelayPreset;
+  ui.probeDelayFromWrap.hidden = true;
+  ui.probeDelayToWrap.hidden = true;
   const hashPivot = parseHashPivot();
   if (hashPivot) {
     state.selectedPivot = hashPivot;
