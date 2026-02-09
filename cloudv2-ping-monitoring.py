@@ -29,7 +29,7 @@ MONITOR_TOPICS = tuple(runtime_config.get("monitor_topics") or FIXED_MONITOR_TOP
 DASHBOARD_ENABLED = runtime_config["dashboard_enabled"]
 DASHBOARD_PORT = runtime_config["dashboard_port"]
 DASHBOARD_REFRESH_SEC = runtime_config["dashboard_refresh_sec"]
-DEV_HOT_RELOAD = str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "0")).strip().lower() in (
+DEV_HOT_RELOAD = str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "1")).strip().lower() in (
     "1",
     "true",
     "yes",
