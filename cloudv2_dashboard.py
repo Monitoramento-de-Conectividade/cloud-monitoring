@@ -2,9 +2,8 @@ import json
 import os
 import re
 import threading
-from datetime import datetime
-from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote, urlparse
 
 
 DASHBOARD_DIR = "dashboards"
@@ -34,847 +33,146 @@ def write_json_atomic(path, data):
     os.replace(temp, path)
 
 
-def _render_index_html(pivot_entries):
-    cards = []
-    for pivot_id, file_name in pivot_entries:
-        cards.append(
-            f"""
-            <a class="pivot-card" href="{file_name}">
-                <div class="pivot-id">{pivot_id}</div>
-                <div class="pivot-sub">Abrir painel</div>
-            </a>
-            """
-        )
-
-    cards_html = "\n".join(cards) if cards else "<div class=\"empty\">Nenhum pivot configurado.</div>"
-
-    return f"""<!DOCTYPE html>
+def _default_index_html():
+    return """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>CloudV2 - Painel</title>
-    <link rel="stylesheet" href="dashboard.css"/>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CloudV2 Monitor</title>
+  <link rel="stylesheet" href="dashboard.css"/>
 </head>
-<body class="index">
-    <div class="page">
-        <header class="hero">
-            <div>
-                <h1>CloudV2 - Painel de Monitoramento</h1>
-                <p>Selecione um pivot para visualizar respostas, falhas de ping e atividade por topico.</p>
-            </div>
-        </header>
-        <section class="grid">
-            {cards_html}
-        </section>
-    </div>
+<body>
+  <div id="app"></div>
+  <script src="dashboard.js"></script>
 </body>
 </html>
 """
 
 
-def _render_pivot_html(pivot_id, pivot_file, refresh_sec):
-    return f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>CloudV2 - {pivot_id}</title>
-    <link rel="stylesheet" href="dashboard.css"/>
-</head>
-<body data-pivot-id="{pivot_id}" data-pivot-file="{pivot_file}" data-refresh-sec="{refresh_sec}">
-    <div class="page">
-        <header class="hero">
-            <div>
-                <a class="back" href="index.html">Voltar</a>
-                <h1 id="pivotTitle">{pivot_id}</h1>
-                <p id="pivotSubtitle">Atualizando automaticamente.</p>
-            </div>
-            <div class="updated">
-                <span>Ultima atualizacao</span>
-                <strong id="lastUpdated">-</strong>
-            </div>
-        </header>
+def _default_css():
+    return """body{margin:0;font-family:Arial,sans-serif;background:#f6faf7;color:#153425}#app{padding:20px}"""
 
-        <section class="stats">
-            <div class="card">
-                <div class="label">Total de mensagens</div>
-                <div class="value" id="totalCount">0</div>
-                <div class="hint">Em todos os topicos monitorados</div>
-            </div>
-            <div class="card">
-                <div class="label">Cloud2</div>
-                <div class="value" id="cloud2Count">0</div>
-                <div class="hint">Mensagens no topico cloud2</div>
-            </div>
-            <div class="card">
-                <div class="label">Ultima atividade</div>
-                <div class="value" id="lastSeen">-</div>
-                <div class="hint" id="lastSeenAgo">-</div>
-            </div>
-            <div class="card">
-                <div class="label">Ping cloudv2-ping</div>
-                <div class="value" id="lastPing">-</div>
-                <div class="hint" id="pingStatus">-</div>
-            </div>
-            <div class="card">
-                <div class="label">Resposta #11$</div>
-                <div class="value" id="responseRate">0%</div>
-                <div class="hint" id="responseTotals">0 OK | 0 NAO</div>
-            </div>
-            <div class="card">
-                <div class="label">Envios #11$</div>
-                <div class="value" id="sentCount">0</div>
-                <div class="hint" id="lastResponseAt">Ultima resposta: -</div>
-            </div>
-        </section>
 
-        <section class="charts">
-            <div class="card chart-card" id="responseChartCard">
-                <div class="card-header">
-                    <h2>Resposta #11$</h2>
-                    <span class="badge">SIM vs NAO</span>
-                </div>
-                <div class="timeline-wrap">
-                    <canvas id="responseChart"></canvas>
-                </div>
-                <div id="responseTooltip" class="chart-tooltip hidden"></div>
-                <div class="legend">
-                    <span class="dot ok"></span> Respondeu
-                    <span class="dot fail"></span> Nao respondeu
-                </div>
-            </div>
+def _default_js():
+    return """document.getElementById('app').textContent='Dashboard carregado.';"""
 
-            <div class="card chart-card" id="pingChartCard">
-                <div class="card-header">
-                    <h2>Falhas de ping cloudv2-ping</h2>
-                    <span class="badge" id="missingCount">0 falhas</span>
-                </div>
-                <div class="timeline-wrap">
-                    <canvas id="pingChart"></canvas>
-                </div>
-                <div id="pingTooltip" class="chart-tooltip hidden"></div>
-                <div class="legend">
-                    <span class="dot ok"></span> Comunicando
-                    <span class="dot miss"></span> Sem conexao
-                </div>
-            </div>
-        </section>
 
-        <section class="details">
-            <div class="card">
-                <div class="card-header">
-                    <h2>Topicos</h2>
-                    <span class="badge" id="topicCount">0 topicos</span>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Topico</th>
-                                <th>Qtde</th>
-                                <th>Ultima vez</th>
-                            </tr>
-                        </thead>
-                        <tbody id="topicsBody"></tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header">
-                    <h2>Falhas recentes</h2>
-                    <span class="badge">Ping ausente</span>
-                </div>
-                <div class="list" id="missingList"></div>
-            </div>
-        </section>
-    </div>
-    <script src="dashboard.js"></script>
-</body>
-</html>
-"""
-
-
-def _dashboard_css():
-    return """
-:root {
-  --bg: #e6f5ea;
-  --panel: #ffffff;
-  --accent: #2e7d32;
-  --accent-dark: #1b5e20;
-  --accent-soft: #cde9d4;
-  --text: #12341f;
-  --muted: #4e6f5b;
-  --ok: #2e7d32;
-  --fail: #9b8d1f;
-  --miss: #688b4f;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: "Trebuchet MS", "Verdana", "Tahoma", sans-serif;
-  color: var(--text);
-  background: radial-gradient(circle at top, #f4fbf6 0%, #d8eedf 55%, #c7e3d0 100%);
-  min-height: 100vh;
-}
-
-h1, h2 {
-  font-family: "Georgia", "Palatino Linotype", serif;
-  margin: 0;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.page {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 28px 24px 40px;
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 20px;
-  padding: 20px 24px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, #2e7d32, #1b5e20);
-  color: #f2fff4;
-  box-shadow: 0 12px 30px rgba(27, 94, 32, 0.25);
-}
-
-.hero p {
-  margin: 8px 0 0;
-  color: #d9f5df;
-}
-
-.hero .back {
-  display: inline-block;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #d9f5df;
-  margin-bottom: 10px;
-}
-
-.updated {
-  text-align: right;
-  font-size: 13px;
-  color: #d9f5df;
-}
-
-.updated strong {
-  display: block;
-  font-size: 16px;
-  color: #ffffff;
-  margin-top: 4px;
-}
-
-.stats {
-  margin-top: 24px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 16px;
-}
-
-.card {
-  background: var(--panel);
-  border-radius: 16px;
-  padding: 16px 18px;
-  box-shadow: 0 10px 20px rgba(18, 52, 31, 0.1);
-  border: 1px solid rgba(46, 125, 50, 0.15);
-}
-
-.chart-card {
-  position: relative;
-}
-
-.label {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.value {
-  font-size: 28px;
-  font-weight: 700;
-  margin-top: 6px;
-}
-
-.hint {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 6px;
-}
-
-.charts {
-  margin-top: 22px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.badge {
-  background: var(--accent-soft);
-  color: var(--accent-dark);
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-canvas {
-  width: 100%;
-  height: 180px;
-  border-radius: 12px;
-  background: #f6fbf7;
-  border: 1px solid rgba(46, 125, 50, 0.12);
-  display: block;
-}
-
-.chart-tooltip {
-  position: absolute;
-  min-width: 148px;
-  max-width: 240px;
-  background: rgba(20, 56, 34, 0.95);
-  color: #f2fff4;
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 12px;
-  pointer-events: none;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
-  z-index: 20;
-}
-
-.chart-tooltip strong {
-  display: block;
-  font-size: 12px;
-  margin-bottom: 2px;
-}
-
-.chart-tooltip span {
-  display: block;
-  color: #d9f5df;
-}
-
-.timeline-wrap {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 6px;
-}
-
-.hidden {
-  display: none;
-}
-
-.legend {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-
-.dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 6px;
-}
-
-.dot.ok { background: var(--ok); }
-.dot.fail { background: var(--fail); }
-.dot.miss { background: var(--miss); }
-
-.details {
-  margin-top: 24px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
-}
-
-.table-wrap {
-  max-height: 260px;
-  overflow: auto;
-  margin-top: 8px;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-th, td {
-  text-align: left;
-  padding: 8px 6px;
-  border-bottom: 1px solid #e1efe5;
-}
-
-th {
-  text-transform: uppercase;
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.06em;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-  max-height: 260px;
-  overflow: auto;
-}
-
-.list-item {
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: #f0f8f2;
-  border: 1px solid rgba(46, 125, 50, 0.12);
-  font-size: 12px;
-}
-
-.index .grid {
-  margin-top: 22px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
-}
-
-.pivot-card {
-  background: var(--panel);
-  border-radius: 16px;
-  padding: 18px;
-  border: 1px solid rgba(46, 125, 50, 0.2);
-  box-shadow: 0 12px 20px rgba(18, 52, 31, 0.08);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.pivot-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 14px 26px rgba(18, 52, 31, 0.16);
-}
-
-.pivot-id {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.pivot-sub {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.empty {
-  font-size: 14px;
-  color: var(--muted);
-}
-"""
-
-
-def _dashboard_js():
-    return """
-const pivotId = document.body.dataset.pivotId;
-const pivotFile = document.body.dataset.pivotFile;
-const refreshSec = parseInt(document.body.dataset.refreshSec || "5", 10);
-
-const TIMELINE_PX_PER_MIN = 10;
-const TIMELINE_PAD = 16;
-
-let lastData = null;
-let responseTimelineState = { segments: [] };
-let pingTimelineState = { segments: [] };
-
-function toLocal(ts) {
-  if (!ts) return "-";
-  const date = new Date(ts * 1000);
-  return date.toLocaleString();
-}
-
-function formatDuration(seconds) {
-  if (seconds === null || seconds === undefined) return "-";
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${(seconds / 3600).toFixed(1)}h`;
-}
-
-function setText(id, value) {
-  const node = document.getElementById(id);
-  if (node) node.textContent = value;
-}
-
-function resizeCanvas(canvas, widthPx) {
-  if (widthPx) {
-    canvas.style.width = `${widthPx}px`;
-  }
-  const rect = canvas.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(rect.width * ratio);
-  canvas.height = Math.floor(rect.height * ratio);
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  return { width: rect.width, height: rect.height, ctx };
-}
-
-function hideTooltip(tooltipId) {
-  const tooltip = document.getElementById(tooltipId);
-  if (!tooltip) return;
-  tooltip.classList.add("hidden");
-}
-
-function showTooltip(cardId, tooltipId, event, segment, label) {
-  const tooltip = document.getElementById(tooltipId);
-  const chartCard = document.getElementById(cardId);
-  if (!tooltip || !chartCard || !segment) return;
-
-  const duration = formatDuration(segment.end - segment.start);
-  const source = segment.source ? ` | origem: ${segment.source}` : "";
-  tooltip.innerHTML = `<strong>${label}</strong><span>${toLocal(segment.start)} ate ${toLocal(segment.end)} (${duration})${source}</span>`;
-  tooltip.classList.remove("hidden");
-
-  const cardRect = chartCard.getBoundingClientRect();
-  let left = event.clientX - cardRect.left + 14;
-  let top = event.clientY - cardRect.top - 48;
-
-  const maxLeft = Math.max(8, chartCard.clientWidth - tooltip.offsetWidth - 8);
-  const maxTop = Math.max(8, chartCard.clientHeight - tooltip.offsetHeight - 8);
-  left = Math.max(8, Math.min(left, maxLeft));
-  top = Math.max(8, Math.min(top, maxTop));
-
-  tooltip.style.left = `${left}px`;
-  tooltip.style.top = `${top}px`;
-}
-
-function attachTimelineHover(canvas, state, cardId, tooltipId, labelForSegment) {
-  if (!canvas || canvas.dataset.hoverReady === "1") return;
-  canvas.dataset.hoverReady = "1";
-
-  canvas.addEventListener("mousemove", event => {
-    if (!state.segments.length) {
-      hideTooltip(tooltipId);
-      return;
-    }
-    const rect = canvas.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
-    const segment = state.segments.find(item => localX >= item.x0 && localX <= item.x1);
-    if (!segment) {
-      hideTooltip(tooltipId);
-      return;
-    }
-    showTooltip(cardId, tooltipId, event, segment, labelForSegment(segment));
-  });
-
-  canvas.addEventListener("mouseleave", () => hideTooltip(tooltipId));
-}
-
-function computeTimelineSize(startTs, endTs, containerWidth) {
-  const duration = Math.max(1, endTs - startTs);
-  const pxPerSec = TIMELINE_PX_PER_MIN / 60;
-  const width = Math.max(containerWidth, Math.ceil(duration * pxPerSec) + TIMELINE_PAD * 2);
-  return { duration, pxPerSec, width };
-}
-
-function autoScrollTimeline(canvas) {
-  const wrap = canvas?.parentElement;
-  if (!wrap || !wrap.classList.contains("timeline-wrap")) return;
-  const distanceToEnd = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft;
-  if (distanceToEnd < 40) {
-    wrap.scrollLeft = wrap.scrollWidth;
-  }
-}
-
-function buildResponseSegments(events, nowTs) {
-  if (!events || events.length === 0) return [];
-  const sorted = [...events].filter(item => item && item.ts).sort((a, b) => a.ts - b.ts);
-  if (!sorted.length) return [];
-  const segments = [];
-  for (let i = 0; i < sorted.length; i += 1) {
-    const current = sorted[i];
-    const next = sorted[i + 1];
-    const start = current.ts;
-    const end = next ? next.ts : nowTs;
-    if (end <= start) continue;
-    segments.push({
-      start,
-      end,
-      ok: !!current.ok,
-      source: current.source || "",
-    });
-  }
-  return segments;
-}
-
-function buildPingSegments(events, expectedSec, graceSec, nowTs) {
-  if (!events || events.length === 0) return [];
-  const sorted = [...events].filter(item => item && item.ts).sort((a, b) => a.ts - b.ts);
-  if (!sorted.length) return [];
-  const expected = Math.max(1, expectedSec || 0);
-  const grace = Math.max(0, graceSec || 0);
-  const segments = [];
-
-  for (let i = 0; i < sorted.length - 1; i += 1) {
-    const prev = sorted[i].ts;
-    const next = sorted[i + 1].ts;
-    const gap = next - prev;
-    if (gap > expected + grace) {
-      const okEnd = prev + expected;
-      if (okEnd > prev) {
-        segments.push({ start: prev, end: okEnd, ok: true });
-      }
-      if (next > okEnd) {
-        segments.push({ start: okEnd, end: next, ok: false });
-      }
-    } else if (next > prev) {
-      segments.push({ start: prev, end: next, ok: true });
-    }
-  }
-
-  const last = sorted[sorted.length - 1].ts;
-  const tailGap = nowTs - last;
-  if (tailGap > expected + grace) {
-    const okEnd = last + expected;
-    if (okEnd > last) {
-      segments.push({ start: last, end: okEnd, ok: true });
-    }
-    if (nowTs > okEnd) {
-      segments.push({ start: okEnd, end: nowTs, ok: false });
-    }
-  } else if (nowTs > last) {
-    segments.push({ start: last, end: nowTs, ok: true });
-  }
-
-  return segments;
-}
-
-function drawTimeline(canvasId, cardId, tooltipId, segments, colors, labelForSegment, emptyLabel) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const wrap = canvas.parentElement;
-  const containerWidth = wrap ? wrap.clientWidth : canvas.getBoundingClientRect().width;
-
-  if (!segments || segments.length === 0) {
-    const { width, height, ctx } = resizeCanvas(canvas, containerWidth);
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#6a8672";
-    ctx.font = "12px Trebuchet MS";
-    ctx.fillText(emptyLabel, 12, height / 2);
-    hideTooltip(tooltipId);
-    return;
-  }
-
-  const startTs = segments[0].start;
-  const endTs = segments[segments.length - 1].end;
-  const { pxPerSec, width } = computeTimelineSize(startTs, endTs, containerWidth);
-  const { height, ctx } = resizeCanvas(canvas, width);
-
-  ctx.clearRect(0, 0, width, height);
-  const trackHeight = 40;
-  const trackTop = Math.round(height / 2 - trackHeight / 2);
-  const trackWidth = Math.max(10, width - TIMELINE_PAD * 2);
-  ctx.fillStyle = "#edf6ef";
-  ctx.fillRect(TIMELINE_PAD, trackTop, trackWidth, trackHeight);
-  ctx.strokeStyle = "rgba(46, 125, 50, 0.2)";
-  ctx.strokeRect(TIMELINE_PAD, trackTop, trackWidth, trackHeight);
-
-  const hoverSegments = [];
-  segments.forEach(segment => {
-    const x0 = TIMELINE_PAD + (segment.start - startTs) * pxPerSec;
-    const x1 = TIMELINE_PAD + (segment.end - startTs) * pxPerSec;
-    const widthSeg = Math.max(2, x1 - x0);
-    ctx.fillStyle = segment.ok ? colors.ok : colors.fail;
-    ctx.fillRect(x0, trackTop, widthSeg, trackHeight);
-    hoverSegments.push({ ...segment, x0, x1 });
-  });
-
-  ctx.fillStyle = "#5b7a66";
-  ctx.font = "11px Trebuchet MS";
-  ctx.fillText(toLocal(startTs), TIMELINE_PAD, height - 8);
-  const endLabel = toLocal(endTs);
-  const textWidth = ctx.measureText(endLabel).width;
-  ctx.fillText(endLabel, width - TIMELINE_PAD - textWidth, height - 8);
-
-  const state = canvasId === "responseChart" ? responseTimelineState : pingTimelineState;
-  state.segments = hoverSegments;
-  attachTimelineHover(canvas, state, cardId, tooltipId, labelForSegment);
-  autoScrollTimeline(canvas);
-}
-
-function drawResponseTimeline(events) {
-  const nowTs = Date.now() / 1000;
-  const segments = buildResponseSegments(events || [], nowTs);
-  drawTimeline(
-    "responseChart",
-    "responseChartCard",
-    "responseTooltip",
-    segments,
-    { ok: "#2e7d32", fail: "#9b8d1f" },
-    segment => (segment.ok ? "Respondeu" : "Nao respondeu"),
-    "Sem dados de resposta"
-  );
-}
-
-function drawPingTimeline(ping) {
-  const nowTs = Date.now() / 1000;
-  const segments = buildPingSegments(
-    (ping && ping.events) || [],
-    ping?.expected_interval_sec || 0,
-    ping?.grace_sec || 0,
-    nowTs
-  );
-  drawTimeline(
-    "pingChart",
-    "pingChartCard",
-    "pingTooltip",
-    segments,
-    { ok: "#2e7d32", fail: "#688b4f" },
-    segment => (segment.ok ? "Comunicando" : "Sem conexao"),
-    "Sem dados de ping"
-  );
-}
-
-function updateTopics(topics) {
-  const body = document.getElementById("topicsBody");
-  if (!body) return;
-  body.innerHTML = "";
-  const entries = Object.entries(topics || {});
-  entries.sort((a, b) => (b[1].count || 0) - (a[1].count || 0));
-
-  if (entries.length === 0) {
-    const row = document.createElement("tr");
-    row.innerHTML = "<td colspan='3'>Sem mensagens registradas</td>";
-    body.appendChild(row);
-    setText("topicCount", "0 topicos");
-    return;
-  }
-
-  entries.forEach(([topic, info]) => {
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${topic}</td>
-      <td>${info.count || 0}</td>
-      <td>${info.last_at || "-"}</td>
-    `;
-    body.appendChild(row);
-  });
-
-  setText("topicCount", `${entries.length} topicos`);
-}
-
-function updateMissingList(missing) {
-  const list = document.getElementById("missingList");
-  if (!list) return;
-  list.innerHTML = "";
-
-  if (!missing || missing.length === 0) {
-    list.innerHTML = "<div class='list-item'>Nenhuma falha de ping registrada.</div>";
-    return;
-  }
-
-  const slice = missing.slice(-8).reverse();
-  slice.forEach(item => {
-    const node = document.createElement("div");
-    node.className = "list-item";
-    node.textContent = `${item.start_at} ate ${item.end_at} (${formatDuration(item.duration_sec)})`;
-    list.appendChild(node);
-  });
-}
-
-function updateDashboard(data) {
-  if (!data) return;
-  lastData = data;
-
-  setText("pivotTitle", data.pivot_id || pivotId || "-");
-  setText("lastUpdated", data.updated_at || "-");
-
-  const summary = data.summary || {};
-  setText("totalCount", summary.total_count || 0);
-  setText("cloud2Count", summary.cloud2_count || 0);
-  setText("lastSeen", summary.last_seen_at || "-");
-  setText("lastSeenAgo", summary.last_seen_ago || "-");
-
-  const ping = data.ping || {};
-  setText("lastPing", ping.last_ping_at || "-");
-  const missingTotal = ping.missing_total_sec || 0;
-  const pingNote = missingTotal ? ` | ${formatDuration(missingTotal)} sem ping` : "";
-  setText("pingStatus", (ping.overdue ? "Ping atrasado" : "Ping dentro do esperado") + pingNote);
-  setText("missingCount", `${ping.missing_count || 0} falhas`);
-
-  const responses = data.responses || {};
-  setText("responseRate", `${responses.rate || 0}%`);
-  setText("responseTotals", `${responses.success || 0} OK | ${responses.fail || 0} NAO`);
-  setText("sentCount", summary.sent_count || 0);
-  setText("lastResponseAt", summary.last_response_at ? `Ultima resposta: ${summary.last_response_at}` : "Ultima resposta: -");
-
-  drawResponseTimeline(responses.events || []);
-  drawPingTimeline(ping || {});
-  updateTopics(data.topics || {});
-  updateMissingList(ping.missing_events || []);
-}
-
-async function loadData() {
-  try {
-    const response = await fetch(`${pivotFile}?t=${Date.now()}`);
-    if (!response.ok) return;
-    const data = await response.json();
-    updateDashboard(data);
-  } catch (err) {
-    setText("pivotSubtitle", "Falha ao carregar dados. Tentando novamente.");
-  }
-}
-
-window.addEventListener("resize", () => {
-  if (lastData) updateDashboard(lastData);
-});
-
-loadData();
-setInterval(loadData, refreshSec * 1000);
-"""
-
-
-def generate_dashboard_assets(pivot_ids, refresh_sec):
+def generate_dashboard_assets(refresh_sec):
     ensure_dirs()
-    write_text_atomic(os.path.join(DASHBOARD_DIR, "dashboard.css"), _dashboard_css())
-    write_text_atomic(os.path.join(DASHBOARD_DIR, "dashboard.js"), _dashboard_js())
+    index_path = os.path.join(DASHBOARD_DIR, "index.html")
+    css_path = os.path.join(DASHBOARD_DIR, "dashboard.css")
+    js_path = os.path.join(DASHBOARD_DIR, "dashboard.js")
 
-    pivot_entries = []
-    for pivot_id in pivot_ids:
-        slug = slugify(pivot_id)
-        file_name = f"pivot_{slug}.html"
-        pivot_entries.append((pivot_id, file_name))
+    if not os.path.exists(index_path):
+        write_text_atomic(index_path, _default_index_html())
+    if not os.path.exists(css_path):
+        write_text_atomic(css_path, _default_css())
+    if not os.path.exists(js_path):
+        write_text_atomic(js_path, _default_js())
 
-        html = _render_pivot_html(pivot_id, f"data/pivot_{slug}.json", refresh_sec)
-        write_text_atomic(os.path.join(DASHBOARD_DIR, file_name), html)
-
-    index_html = _render_index_html(pivot_entries)
-    write_text_atomic(os.path.join(DASHBOARD_DIR, "index.html"), index_html)
-
-    mapping = [{"pivot_id": pivot_id, "file": file_name} for pivot_id, file_name in pivot_entries]
-    write_json_atomic(os.path.join(DATA_DIR, "pivots.json"), mapping)
+    write_json_atomic(
+        os.path.join(DATA_DIR, "ui_config.json"),
+        {"refresh_sec": max(1, int(refresh_sec))},
+    )
 
 
-def start_dashboard_server(port):
+def _build_handler(telemetry_store):
+    class DashboardHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=DASHBOARD_DIR, **kwargs)
+
+        def _write_json(self, status_code, payload):
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _read_json_body(self):
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0:
+                return {}
+            raw = self.rfile.read(content_length)
+            if not raw:
+                return {}
+            return json.loads(raw.decode("utf-8"))
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path == "/api/health":
+                self._write_json(200, {"ok": True})
+                return
+
+            if path == "/api/state":
+                payload = telemetry_store.get_state_snapshot()
+                self._write_json(200, payload)
+                return
+
+            if path.startswith("/api/pivot/"):
+                pivot_id = unquote(path[len("/api/pivot/") :]).strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id invalido"})
+                    return
+                payload = telemetry_store.get_pivot_snapshot(pivot_id)
+                if payload is None:
+                    self._write_json(404, {"error": "pivot nao encontrado"})
+                    return
+                self._write_json(200, payload)
+                return
+
+            if path == "/api/probe-config":
+                payload = telemetry_store.get_probe_config_snapshot()
+                self._write_json(200, payload)
+                return
+
+            super().do_GET()
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path != "/api/probe-config":
+                self._write_json(404, {"error": "rota nao encontrada"})
+                return
+
+            try:
+                body = self._read_json_body()
+            except json.JSONDecodeError:
+                self._write_json(400, {"error": "json invalido"})
+                return
+
+            pivot_id = str(body.get("pivot_id", "")).strip()
+            if not pivot_id:
+                self._write_json(400, {"error": "pivot_id obrigatorio"})
+                return
+
+            enabled = bool(body.get("enabled", False))
+            interval_sec = body.get("interval_sec")
+            if interval_sec is None:
+                interval_sec = telemetry_store.probe_default_interval_sec
+
+            try:
+                updated = telemetry_store.update_probe_setting(pivot_id, enabled, interval_sec)
+            except ValueError as exc:
+                self._write_json(400, {"error": str(exc)})
+                return
+
+            self._write_json(200, {"ok": True, "updated": updated})
+
+        def log_message(self, format_text, *args):
+            return
+
+    return DashboardHandler
+
+
+def start_dashboard_server(port, telemetry_store):
     ensure_dirs()
-    handler = partial(SimpleHTTPRequestHandler, directory=DASHBOARD_DIR)
+    handler = _build_handler(telemetry_store)
     server = ThreadingHTTPServer(("127.0.0.1", int(port)), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
