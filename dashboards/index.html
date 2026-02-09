@@ -61,6 +61,7 @@
         <button data-status="all" class="filter active">Todos</button>
         <button data-status="green" class="filter green">Conectado</button>
         <button data-status="yellow" class="filter yellow">Atencao</button>
+        <button data-status="critical" class="filter critical">Critico</button>
         <button data-status="red" class="filter red">Offline</button>
         <button data-status="gray" class="filter gray">Inicial</button>
       </div>
@@ -153,11 +154,47 @@
             </label>
             <button id="saveProbe" class="primary">Salvar probe</button>
           </div>
+          <div class="probe-stats">
+            <table class="probe-stats-table" aria-label="Resumo do monitoramento ativo">
+              <thead>
+                <tr>
+                  <th scope="col">Campo</th>
+                  <th scope="col">Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Ultimo envio</th>
+                  <td id="probeStatLastSent">-</td>
+                </tr>
+                <tr>
+                  <th scope="row">Ultima resposta</th>
+                  <td id="probeStatLastResponse">-</td>
+                </tr>
+                <tr>
+                  <th scope="row">Timeout streak</th>
+                  <td id="probeStatTimeoutStreak">0</td>
+                </tr>
+                <tr>
+                  <th scope="row">Resp/envio</th>
+                  <td id="probeStatResponseRatio">0/0</td>
+                </tr>
+                <tr>
+                  <th scope="row">Delay ultimo</th>
+                  <td id="probeStatDelayLast">0.000s</td>
+                </tr>
+                <tr>
+                  <th scope="row">Delay medio</th>
+                  <td id="probeStatDelayAvg">0.000s</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <p id="probeHint" class="hint" aria-live="polite"></p>
         </section>
 
         <section class="probe-delay-panel">
-          <div class="panel-head tight">
+          <div class="panel-head tight probe-delay-head">
             <h3>Delay medio do probe (#11$) no tempo</h3>
             <div class="probe-delay-controls">
               <label class="field compact">
@@ -172,14 +209,16 @@
                   <option value="custom">Por periodo</option>
                 </select>
               </label>
-              <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
-                <span>De</span>
-                <input id="probeDelayFrom" type="datetime-local"/>
-              </label>
-              <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
-                <span>Ate</span>
-                <input id="probeDelayTo" type="datetime-local"/>
-              </label>
+              <div class="probe-delay-range" id="probeDelayRange" hidden>
+                <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
+                  <span>De</span>
+                  <input id="probeDelayFrom" type="datetime-local"/>
+                </label>
+                <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
+                  <span>Ate</span>
+                  <input id="probeDelayTo" type="datetime-local"/>
+                </label>
+              </div>
               <button id="probeDelayApply" class="ghost">Carregar</button>
             </div>
           </div>
