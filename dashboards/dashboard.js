@@ -31,7 +31,14 @@ const ui = {
   probeInterval: document.getElementById("probeInterval"),
   saveProbe: document.getElementById("saveProbe"),
   probeHint: document.getElementById("probeHint"),
+  probeStatLastSent: document.getElementById("probeStatLastSent"),
+  probeStatLastResponse: document.getElementById("probeStatLastResponse"),
+  probeStatTimeoutStreak: document.getElementById("probeStatTimeoutStreak"),
+  probeStatResponseRatio: document.getElementById("probeStatResponseRatio"),
+  probeStatDelayLast: document.getElementById("probeStatDelayLast"),
+  probeStatDelayAvg: document.getElementById("probeStatDelayAvg"),
   probeDelayPreset: document.getElementById("probeDelayPreset"),
+  probeDelayRange: document.getElementById("probeDelayRange"),
   probeDelayFromWrap: document.getElementById("probeDelayFromWrap"),
   probeDelayToWrap: document.getElementById("probeDelayToWrap"),
   probeDelayFrom: document.getElementById("probeDelayFrom"),
@@ -78,6 +85,7 @@ const STATUS_META = {
   all: { label: "Todos", css: "gray" },
   green: { label: "Conectado", css: "green" },
   yellow: { label: "Atencao", css: "yellow" },
+  critical: { label: "Critico", css: "critical" },
   red: { label: "Offline", css: "red" },
   gray: { label: "Inicial", css: "gray" },
 };
@@ -303,7 +311,7 @@ function renderHeader() {
 }
 
 function renderStatusSummary() {
-  const counts = { all: 0, green: 0, yellow: 0, red: 0, gray: 0 };
+  const counts = { all: 0, green: 0, yellow: 0, critical: 0, red: 0, gray: 0 };
   for (const pivot of state.pivots) {
     counts.all += 1;
     const code = (pivot.status || {}).code || "gray";
@@ -315,6 +323,7 @@ function renderStatusSummary() {
     <div class="summary-pill"><span>Total</span><strong>${counts.all}</strong></div>
     <div class="summary-pill"><span>Conectado</span><strong>${counts.green}</strong></div>
     <div class="summary-pill"><span>Atencao</span><strong>${counts.yellow}</strong></div>
+    <div class="summary-pill"><span>Critico</span><strong>${counts.critical}</strong></div>
     <div class="summary-pill"><span>Offline</span><strong>${counts.red}</strong></div>
     <div class="summary-pill"><span>Inicial</span><strong>${counts.gray}</strong></div>
   `;
@@ -816,6 +825,7 @@ function renderProbeDelayChart(pivot) {
   ui.probeDelayFrom.value = state.probeDelayCustomFrom;
   ui.probeDelayTo.value = state.probeDelayCustomTo;
   const custom = state.probeDelayPreset === "custom";
+  ui.probeDelayRange.hidden = !custom;
   ui.probeDelayFromWrap.hidden = !custom;
   ui.probeDelayToWrap.hidden = !custom;
 
@@ -984,15 +994,13 @@ function renderPivotView() {
     sentCount > 0
       ? `${responseCount}/${sentCount} (${fmtPercent(probe.response_ratio_pct)})`
       : `${responseCount}/${sentCount}`;
-  const probeHintParts = [
-    `Ultimo envio: ${text(probe.last_sent_at)}`,
-    `Ultima resposta: ${text(probe.last_response_at)}`,
-    `Timeout streak: ${text(probe.timeout_streak, "0")}`,
-    `Resp/envio: ${responseCoverageText}`,
-    `Delay ultimo: ${fmtSecondsPrecise(probe.latency_last_sec)}`,
-    `Delay medio: ${fmtSecondsPrecise(probe.latency_avg_sec)}`,
-  ];
-  ui.probeHint.textContent = probeHintParts.join(" | ");
+  ui.probeStatLastSent.textContent = text(probe.last_sent_at);
+  ui.probeStatLastResponse.textContent = text(probe.last_response_at);
+  ui.probeStatTimeoutStreak.textContent = text(probe.timeout_streak, "0");
+  ui.probeStatResponseRatio.textContent = responseCoverageText;
+  ui.probeStatDelayLast.textContent = fmtSecondsPrecise(probe.latency_last_sec);
+  ui.probeStatDelayAvg.textContent = fmtSecondsPrecise(probe.latency_avg_sec);
+  ui.probeHint.textContent = "";
 
   renderPivotMetrics(pivot);
   renderConnectivityTimeline(pivot);
@@ -1165,6 +1173,7 @@ function wireEvents() {
   ui.probeDelayPreset.addEventListener("change", () => {
     state.probeDelayPreset = ui.probeDelayPreset.value || "30d";
     const custom = state.probeDelayPreset === "custom";
+    ui.probeDelayRange.hidden = !custom;
     ui.probeDelayFromWrap.hidden = !custom;
     ui.probeDelayToWrap.hidden = !custom;
     renderPivotView();
@@ -1175,6 +1184,7 @@ function wireEvents() {
     state.probeDelayCustomFrom = ui.probeDelayFrom.value || "";
     state.probeDelayCustomTo = ui.probeDelayTo.value || "";
     const custom = state.probeDelayPreset === "custom";
+    ui.probeDelayRange.hidden = !custom;
     ui.probeDelayFromWrap.hidden = !custom;
     ui.probeDelayToWrap.hidden = !custom;
     renderPivotView();
@@ -1247,6 +1257,7 @@ async function boot() {
   ui.connFromWrap.hidden = true;
   ui.connToWrap.hidden = true;
   ui.probeDelayPreset.value = state.probeDelayPreset;
+  ui.probeDelayRange.hidden = true;
   ui.probeDelayFromWrap.hidden = true;
   ui.probeDelayToWrap.hidden = true;
   const hashPivot = parseHashPivot();
