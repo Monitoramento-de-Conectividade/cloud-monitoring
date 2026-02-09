@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CloudV2 Monitor</title>
+  <link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+  <div class="bg-shape shape-a"></div>
+  <div class="bg-shape shape-b"></div>
+  <main class="layout">
+    <header class="hero">
+      <div>
+        <p class="kicker">CloudV2 Connectivity</p>
+        <h1>Painel de Saúde dos Pivots</h1>
+        <p class="subtitle">
+          Auto-descoberta via <code>cloudv2</code>, alertas de tráfego e monitoramento seletivo de probe <code>#11$</code>.
+        </p>
+      </div>
+      <div class="hero-meta">
+        <span class="chip" id="updatedAt">Atualizando...</span>
+        <span class="chip" id="countsMeta">0 pivots</span>
+      </div>
+    </header>
+
+    <section class="panel controls">
+      <div class="control-row">
+        <label class="field">
+          <span>Buscar pivot_id</span>
+          <input id="searchInput" type="search" placeholder="Ex.: PioneiraLEM_2"/>
+        </label>
+        <label class="field">
+          <span>Ordenar por</span>
+          <select id="sortSelect">
+            <option value="critical">Criticidade</option>
+            <option value="activity_desc">Ultima atividade (recente)</option>
+            <option value="activity_asc">Ultima atividade (antiga)</option>
+            <option value="pivot_asc">pivot_id (A-Z)</option>
+          </select>
+        </label>
+      </div>
+      <div class="filters" id="statusFilters">
+        <button data-status="all" class="filter active">Todos</button>
+        <button data-status="green" class="filter green">Conectado</button>
+        <button data-status="yellow" class="filter yellow">Atencao</button>
+        <button data-status="red" class="filter red">Offline</button>
+        <button data-status="gray" class="filter gray">Inicial</button>
+      </div>
+      <div class="status-summary" id="statusSummary"></div>
+    </section>
+
+    <section class="panel" id="pendingPanel" hidden>
+      <div class="panel-head">
+        <h2>Pivots vistos em ping e ainda nao descobertos</h2>
+      </div>
+      <div id="pendingList" class="list"></div>
+    </section>
+
+    <section class="cards-wrap">
+      <div id="cardsGrid" class="cards-grid"></div>
+      <div class="pager">
+        <button id="cardsPrev" class="ghost">Anterior</button>
+        <span id="cardsPageInfo">Pagina 1/1</span>
+        <button id="cardsNext" class="ghost">Proxima</button>
+      </div>
+    </section>
+
+    <section id="pivotView" class="panel pivot-view" hidden>
+      <div class="panel-head">
+        <button id="closePivot" class="ghost">Fechar visao</button>
+        <h2 id="pivotTitle">Pivot</h2>
+        <span id="pivotStatus" class="badge gray">Inicial</span>
+      </div>
+
+      <div class="metrics-grid" id="pivotMetrics"></div>
+
+      <div class="connectivity-panel">
+        <div class="panel-head tight">
+          <h3>Timeline de Conectividade</h3>
+          <div class="conn-controls">
+            <label class="field compact">
+              <span>Periodo</span>
+              <select id="connPreset">
+                <option value="total">Total</option>
+                <option value="24h">Ultimas 24h</option>
+                <option value="48h">Ultimas 48h</option>
+                <option value="7d">Ultimos 7 dias</option>
+                <option value="15d">Ultimos 15 dias</option>
+                <option value="30d" selected>Ultimos 30 dias</option>
+                <option value="custom">Por periodo</option>
+              </select>
+            </label>
+            <label class="field compact conn-custom" id="connFromWrap" hidden>
+              <span>De</span>
+              <input id="connFrom" type="datetime-local"/>
+            </label>
+            <label class="field compact conn-custom" id="connToWrap" hidden>
+              <span>Ate</span>
+              <input id="connTo" type="datetime-local"/>
+            </label>
+            <button id="connApply" class="ghost">Carregar</button>
+          </div>
+        </div>
+        <div class="conn-summary" id="connSummary"></div>
+        <div class="conn-track-wrap">
+          <div id="connTrack" class="conn-track"></div>
+        </div>
+        <div class="conn-axis">
+          <span id="connStartLabel">-</span>
+          <span id="connEndLabel">-</span>
+        </div>
+      </div>
+
+      <div class="probe-panel">
+        <h3>Monitoramento ativo (#11$)</h3>
+        <div class="probe-controls">
+          <label class="toggle">
+            <input id="probeEnabled" type="checkbox"/>
+            <span>Habilitar probe para este pivot</span>
+          </label>
+          <label class="field compact">
+            <span>Intervalo (segundos)</span>
+            <input id="probeInterval" type="number" min="10" step="1"/>
+          </label>
+          <button id="saveProbe" class="primary">Salvar probe</button>
+        </div>
+        <p id="probeHint" class="hint"></p>
+      </div>
+
+      <div class="timeline-panel">
+        <div class="panel-head tight">
+          <h3>Timeline de eventos</h3>
+          <div class="pager">
+            <button id="timelinePrev" class="ghost">Anterior</button>
+            <span id="timelinePageInfo">Pagina 1/1</span>
+            <button id="timelineNext" class="ghost">Proxima</button>
+          </div>
+        </div>
+        <div id="timelineList" class="timeline"></div>
+      </div>
+
+      <div class="table-panel">
+        <div class="panel-head tight">
+          <h3>Historico cloud2 recente</h3>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>RSSI</th>
+                <th>Tecnologia</th>
+                <th>Duracao queda</th>
+                <th>Firmware</th>
+              </tr>
+            </thead>
+            <tbody id="cloud2Table"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="dashboard.js"></script>
+</body>
+</html>
