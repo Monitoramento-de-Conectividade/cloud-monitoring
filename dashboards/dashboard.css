@@ -602,15 +602,15 @@ select:focus {
 }
 
 .probe-delay-ylabel {
-  font-size: 9px;
+  font-size: 8px;
   fill: #4b6d5c;
   text-anchor: end;
 }
 
 .probe-delay-line {
   fill: none;
-  stroke: #1f754b;
-  stroke-width: 2.4;
+  stroke: #1c6a43;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
