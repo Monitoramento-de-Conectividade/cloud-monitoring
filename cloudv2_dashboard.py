@@ -77,7 +77,7 @@ def generate_dashboard_assets(refresh_sec):
     )
 
 
-def _build_handler(telemetry_store):
+def _build_handler(telemetry_store, reload_token_getter=None):
     class DashboardHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=DASHBOARD_DIR, **kwargs)
@@ -130,6 +130,13 @@ def _build_handler(telemetry_store):
                 self._write_json(200, payload)
                 return
 
+            if path == "/api/dev/reload-token":
+                token = ""
+                if callable(reload_token_getter):
+                    token = str(reload_token_getter() or "")
+                self._write_json(200, {"token": token})
+                return
+
             super().do_GET()
 
         def do_POST(self):
@@ -170,9 +177,9 @@ def _build_handler(telemetry_store):
     return DashboardHandler
 
 
-def start_dashboard_server(port, telemetry_store):
+def start_dashboard_server(port, telemetry_store, reload_token_getter=None):
     ensure_dirs()
-    handler = _build_handler(telemetry_store)
+    handler = _build_handler(telemetry_store, reload_token_getter=reload_token_getter)
     server = ThreadingHTTPServer(("127.0.0.1", int(port)), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
