@@ -548,7 +548,6 @@ function buildProbeDelaySeries(pivot, startTs, endTs) {
   return {
     points,
     responseCount: responses.length,
-    latestAvgSec: points.length ? points[points.length - 1].avgLatencySec : null,
   };
 }
 
