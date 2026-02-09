@@ -22,6 +22,7 @@ CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 
 STATUS_LABELS = {
     "green": "Conectado",
+    "critical": "Critico",
     "yellow": "Atencao",
     "red": "Offline",
     "gray": "Inicial",
@@ -29,9 +30,10 @@ STATUS_LABELS = {
 
 STATUS_RANK = {
     "red": 0,
-    "yellow": 1,
-    "gray": 2,
-    "green": 3,
+    "critical": 1,
+    "yellow": 2,
+    "gray": 3,
+    "green": 4,
 }
 
 
@@ -145,6 +147,13 @@ class TelemetryStore:
         self.attention_disconnected_pct_threshold = min(
             100.0,
             max(0.0, float(config.get("attention_disconnected_pct_threshold", 20.0))),
+        )
+        self.critical_disconnected_pct_threshold = min(
+            100.0,
+            max(
+                self.attention_disconnected_pct_threshold,
+                float(config.get("critical_disconnected_pct_threshold", 50.0)),
+            ),
         )
         self.attention_disconnected_window_hours = max(
             1,
@@ -1090,7 +1099,11 @@ class TelemetryStore:
         )
         attention_by_disconnected_pct = (
             attention_disconnected_pct is not None
-            and attention_disconnected_pct > self.attention_disconnected_pct_threshold
+            and attention_disconnected_pct >= self.attention_disconnected_pct_threshold
+        )
+        critical_by_disconnected_pct = (
+            attention_disconnected_pct is not None
+            and attention_disconnected_pct >= self.critical_disconnected_pct_threshold
         )
 
         if disconnected_by_inactivity:
@@ -1106,12 +1119,20 @@ class TelemetryStore:
                 "Aguardando amostras de cloudv2 para estimar mediana "
                 f"({sample_count}/{self.cloudv2_min_samples})."
             )
+        elif critical_by_disconnected_pct:
+            code = "critical"
+            reason = (
+                "Percentual desconectado na janela de monitoramento "
+                f"({attention_disconnected_pct:.1f}%) acima ou igual ao limite critico "
+                f"({self.critical_disconnected_pct_threshold:.1f}%)."
+            )
         elif attention_by_disconnected_pct:
             code = "yellow"
             reason = (
                 "Percentual desconectado na janela de monitoramento "
-                f"({attention_disconnected_pct:.1f}%) acima do limite "
-                f"({self.attention_disconnected_pct_threshold:.1f}%)."
+                f"({attention_disconnected_pct:.1f}%) acima ou igual ao limite de atencao "
+                f"({self.attention_disconnected_pct_threshold:.1f}%) "
+                f"e abaixo do limite critico ({self.critical_disconnected_pct_threshold:.1f}%)."
             )
         elif ping_ok and not cloudv2_ok:
             code = "yellow"
@@ -1145,7 +1166,9 @@ class TelemetryStore:
             "disconnected_by_inactivity": disconnected_by_inactivity,
             "attention_disconnected_pct": attention_disconnected_pct,
             "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+            "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
             "attention_window_sec": min(self.attention_disconnected_window_sec, self.retention_sec),
+            "critical_by_disconnected_pct": critical_by_disconnected_pct,
             "attention_by_disconnected_pct": attention_by_disconnected_pct,
         }
 
@@ -1216,6 +1239,7 @@ class TelemetryStore:
                 "tolerance_factor": self.tolerance_factor,
                 "ping_expected_sec": self.ping_expected_sec,
                 "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+                "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
                 "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
                 "cloudv2_median_window": self.cloudv2_window,
                 "cloudv2_min_samples": self.cloudv2_min_samples,
@@ -1311,7 +1335,9 @@ class TelemetryStore:
             "disconnected_by_inactivity": status["disconnected_by_inactivity"],
             "attention_disconnected_pct": status["attention_disconnected_pct"],
             "attention_disconnected_pct_threshold": status["attention_disconnected_pct_threshold"],
+            "critical_disconnected_pct_threshold": status["critical_disconnected_pct_threshold"],
             "attention_window_sec": status["attention_window_sec"],
+            "critical_by_disconnected_pct": status["critical_by_disconnected_pct"],
             "attention_by_disconnected_pct": status["attention_by_disconnected_pct"],
             "last_monitored_message_ts": status["last_monitored_message_ts"],
             "last_monitored_message_at": _ts_to_str(status["last_monitored_message_ts"]),
