@@ -113,6 +113,20 @@ function fmtDuration(seconds) {
   return `${(s / 3600).toFixed(1)}h`;
 }
 
+function fmtSecondsPrecise(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s < 0) return "-";
+  if (s >= 10) return `${s.toFixed(1)}s`;
+  if (s >= 1) return `${s.toFixed(2)}s`;
+  return `${s.toFixed(3)}s`;
+}
+
+function fmtPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "-";
+  return `${n.toFixed(1)}%`;
+}
+
 function agoFromTs(tsSec) {
   const ts = Number(tsSec);
   if (!Number.isFinite(ts) || ts <= 0) return "-";
@@ -357,6 +371,14 @@ function renderPivotMetrics(pivot) {
   const metrics = pivot.metrics || {};
   const status = summary.status || {};
   const probe = summary.probe || {};
+  const sentCount = Number(probe.sent_count || 0);
+  const responseCount = Number(probe.response_count || 0);
+  const timeoutCount = Number(probe.timeout_count || 0);
+  const latencySampleCount = Number(probe.latency_sample_count || 0);
+  const responseCoverageText =
+    sentCount > 0
+      ? `${responseCount}/${sentCount} (${fmtPercent(probe.response_ratio_pct)})`
+      : `${responseCount}/${sentCount}`;
 
   const cards = [
     { label: "Status", value: text(status.label) },
@@ -376,6 +398,16 @@ function renderPivotMetrics(pivot) {
     { label: "Ultima tecnologia", value: text(metrics.last_technology) },
     { label: "Firmware", value: text(metrics.last_firmware) },
     { label: "Probe timeout streak", value: text(probe.timeout_streak, "0") },
+    { label: "Probe respostas/envios", value: responseCoverageText },
+    { label: "Probe timeouts", value: text(timeoutCount, "0") },
+    { label: "Delay ultima resposta", value: fmtSecondsPrecise(probe.latency_last_sec) },
+    { label: "Delay medio resposta", value: fmtSecondsPrecise(probe.latency_avg_sec) },
+    { label: "Delay mediano resposta", value: fmtSecondsPrecise(probe.latency_median_sec) },
+    {
+      label: "Delay min/max resposta",
+      value: `${fmtSecondsPrecise(probe.latency_min_sec)} / ${fmtSecondsPrecise(probe.latency_max_sec)}`,
+    },
+    { label: "Amostras de delay", value: text(latencySampleCount, "0") },
   ];
 
   ui.pivotMetrics.innerHTML = cards
@@ -727,10 +759,19 @@ function renderPivotView() {
 
   ui.probeEnabled.checked = !!probe.enabled;
   ui.probeInterval.value = Number(probe.interval_sec || 0);
+  const sentCount = Number(probe.sent_count || 0);
+  const responseCount = Number(probe.response_count || 0);
+  const responseCoverageText =
+    sentCount > 0
+      ? `${responseCount}/${sentCount} (${fmtPercent(probe.response_ratio_pct)})`
+      : `${responseCount}/${sentCount}`;
   const probeHintParts = [
     `Ultimo envio: ${text(probe.last_sent_at)}`,
     `Ultima resposta: ${text(probe.last_response_at)}`,
     `Timeout streak: ${text(probe.timeout_streak, "0")}`,
+    `Resp/envio: ${responseCoverageText}`,
+    `Delay ultimo: ${fmtSecondsPrecise(probe.latency_last_sec)}`,
+    `Delay medio: ${fmtSecondsPrecise(probe.latency_avg_sec)}`,
   ];
   ui.probeHint.textContent = probeHintParts.join(" | ");
 
