@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "history_retention_hours": 24,
     "tolerance_factor": 1.25,
     "attention_disconnected_pct_threshold": 20.0,
+    "critical_disconnected_pct_threshold": 50.0,
     "attention_disconnected_window_hours": 24,
     "cloudv2_median_window": 20,
     "cloudv2_min_samples": 3,
@@ -193,6 +194,7 @@ def _apply_env_overrides(config):
         "HISTORY_RETENTION_HOURS": "history_retention_hours",
         "TOLERANCE_FACTOR": "tolerance_factor",
         "ATTENTION_DISCONNECTED_PCT_THRESHOLD": "attention_disconnected_pct_threshold",
+        "CRITICAL_DISCONNECTED_PCT_THRESHOLD": "critical_disconnected_pct_threshold",
         "ATTENTION_DISCONNECTED_WINDOW_HOURS": "attention_disconnected_window_hours",
         "CLOUDV2_MEDIAN_WINDOW": "cloudv2_median_window",
         "CLOUDV2_MIN_SAMPLES": "cloudv2_min_samples",
@@ -287,6 +289,13 @@ def normalize_config(raw_config):
     )
     if base["attention_disconnected_pct_threshold"] > 100.0:
         base["attention_disconnected_pct_threshold"] = 100.0
+    base["critical_disconnected_pct_threshold"] = _to_float(
+        base.get("critical_disconnected_pct_threshold"),
+        DEFAULT_CONFIG["critical_disconnected_pct_threshold"],
+        minimum=base["attention_disconnected_pct_threshold"],
+    )
+    if base["critical_disconnected_pct_threshold"] > 100.0:
+        base["critical_disconnected_pct_threshold"] = 100.0
     base["attention_disconnected_window_hours"] = _to_int(
         base.get("attention_disconnected_window_hours"),
         DEFAULT_CONFIG["attention_disconnected_window_hours"],
