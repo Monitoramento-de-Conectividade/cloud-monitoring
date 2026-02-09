@@ -20,6 +20,7 @@ def run_fixture():
             "probe_timeout_factor": 1.25,
             "show_pending_ping_pivots": False,
             "attention_disconnected_pct_threshold": 20.0,
+            "critical_disconnected_pct_threshold": 50.0,
             "attention_disconnected_window_hours": 24,
         }
     )
@@ -115,14 +116,21 @@ def run_fixture():
     check(int(probe_after_timeout.get("response_count") or 0) == 1, "contador de respostas preservado apos timeout")
     check(int(probe_after_timeout.get("timeout_count") or 0) >= 1, "contador de timeout atualizado")
 
-    # 7) Estados: amarelo e vermelho por inatividade global monitorada.
+    # 7) Estados por inatividade global monitorada (amarelo/critico e vermelho).
     emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping2$")
     now += 90
     telemetry.tick(now)
     yellow_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
     yellow_summary = (yellow_snapshot or {}).get("summary") or {}
     yellow_status = (yellow_summary.get("status") or {}).get("code")
-    check(yellow_status == "yellow", "regra ping ok + sem cloudv2 vira amarelo")
+    check(
+        bool(yellow_summary.get("ping_ok")) and not bool(yellow_summary.get("cloudv2_ok")),
+        "regra ping ok + sem cloudv2 detectada",
+    )
+    check(
+        yellow_status in ("yellow", "critical"),
+        "status fica em atencao/critico quando ping ok e cloudv2 atrasado",
+    )
 
     disconnect_threshold = int(float(yellow_summary.get("disconnect_threshold_sec") or 0))
     if disconnect_threshold < 1:
@@ -133,7 +141,7 @@ def run_fixture():
     red_status = ((red_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
     check(red_status == "red", "inatividade acima da janela global vira vermelho")
 
-    # 8) Regra nova: se percentual desconectado > 20%, status deve virar amarelo (quando nao estiver offline).
+    # 8) Regra nova: se percentual desconectado >= 50%, status deve virar critico (quando nao estiver offline).
     now += 5 * 3600
     telemetry.tick(now)
     emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping3$")
@@ -142,8 +150,8 @@ def run_fixture():
     attention_summary = (attention_snapshot or {}).get("summary") or {}
     attention_status = (attention_summary.get("status") or {}).get("code")
     attention_pct = float(attention_summary.get("attention_disconnected_pct") or 0.0)
-    check(attention_pct > 20.0, "percentual desconectado na janela acima de 20%")
-    check(attention_status == "yellow", "status vira amarelo com percentual desconectado > 20%")
+    check(attention_pct >= 50.0, "percentual desconectado na janela acima ou igual a 50%")
+    check(attention_status == "critical", "status vira critico com percentual desconectado >= 50%")
 
     # 9) Pivot novo com poucas amostras deve ficar cinza.
     emit(1, "cloudv2", "#01-GrayPivot_1-first$")
