@@ -129,6 +129,41 @@
         <p id="probeHint" class="hint"></p>
       </div>
 
+      <div class="probe-delay-panel">
+        <div class="panel-head tight">
+          <h3>Delay medio do probe (#11$) no tempo</h3>
+          <div class="probe-delay-controls">
+            <label class="field compact">
+              <span>Periodo</span>
+              <select id="probeDelayPreset">
+                <option value="total">Total</option>
+                <option value="24h">Ultimas 24h</option>
+                <option value="48h">Ultimas 48h</option>
+                <option value="7d">Ultimos 7 dias</option>
+                <option value="15d">Ultimos 15 dias</option>
+                <option value="30d" selected>Ultimos 30 dias</option>
+                <option value="custom">Por periodo</option>
+              </select>
+            </label>
+            <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
+              <span>De</span>
+              <input id="probeDelayFrom" type="datetime-local"/>
+            </label>
+            <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
+              <span>Ate</span>
+              <input id="probeDelayTo" type="datetime-local"/>
+            </label>
+            <button id="probeDelayApply" class="ghost">Carregar</button>
+          </div>
+        </div>
+        <p id="probeDelayHint" class="hint"></p>
+        <div id="probeDelayChart" class="probe-delay-chart"></div>
+        <div class="probe-delay-axis">
+          <span id="probeDelayStartLabel">-</span>
+          <span id="probeDelayEndLabel">-</span>
+        </div>
+      </div>
+
       <div class="timeline-panel">
         <div class="panel-head tight">
           <h3>Timeline de eventos</h3>
