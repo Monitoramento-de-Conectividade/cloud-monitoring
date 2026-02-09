@@ -1,44 +1,37 @@
 {
   "broker": "a19mijesri84u2-ats.iot.us-east-1.amazonaws.com",
   "port": 8883,
-  "topics": [
+  "monitor_topics": [
+    "cloudv2",
     "cloudv2-ping",
     "cloud2",
-    "cloudv2",
-    "cloudv2-shutdown",
-    "cloudv2-network"
+    "cloudv2-network",
+    "cloudv2-info"
   ],
-  "filter_names": [
-    "NovaBahia_6",
-    "NovaBahia_8",
-    "NovaBahia_9",
-    "LauroNoronha_1",
-    "LauroNoronha_2",
-    "FernandoBarbosa_2",
-    "FernandoBarbosa_3",
-    "PioneiraLEM_2",
-    "soilteste_1"
-  ],
-  "cmd_topics": [
-    "DellaRiva_1",
-    "FernandoBarbosa_3",
-    "NovaBahia_6",
-    "NovaBahia_8",
-    "NovaBahia_9"
-  ],
-  "info_topics": [
-    "cloudv2-info",
-    "cloudv2-network"
-  ],
-  "min_minutes": 1,
-  "max_minutes": 10,
-  "schedule_mode": "fixed",
-  "fixed_minutes": 5,
-  "response_timeout_sec": 10,
   "ping_interval_minutes": 3,
-  "ping_topic": "cloudv2-ping",
+  "tolerance_factor": 1.25,
+  "cloudv2_median_window": 20,
+  "cloudv2_min_samples": 3,
+  "dedupe_window_sec": 8,
+  "history_mode": "fresh",
+  "history_retention_hours": 24,
   "dashboard_enabled": true,
   "dashboard_port": 8008,
   "dashboard_refresh_sec": 5,
-  "history_mode": "fresh"
+  "show_pending_ping_pivots": false,
+  "probe_default_interval_sec": 300,
+  "probe_min_interval_sec": 60,
+  "probe_timeout_factor": 1.25,
+  "probe_timeout_streak_alert": 2,
+  "max_events_per_pivot": 5000,
+  "probe_settings": {
+    "PioneiraLEM_2": {
+      "enabled": true,
+      "interval_sec": 300
+    },
+    "NovaBahia_6": {
+      "enabled": false,
+      "interval_sec": 300
+    }
+  }
 }
