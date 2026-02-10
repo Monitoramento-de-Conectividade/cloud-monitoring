@@ -117,24 +117,51 @@ class InMemoryRateLimiter:
 class AuthEmailService:
     def __init__(self, logger=None):
         self.logger = logger
-        self.mode = self._resolve_mode()
         self.smtp_host = str(os.environ.get("AUTH_SMTP_HOST", "")).strip()
         self.smtp_port = _env_int("AUTH_SMTP_PORT", 587, minimum=1)
         self.smtp_user = str(os.environ.get("AUTH_SMTP_USER", "")).strip()
         self.smtp_password = str(os.environ.get("AUTH_SMTP_PASSWORD", "")).strip()
-        self.smtp_from = str(os.environ.get("AUTH_SMTP_FROM", "no-reply@cloud-monitor.local")).strip()
+        self.smtp_from = str(os.environ.get("AUTH_SMTP_FROM", "")).strip()
         self.smtp_starttls = str(os.environ.get("AUTH_SMTP_STARTTLS", "1")).strip().lower() in (
             "1",
             "true",
             "yes",
             "on",
         )
+        self.smtp_ssl = str(os.environ.get("AUTH_SMTP_SSL", "0")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        self.smtp_timeout_sec = _env_int("AUTH_SMTP_TIMEOUT_SEC", 20, minimum=5)
+        self.smtp_host = self._resolve_smtp_host()
+        if not self.smtp_from:
+            self.smtp_from = self.smtp_user or "no-reply@cloud-monitor.local"
+        self.mode = self._resolve_mode()
 
     def _resolve_mode(self):
         forced = str(os.environ.get("AUTH_EMAIL_MODE", "")).strip().lower()
         if forced in ("smtp", "console"):
             return forced
-        return "smtp" if str(os.environ.get("AUTH_SMTP_HOST", "")).strip() else "console"
+        if self.smtp_host:
+            return "smtp"
+        if self.smtp_user and self.smtp_password:
+            return "smtp"
+        return "console"
+
+    def _resolve_smtp_host(self):
+        explicit_host = str(self.smtp_host or "").strip()
+        if explicit_host:
+            return explicit_host
+        lowered_user = str(self.smtp_user or "").strip().lower()
+        if lowered_user.endswith("@gmail.com") or lowered_user.endswith("@googlemail.com"):
+            return "smtp.gmail.com"
+        if lowered_user.endswith("@outlook.com") or lowered_user.endswith("@hotmail.com") or lowered_user.endswith("@live.com"):
+            return "smtp.office365.com"
+        if lowered_user.endswith("@yahoo.com") or lowered_user.endswith("@yahoo.com.br"):
+            return "smtp.mail.yahoo.com"
+        return ""
 
     def _log_dev_link(self, email, label, link):
         masked = mask_email(email)
@@ -143,6 +170,8 @@ class AuthEmailService:
     def _send_smtp(self, email, subject, body):
         if not self.smtp_host:
             raise RuntimeError("AUTH_SMTP_HOST ausente para envio SMTP")
+        if self.smtp_user and not self.smtp_password:
+            raise RuntimeError("AUTH_SMTP_PASSWORD ausente para autenticar no SMTP")
 
         message = EmailMessage()
         message["Subject"] = subject
@@ -150,12 +179,38 @@ class AuthEmailService:
         message["To"] = str(email).strip()
         message.set_content(body)
 
-        with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=15) as server:
+        if self.smtp_ssl:
+            with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=self.smtp_timeout_sec) as server:
+                if self.smtp_user:
+                    server.login(self.smtp_user, self.smtp_password)
+                server.send_message(message)
+            return
+
+        with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=self.smtp_timeout_sec) as server:
+            server.ehlo()
             if self.smtp_starttls:
                 server.starttls()
+                server.ehlo()
             if self.smtp_user:
                 server.login(self.smtp_user, self.smtp_password)
             server.send_message(message)
+
+    def _log_email_error(self, email, label, error_text):
+        if self.logger is not None:
+            self.logger.warning(
+                "Falha no envio de e-mail (%s) para %s: %s",
+                str(label or "unknown"),
+                mask_email(email),
+                str(error_text or "erro desconhecido"),
+            )
+
+    def _normalize_error(self, exc):
+        message = str(exc or "").strip()
+        if not message:
+            return "erro inesperado no envio de e-mail"
+        if len(message) > 220:
+            return message[:220]
+        return message
 
     def send_verification_email(self, email, verification_link):
         subject = "Verificacao de e-mail - Cloud Monitoring"
@@ -166,7 +221,7 @@ class AuthEmailService:
             f"Este link expira em {int(VERIFY_TOKEN_TTL_SEC / 60)} minuto(s).\n"
             "Se voce nao solicitou este cadastro, ignore esta mensagem.\n"
         )
-        self._dispatch_email(email, subject, body, "verify", verification_link)
+        return self._dispatch_email(email, subject, body, "verify", verification_link)
 
     def send_reset_password_email(self, email, reset_link):
         subject = "Redefinicao de senha - Cloud Monitoring"
@@ -177,13 +232,31 @@ class AuthEmailService:
             f"Este link expira em {int(RESET_TOKEN_TTL_SEC / 60)} minuto(s).\n"
             "Se voce nao solicitou redefinicao, ignore esta mensagem.\n"
         )
-        self._dispatch_email(email, subject, body, "reset", reset_link)
+        return self._dispatch_email(email, subject, body, "reset", reset_link)
 
     def _dispatch_email(self, email, subject, body, label, fallback_link):
         if self.mode == "smtp":
-            self._send_smtp(email, subject, body)
-            return
+            try:
+                self._send_smtp(email, subject, body)
+            except Exception as exc:
+                normalized_error = self._normalize_error(exc)
+                self._log_email_error(email, label, normalized_error)
+                return {
+                    "sent": False,
+                    "mode": "smtp",
+                    "error": normalized_error,
+                }
+            return {
+                "sent": True,
+                "mode": "smtp",
+                "error": "",
+            }
         self._log_dev_link(email, label, fallback_link)
+        return {
+            "sent": False,
+            "mode": "console",
+            "error": "AUTH_EMAIL_MODE=console ativo (sem envio real).",
+        }
 
 
 class AuthService:
@@ -683,12 +756,15 @@ class AuthService:
                 self._invalidate_token_type(conn, user_id, "email_verify", now_ts)
                 verify_token = self._insert_token(conn, user_id, "email_verify", VERIFY_TOKEN_TTL_SEC, now_ts)
 
-        email_sent = True
-        try:
-            verify_link = self._build_verify_link(request_base_url, verify_token)
-            self.email_service.send_verification_email(target_email, verify_link)
-        except Exception:
-            email_sent = False
+        verify_link = self._build_verify_link(request_base_url, verify_token)
+        delivery = self.email_service.send_verification_email(target_email, verify_link) or {}
+        email_sent = bool(delivery.get("sent"))
+        delivery_mode = str(delivery.get("mode") or "unknown").strip().lower()
+        delivery_error = str(delivery.get("error") or "").strip()
+        email_delivery = "smtp_sent" if email_sent else ("console_link" if delivery_mode == "console" else "smtp_failed")
+
+        if email_delivery == "smtp_failed" and (self.logger is not None):
+            self.logger.warning("Cadastro criado, mas envio de verificacao falhou para %s", mask_email(target_email))
 
         return {
             "ok": True,
@@ -697,12 +773,18 @@ class AuthService:
                 "Cadastro concluido. "
                 + (
                     "Enviamos um link de verificacao para o e-mail informado."
-                    if email_sent
-                    else "Nao foi possivel enviar o e-mail agora; tente reenviar a verificacao."
+                    if email_delivery == "smtp_sent"
+                    else (
+                        "Ambiente em modo de desenvolvimento: o link de verificacao foi impresso no console."
+                        if email_delivery == "console_link"
+                        else "Nao foi possivel enviar o e-mail agora; revise a configuracao SMTP e tente reenviar."
+                    )
                 )
             ),
             "email_masked": mask_email(target_email),
             "privacy_policy_version": PRIVACY_POLICY_VERSION,
+            "email_delivery": email_delivery,
+            "email_error": delivery_error,
         }
 
     def login_user(self, email, password, ip_address=None, user_agent=None):
@@ -926,6 +1008,8 @@ class AuthService:
         normalized_email = self._normalize_email(email)
         target_email = None
         verify_token = None
+        channel_mode = str(getattr(self.email_service, "mode", "console")).strip().lower()
+        email_delivery = "console_link" if channel_mode == "console" else "smtp_attempted"
 
         with self._connect() as conn:
             self._cleanup_expired_records(conn, now_ts)
@@ -964,16 +1048,19 @@ class AuthService:
                     verify_token = self._insert_token(conn, str(row["id"]), "email_verify", VERIFY_TOKEN_TTL_SEC, now_ts)
 
         if target_email and verify_token:
-            try:
-                verify_link = self._build_verify_link(request_base_url, verify_token)
-                self.email_service.send_verification_email(target_email, verify_link)
-            except Exception:
-                pass
+            verify_link = self._build_verify_link(request_base_url, verify_token)
+            delivery = self.email_service.send_verification_email(target_email, verify_link) or {}
+            if (not bool(delivery.get("sent"))) and (channel_mode == "smtp") and (self.logger is not None):
+                self.logger.warning(
+                    "Falha ao reenviar verificacao para %s",
+                    mask_email(target_email),
+                )
 
         return {
             "ok": True,
             "code": "accepted",
             "message": "Se o e-mail existir, enviaremos um link de verificacao.",
+            "email_delivery": email_delivery,
         }
 
     def forgot_password(self, email, request_base_url=""):
@@ -981,6 +1068,8 @@ class AuthService:
         normalized_email = self._normalize_email(email)
         target_email = None
         reset_token = None
+        channel_mode = str(getattr(self.email_service, "mode", "console")).strip().lower()
+        email_delivery = "console_link" if channel_mode == "console" else "smtp_attempted"
 
         with self._connect() as conn:
             self._cleanup_expired_records(conn, now_ts)
@@ -1009,16 +1098,19 @@ class AuthService:
                     reset_token = self._insert_token(conn, str(row["id"]), "password_reset", RESET_TOKEN_TTL_SEC, now_ts)
 
         if target_email and reset_token:
-            try:
-                reset_link = self._build_reset_link(request_base_url, reset_token)
-                self.email_service.send_reset_password_email(target_email, reset_link)
-            except Exception:
-                pass
+            reset_link = self._build_reset_link(request_base_url, reset_token)
+            delivery = self.email_service.send_reset_password_email(target_email, reset_link) or {}
+            if (not bool(delivery.get("sent"))) and (channel_mode == "smtp") and (self.logger is not None):
+                self.logger.warning(
+                    "Falha ao enviar reset de senha para %s",
+                    mask_email(target_email),
+                )
 
         return {
             "ok": True,
             "code": "accepted",
             "message": "Se o e-mail existir, enviaremos um link de redefinicao de senha.",
+            "email_delivery": email_delivery,
         }
 
     def reset_password(self, raw_token, new_password, confirm_password):
