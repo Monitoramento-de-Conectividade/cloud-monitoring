@@ -1,0 +1,38 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Verificar e-mail - Cloud Monitoring</title>
+  <link rel="stylesheet" href="auth.css"/>
+</head>
+<body data-auth-page="verify-email">
+  <main>
+    <h1>Verifique seu e-mail</h1>
+    <p>Sem verificacao, o acesso ao dashboard permanece bloqueado.</p>
+
+    <form id="resendForm" novalidate>
+      <label>
+        E-mail
+        <input id="email" type="email" autocomplete="email"/>
+      </label>
+      <button type="submit">Reenviar verificacao</button>
+    </form>
+
+    <div id="statusMessage" class="status"> </div>
+
+    <div id="accountActions" class="account-actions hidden">
+      <button id="logoutBtn" type="button" class="secondary">Sair</button>
+      <button id="exportBtn" type="button" class="secondary">Exportar meus dados</button>
+      <button id="deleteBtn" type="button" class="danger">Excluir minha conta</button>
+    </div>
+
+    <div class="links">
+      <a href="/login">Voltar para login</a>
+      <a href="/register">Criar nova conta</a>
+      <a href="/privacy-policy">Politica de Privacidade</a>
+    </div>
+  </main>
+  <script src="auth.js"></script>
+</body>
+</html>
