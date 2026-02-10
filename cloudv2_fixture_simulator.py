@@ -21,7 +21,7 @@ def run_fixture():
             "show_pending_ping_pivots": False,
             "attention_disconnected_pct_threshold": 20.0,
             "critical_disconnected_pct_threshold": 50.0,
-            "attention_disconnected_window_hours": 24,
+            "attention_disconnected_window_hours": 1,
         }
     )
 
@@ -116,21 +116,20 @@ def run_fixture():
     check(int(probe_after_timeout.get("response_count") or 0) == 1, "contador de respostas preservado apos timeout")
     check(int(probe_after_timeout.get("timeout_count") or 0) >= 1, "contador de timeout atualizado")
 
-    # 7) Estados por inatividade global monitorada (amarelo/critico e vermelho).
+    # 7) Estado atual por inatividade global e qualidade por percentual.
     emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping2$")
     now += 90
     telemetry.tick(now)
     yellow_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
     yellow_summary = (yellow_snapshot or {}).get("summary") or {}
-    yellow_status = (yellow_summary.get("status") or {}).get("code")
+    yellow_state = (yellow_summary.get("status") or {}).get("code")
+    yellow_quality = (yellow_summary.get("quality") or {}).get("code")
     check(
         bool(yellow_summary.get("ping_ok")) and not bool(yellow_summary.get("cloudv2_ok")),
         "regra ping ok + sem cloudv2 detectada",
     )
-    check(
-        yellow_status in ("yellow", "critical"),
-        "status fica em atencao/critico quando ping ok e cloudv2 atrasado",
-    )
+    check(yellow_state == "green", "estado permanece online quando ainda ha atividade recente")
+    check(yellow_quality in ("yellow", "critical"), "qualidade fica em atencao/critico com percentual alto")
 
     disconnect_threshold = int(float(yellow_summary.get("disconnect_threshold_sec") or 0))
     if disconnect_threshold < 1:
@@ -138,20 +137,63 @@ def run_fixture():
     now += disconnect_threshold + 20
     telemetry.tick(now)
     red_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
-    red_status = ((red_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
-    check(red_status == "red", "inatividade acima da janela global vira vermelho")
+    red_state = ((red_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
+    check(red_state == "red", "inatividade acima da janela global vira offline")
 
-    # 8) Regra nova: se percentual desconectado >= 50%, status deve virar critico (quando nao estiver offline).
+    # 8) Qualidade CRITICO: percentual desconectado > 50% (quando nao estiver offline).
     now += 5 * 3600
     telemetry.tick(now)
     emit(1, "cloudv2-ping", "#10-PioneiraLEM_2-ping3$")
     emit(1, "cloudv2", "#01-PioneiraLEM_2-dataE$")
     attention_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
     attention_summary = (attention_snapshot or {}).get("summary") or {}
-    attention_status = (attention_summary.get("status") or {}).get("code")
+    attention_quality = (attention_summary.get("quality") or {}).get("code")
     attention_pct = float(attention_summary.get("attention_disconnected_pct") or 0.0)
-    check(attention_pct >= 50.0, "percentual desconectado na janela acima ou igual a 50%")
-    check(attention_status == "critical", "status vira critico com percentual desconectado >= 50%")
+    check(attention_pct > 50.0, "percentual desconectado na janela acima de 50%")
+    check(attention_quality == "critical", "qualidade vira critico com percentual desconectado > 50%")
+
+    # 8.1) Recuperacao automatica para ATENCAO quando percentual cair para <= 50%.
+    for _ in range(35):
+        emit(60, "cloudv2-ping", "#10-PioneiraLEM_2-recovery-pingA$")
+        emit(1, "cloudv2", "#01-PioneiraLEM_2-recovery-dataA$")
+    recovery_attention_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
+    recovery_attention_summary = (recovery_attention_snapshot or {}).get("summary") or {}
+    recovery_attention_quality = (recovery_attention_summary.get("quality") or {}).get("code")
+    recovery_attention_pct = float(recovery_attention_summary.get("attention_disconnected_pct") or 0.0)
+    check(recovery_attention_pct <= 50.0, "percentual desconectado recua para <= 50%")
+    check(recovery_attention_pct > 20.0, "percentual desconectado permanece > 20% no ponto intermediario")
+    check(recovery_attention_quality == "yellow", "qualidade recua de critico para atencao automaticamente")
+
+    # 8.2) Recuperacao automatica para SAUDAVEL quando percentual cair para <= 20%.
+    for _ in range(15):
+        emit(60, "cloudv2-ping", "#10-PioneiraLEM_2-recovery-pingB$")
+        emit(1, "cloudv2", "#01-PioneiraLEM_2-recovery-dataB$")
+    recovery_healthy_snapshot = telemetry.get_pivot_snapshot("PioneiraLEM_2", now)
+    recovery_healthy_summary = (recovery_healthy_snapshot or {}).get("summary") or {}
+    recovery_healthy_quality = (recovery_healthy_summary.get("quality") or {}).get("code")
+    recovery_healthy_pct = float(recovery_healthy_summary.get("attention_disconnected_pct") or 0.0)
+    recovery_healthy_connected = float(recovery_healthy_summary.get("connected_pct") or 0.0)
+    check(recovery_healthy_pct <= 20.0, "percentual desconectado recua para <= 20%")
+    check(recovery_healthy_connected >= 80.0, "percentual conectado sobe para >= 80%")
+    check(recovery_healthy_quality == "green", "qualidade recua para saudavel automaticamente")
+
+    # 8.3) Regra de ATENCAO por topicos auxiliares sem cloudv2 principal.
+    emit(1, "cloudv2", "#01-AuxOnlyPivot_1-discovery$")
+    now += 3700
+    telemetry.tick(now)
+    for _ in range(50):
+        emit(60, "cloudv2-ping", "#10-AuxOnlyPivot_1-ping$")
+    emit(1, "cloudv2-network", "#11-AuxOnlyPivot_1-RSSI-wifi-ok$")
+    aux_only_snapshot = telemetry.get_pivot_snapshot("AuxOnlyPivot_1", now)
+    aux_only_summary = (aux_only_snapshot or {}).get("summary") or {}
+    aux_only_quality = (aux_only_summary.get("quality") or {}).get("code")
+    aux_only_disconnected_pct = float(aux_only_summary.get("attention_disconnected_pct") or 0.0)
+    check(aux_only_disconnected_pct <= 20.0, "aux-only mantem percentual desconectado em faixa boa")
+    check(
+        bool(aux_only_summary.get("attention_by_only_aux_topics")),
+        "sinaliza condicao sem principal e apenas ping/network/info",
+    )
+    check(aux_only_quality == "yellow", "qualidade fica em atencao com apenas ping/network/info")
 
     # 9) Pivot novo com poucas amostras deve ficar cinza.
     emit(1, "cloudv2", "#01-GrayPivot_1-first$")
@@ -173,7 +215,8 @@ def run_fixture():
         "checks": checks,
         "published_count": len(published),
         "published_topics": sorted({item["topic"] for item in published}),
-        "final_status_pioneira": red_status,
+        "final_status_pioneira": ((recovery_healthy_snapshot or {}).get("summary", {}).get("status") or {}).get("code"),
+        "final_quality_pioneira": recovery_healthy_quality,
         "final_status_graypivot": gray_status,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
