@@ -432,6 +432,13 @@ a:focus {
   align-items: center;
 }
 
+.badge-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .pivot-id {
   font-size: clamp(1.02rem, 0.9rem + 0.6vw, 1.24rem);
   font-weight: 700;
