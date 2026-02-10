@@ -414,7 +414,7 @@ function renderSessionControls() {
   const runs = Array.isArray(state.availableRuns) ? state.availableRuns : [];
   const currentRun = state.rawState?.run || state.panelRunMeta || null;
   const sessionHintBase =
-    'Escolha "Iniciar novo monitoramento" para começar do zero ou selecione uma sessão em "Histórico" para carregar dados anteriores.';
+    'Escolha "Iniciar novo monitoramento" para começar do zero, ou selecione "Carregar histórico" para retomar o monitoramento a partir de uma sessão salva.';
   const currentRunLabel = currentRun
     ? `Sessão atual: ${text(currentRun.started_at)} (${currentRun.is_active ? "tempo real" : "histórico"})`
     : "";
@@ -500,7 +500,7 @@ async function applyMonitoringSessionAction() {
 
   const selectedRunId = text(ui.sessionSelect.value, "").trim();
   if (!selectedRunId) {
-    ui.sessionHint.textContent = "Selecione uma sessão de histórico para carregar.";
+    ui.sessionHint.textContent = "Selecione uma sessão de histórico para retomar o monitoramento.";
     return;
   }
   ui.sessionApply.disabled = true;
@@ -517,7 +517,7 @@ async function applyMonitoringSessionAction() {
     state.selectedHistoryRunId = selectedRunId;
     state.selectedRunId = selectedRunId;
     await refreshAll();
-    showToast("Histórico carregado.", "success", 2800);
+    showToast("Histórico carregado. Monitoramento retomado.", "success", 3200);
   } catch (err) {
     ui.sessionHint.textContent = "Falha ao carregar histórico. Verifique a conexão e tente novamente.";
     showToast("Falha ao carregar histórico. Verifique a conexão e tente novamente.", "error", 3800);

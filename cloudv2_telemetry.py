@@ -522,13 +522,15 @@ class TelemetryStore:
                 }
 
             pivot_items = persisted.get("pivots") if isinstance(persisted.get("pivots"), list) else []
+            run_info = persisted.get("run") if isinstance(persisted.get("run"), dict) else None
+            mode = "live" if bool((run_info or {}).get("is_active")) else "history"
             with self._lock:
                 settings = self._build_state_settings_locked()
             return {
                 "updated_at": persisted.get("updated_at") or _ts_to_str(now),
                 "updated_at_ts": _safe_float(persisted.get("updated_at_ts"), now),
                 "run_id": str(persisted.get("run_id") or normalized_run),
-                "run": persisted.get("run"),
+                "run": run_info,
                 "settings": settings,
                 "counts": {
                     "pivots": len(pivot_items),
@@ -539,7 +541,7 @@ class TelemetryStore:
                 "pivots": pivot_items,
                 "pending_ping": [],
                 "malformed_recent": [],
-                "mode": "history",
+                "mode": mode,
             }
 
         with self._lock:
@@ -625,6 +627,193 @@ class TelemetryStore:
         self.write()
         return result
 
+    def _build_drop_events_from_cloud2_locked(self, cloud2_events):
+        drops = []
+        for event in cloud2_events:
+            if not isinstance(event, dict):
+                continue
+            ts_value = _safe_float(event.get("ts"), None)
+            duration_sec = _safe_float(event.get("drop_duration_sec"), None)
+            if ts_value is None or duration_sec is None or duration_sec <= 0:
+                continue
+            drops.append(
+                {
+                    "ts": ts_value,
+                    "at": _ts_to_str(ts_value),
+                    "duration_sec": duration_sec,
+                    "technology": event.get("technology"),
+                    "rssi": event.get("rssi"),
+                }
+            )
+        if len(drops) > self.max_events_per_pivot:
+            return drops[-self.max_events_per_pivot :]
+        return drops
+
+    def _restore_pivot_from_panel_locked(self, panel, fallback_run_id, now):
+        if not isinstance(panel, dict):
+            return None
+
+        pivot_id = str(panel.get("pivot_id") or "").strip()
+        if not pivot_id:
+            return None
+
+        summary = panel.get("summary") if isinstance(panel.get("summary"), dict) else {}
+        session_meta = panel.get("session") if isinstance(panel.get("session"), dict) else {}
+        probe_summary = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
+
+        run_id = str(
+            panel.get("run_id")
+            or summary.get("run_id")
+            or fallback_run_id
+            or ""
+        ).strip() or None
+        session_id = str(
+            panel.get("session_id")
+            or session_meta.get("session_id")
+            or summary.get("session_id")
+            or ""
+        ).strip() or None
+
+        timeline_events = [item for item in (panel.get("timeline") or []) if isinstance(item, dict)]
+        timeline_events.sort(key=lambda item: _safe_float(item.get("ts"), 0))
+        if len(timeline_events) > self.max_events_per_pivot:
+            timeline_events = timeline_events[-self.max_events_per_pivot :]
+
+        cloud2_events = [item for item in (panel.get("cloud2_events") or []) if isinstance(item, dict)]
+        cloud2_events.sort(key=lambda item: _safe_float(item.get("ts"), 0))
+        if len(cloud2_events) > self.max_events_per_pivot:
+            cloud2_events = cloud2_events[-self.max_events_per_pivot :]
+
+        probe_events = [item for item in (panel.get("probe_events") or []) if isinstance(item, dict)]
+        probe_events.sort(key=lambda item: _safe_float(item.get("ts"), 0))
+        if len(probe_events) > self.max_events_per_pivot:
+            probe_events = probe_events[-self.max_events_per_pivot :]
+
+        first_timeline_ts = None
+        for event in timeline_events:
+            event_ts = _safe_float(event.get("ts"), None)
+            if event_ts is not None and event_ts > 0:
+                first_timeline_ts = event_ts
+                break
+
+        discovered_ts = (
+            _safe_float(summary.get("discovered_at_ts"), None)
+            or _safe_float(summary.get("last_activity_ts"), None)
+            or _safe_float(summary.get("last_cloudv2_ts"), None)
+            or _safe_float(summary.get("last_ping_ts"), None)
+            or first_timeline_ts
+            or _safe_float(panel.get("updated_at_ts"), None)
+            or now
+        )
+
+        pivot = self._new_pivot_state(
+            pivot_id,
+            discovered_ts,
+            session_id=session_id,
+            run_id=run_id,
+        )
+
+        topic_counters = {topic: 0 for topic in self.monitor_topics}
+        topic_last_ts = {topic: None for topic in CONNECTIVITY_TOPICS}
+        topic_intervals = {topic: [] for topic in CONNECTIVITY_TOPICS}
+        last_seen_candidates = []
+
+        for event in timeline_events:
+            event_ts = _safe_float(event.get("ts"), None)
+            if event_ts is None:
+                continue
+            last_seen_candidates.append(event_ts)
+            topic = str(event.get("topic") or "").strip()
+            if topic in topic_counters:
+                topic_counters[topic] = int(topic_counters.get(topic, 0)) + 1
+            if topic not in CONNECTIVITY_TOPICS:
+                continue
+
+            previous_ts = _safe_float(topic_last_ts.get(topic), None)
+            if previous_ts is not None and event_ts > previous_ts:
+                intervals = topic_intervals.get(topic, [])
+                intervals.append(event_ts - previous_ts)
+                if len(intervals) > self.cloudv2_window:
+                    intervals = intervals[-self.cloudv2_window :]
+                topic_intervals[topic] = intervals
+            topic_last_ts[topic] = event_ts
+
+        summary_counters = summary.get("topic_counters")
+        if isinstance(summary_counters, dict):
+            for topic in self.monitor_topics:
+                counter_value = _safe_int(summary_counters.get(topic), None)
+                if counter_value is not None and counter_value >= 0:
+                    topic_counters[topic] = counter_value
+
+        last_ping_ts = _safe_float(summary.get("last_ping_ts"), topic_last_ts.get(TOPIC_PING))
+        last_cloudv2_ts = _safe_float(summary.get("last_cloudv2_ts"), topic_last_ts.get(TOPIC_CLOUDV2))
+        last_cloud2 = summary.get("last_cloud2") if isinstance(summary.get("last_cloud2"), dict) else None
+        if last_cloud2 is None and cloud2_events:
+            last_cloud2 = dict(cloud2_events[-1])
+        last_cloud2_ts = _safe_float((last_cloud2 or {}).get("ts"), None)
+        if last_cloud2_ts is None and cloud2_events:
+            last_cloud2_ts = _safe_float(cloud2_events[-1].get("ts"), None)
+
+        if last_ping_ts is not None:
+            topic_last_ts[TOPIC_PING] = last_ping_ts
+        if last_cloudv2_ts is not None:
+            topic_last_ts[TOPIC_CLOUDV2] = last_cloudv2_ts
+
+        for value in (last_ping_ts, last_cloudv2_ts, last_cloud2_ts):
+            if value is not None:
+                last_seen_candidates.append(value)
+        last_seen_ts = max(last_seen_candidates) if last_seen_candidates else discovered_ts
+
+        probe = pivot["probe"]
+        probe["enabled"] = bool(probe_summary.get("enabled", probe.get("enabled")))
+        probe_interval = _safe_int(probe_summary.get("interval_sec"), probe.get("interval_sec"))
+        if probe_interval is None:
+            probe_interval = self.probe_default_interval_sec
+        if probe_interval < self.probe_min_interval_sec:
+            probe_interval = self.probe_min_interval_sec
+        probe["interval_sec"] = probe_interval
+        probe["events"] = probe_events
+        probe["last_sent_ts"] = _safe_float(probe_summary.get("last_sent_ts"), None)
+        probe["last_response_ts"] = _safe_float(probe_summary.get("last_response_ts"), None)
+
+        pending = bool(probe_summary.get("pending"))
+        pending_deadline_ts = _safe_float(probe_summary.get("pending_deadline_ts"), None)
+        pending_sent_ts = probe["last_sent_ts"] if pending else None
+        if pending and pending_deadline_ts is None and pending_sent_ts is not None:
+            pending_deadline_ts = pending_sent_ts + (probe_interval * self.probe_timeout_factor)
+        probe["pending_sent_ts"] = pending_sent_ts
+        probe["pending_deadline_ts"] = pending_deadline_ts
+        probe["timeout_streak"] = max(0, _safe_int(probe_summary.get("timeout_streak"), 0) or 0)
+        probe_last_result = probe_summary.get("last_result")
+        probe["last_result"] = str(probe_last_result).strip().lower() if probe_last_result not in (None, "") else None
+
+        pivot["run_id"] = run_id
+        pivot["session_id"] = session_id
+        pivot["last_seen_ts"] = last_seen_ts
+        pivot["last_ping_ts"] = last_ping_ts
+        pivot["last_cloudv2_ts"] = last_cloudv2_ts
+        pivot["last_cloud2_ts"] = last_cloud2_ts
+        pivot["topic_counters"] = topic_counters
+        pivot["topic_last_ts"] = topic_last_ts
+        pivot["topic_intervals_sec"] = topic_intervals
+        pivot["cloudv2_intervals_sec"] = list(topic_intervals.get(TOPIC_CLOUDV2) or [])
+        pivot["last_cloud2"] = last_cloud2
+        pivot["timeline"] = timeline_events
+        pivot["cloud2_events"] = cloud2_events
+        pivot["drop_events"] = self._build_drop_events_from_cloud2_locked(cloud2_events)
+
+        status_summary = summary.get("status") if isinstance(summary.get("status"), dict) else {}
+        quality_summary = summary.get("quality") if isinstance(summary.get("quality"), dict) else {}
+        pivot["status_cache"] = {
+            "code": str(status_summary.get("code") or "gray"),
+            "reason": str(status_summary.get("reason") or "Aguardando amostras iniciais de cloudv2."),
+            "quality_code": str(quality_summary.get("code") or "green"),
+            "quality_reason": str(quality_summary.get("reason") or "Qualidade aguardando dados da janela."),
+            "changed_at_ts": _safe_float(summary.get("last_activity_ts"), now),
+        }
+
+        return pivot
+
     def activate_history_run(self, run_id, now=None, source="ui"):
         normalized_run = str(run_id or "").strip()
         if not normalized_run:
@@ -632,23 +821,103 @@ class TelemetryStore:
 
         current_ts = float(now if now is not None else time.time())
         with self._lock:
-            run = self.persistence.resolve_run(run_id=normalized_run)
+            run = self.persistence.activate_existing_run(normalized_run, now_ts=current_ts)
             if not run:
                 raise ValueError("historico nao encontrado")
 
-            self._monitoring_mode = "history"
-            self._active_run_id = None
-            self._active_session_by_pivot = {}
-            self.pivots = {}
+            active_sessions = self.persistence.activate_latest_sessions_for_run(normalized_run, now_ts=current_ts)
+            try:
+                persisted = self.persistence.get_run_state_payload(run_id=normalized_run)
+            except RuntimeError:
+                persisted = None
+            persisted_pivots = persisted.get("pivots") if isinstance((persisted or {}).get("pivots"), list) else []
+
+            self._active_run_id = normalized_run
+            self._monitoring_mode = "live"
+            self._active_session_by_pivot = dict(active_sessions)
+
+            restored_pivots = {}
+            for item in persisted_pivots:
+                if not isinstance(item, dict):
+                    continue
+
+                pivot_id = str(item.get("pivot_id") or "").strip()
+                if not pivot_id:
+                    continue
+
+                preferred_session_id = str(
+                    self._active_session_by_pivot.get(pivot_id)
+                    or item.get("session_id")
+                    or ""
+                ).strip() or None
+
+                try:
+                    panel = self.persistence.get_panel_payload(
+                        pivot_id,
+                        session_id=preferred_session_id,
+                        run_id=normalized_run,
+                    )
+                except RuntimeError:
+                    panel = None
+
+                if panel is None:
+                    panel = {
+                        "pivot_id": pivot_id,
+                        "run_id": normalized_run,
+                        "session_id": preferred_session_id,
+                        "summary": item,
+                        "timeline": [],
+                        "probe_events": [],
+                        "cloud2_events": [],
+                    }
+
+                pivot = self._restore_pivot_from_panel_locked(
+                    panel,
+                    fallback_run_id=normalized_run,
+                    now=current_ts,
+                )
+                if pivot is None:
+                    continue
+
+                active_session_id = str(self._active_session_by_pivot.get(pivot_id) or "").strip()
+                if active_session_id:
+                    pivot["session_id"] = active_session_id
+                elif not pivot.get("session_id"):
+                    pivot["session_id"] = self._ensure_active_session_locked(
+                        pivot_id,
+                        current_ts,
+                        source="history_resume",
+                    )
+
+                pivot["run_id"] = normalized_run
+                self._refresh_status_locked(pivot, current_ts)
+                self._prune_pivot_locked(pivot, current_ts)
+                self._persist_pivot_snapshot_locked(pivot, current_ts)
+                restored_pivots[pivot_id] = pivot
+
+            self.pivots = restored_pivots
+            restored_session_map = {
+                pivot_id: str(pivot.get("session_id") or "").strip()
+                for pivot_id, pivot in restored_pivots.items()
+                if str(pivot.get("session_id") or "").strip()
+            }
+            self._active_session_by_pivot = {
+                pivot_id: session_id
+                for pivot_id, session_id in {**active_sessions, **restored_session_map}.items()
+                if str(session_id or "").strip()
+            }
             self.pending_ping_unknown = {}
             self.malformed_messages = []
             self.duplicate_count = 0
+            self._dedupe_cache = {}
             self._dirty = True
 
             result = {
                 "run_id": normalized_run,
                 "run": run,
                 "mode": self._monitoring_mode,
+                "pivot_count": len(restored_pivots),
+                "active_sessions": len(self._active_session_by_pivot),
                 "source": str(source or "ui"),
                 "applied_at_ts": current_ts,
                 "applied_at": _ts_to_str(current_ts),

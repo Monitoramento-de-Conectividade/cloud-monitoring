@@ -375,6 +375,135 @@ class TelemetryPersistence:
             ).fetchone()
             return self._row_to_run_dict_locked(row, now_ts=current_ts)
 
+    def activate_existing_run(self, run_id, now_ts=None):
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return None
+
+        current_ts = _safe_float(now_ts, None)
+        if current_ts is None:
+            current_ts = time.time()
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            run_row = self._query_run_row_locked(conn, run_id=normalized_run_id)
+            if run_row is None:
+                return None
+
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE monitoring_runs
+                    SET
+                        is_active = 0,
+                        ended_at_ts = COALESCE(ended_at_ts, ?),
+                        updated_at_ts = ?
+                    WHERE is_active = 1
+                        AND run_id <> ?
+                    """,
+                    (current_ts, current_ts, normalized_run_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE monitoring_runs
+                    SET
+                        is_active = 1,
+                        ended_at_ts = NULL,
+                        updated_at_ts = ?
+                    WHERE run_id = ?
+                    """,
+                    (current_ts, normalized_run_id),
+                )
+
+            row = conn.execute(
+                "SELECT * FROM monitoring_runs WHERE run_id = ? LIMIT 1",
+                (normalized_run_id,),
+            ).fetchone()
+            return self._row_to_run_dict_locked(row, now_ts=current_ts)
+
+    def activate_latest_sessions_for_run(self, run_id, now_ts=None):
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return {}
+
+        current_ts = _safe_float(now_ts, None)
+        if current_ts is None:
+            current_ts = time.time()
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            run_row = self._query_run_row_locked(conn, run_id=normalized_run_id)
+            if run_row is None:
+                return {}
+
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE monitoring_sessions
+                    SET
+                        is_active = 0,
+                        ended_at_ts = COALESCE(ended_at_ts, ?),
+                        updated_at_ts = ?
+                    WHERE is_active = 1
+                    """,
+                    (current_ts, current_ts),
+                )
+
+                latest_rows = conn.execute(
+                    """
+                    SELECT s.session_id
+                    FROM monitoring_sessions AS s
+                    WHERE s.run_id = ?
+                        AND s.session_id = (
+                            SELECT s2.session_id
+                            FROM monitoring_sessions AS s2
+                            WHERE s2.run_id = s.run_id
+                                AND s2.pivot_id = s.pivot_id
+                            ORDER BY s2.updated_at_ts DESC, s2.started_at_ts DESC
+                            LIMIT 1
+                        )
+                    GROUP BY s.pivot_id
+                    """,
+                    (normalized_run_id,),
+                ).fetchall()
+
+                for row in latest_rows:
+                    session_id = str(row["session_id"] or "").strip()
+                    if not session_id:
+                        continue
+                    conn.execute(
+                        """
+                        UPDATE monitoring_sessions
+                        SET
+                            is_active = 1,
+                            ended_at_ts = NULL,
+                            updated_at_ts = ?
+                        WHERE session_id = ?
+                        """,
+                        (current_ts, session_id),
+                    )
+
+            rows = conn.execute(
+                """
+                SELECT pivot_id, session_id
+                FROM monitoring_sessions
+                WHERE run_id = ?
+                    AND is_active = 1
+                ORDER BY updated_at_ts DESC, started_at_ts DESC
+                """,
+                (normalized_run_id,),
+            ).fetchall()
+
+            active_by_pivot = {}
+            for row in rows:
+                pivot_id = str(row["pivot_id"] or "").strip()
+                session_id = str(row["session_id"] or "").strip()
+                if not pivot_id or not session_id:
+                    continue
+                if pivot_id not in active_by_pivot:
+                    active_by_pivot[pivot_id] = session_id
+            return active_by_pivot
+
     def list_runs(self, limit=200):
         safe_limit = max(1, min(1000, int(limit or 200)))
         with self._lock:
