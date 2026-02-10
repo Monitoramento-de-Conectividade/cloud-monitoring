@@ -44,6 +44,9 @@ QUALITY_RANK = {
     "green": 2,
 }
 
+# Tolerancia percentual para considerar intervalos cloudv2 equivalentes.
+CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.10
+
 
 def _ts_to_str(ts):
     if ts is None:
@@ -172,6 +175,7 @@ class TelemetryStore:
         self.cloudv2_min_samples = max(2, int(config.get("cloudv2_min_samples", 3)))
         if self.cloudv2_min_samples > self.cloudv2_window:
             self.cloudv2_min_samples = self.cloudv2_window
+        self.cloudv2_median_tolerance_pct = CLOUDV2_MEDIAN_TOLERANCE_PCT
 
         self.dedupe_window_sec = max(1, int(config.get("dedupe_window_sec", 8)))
         self.history_retention_hours = max(24, int(config.get("history_retention_hours", 24)))
@@ -514,6 +518,61 @@ class TelemetryStore:
 
         return normalized
 
+    def _compute_cloudv2_interval_stats_locked(self, intervals):
+        cleaned = []
+        if isinstance(intervals, list):
+            for item in intervals:
+                parsed = _safe_float(item, None)
+                if parsed is not None and parsed > 0:
+                    cleaned.append(parsed)
+
+        if not cleaned:
+            return {
+                "median_interval_sec": None,
+                "sample_count": 0,
+                "total_sample_count": 0,
+            }
+
+        buckets = []
+        for index, interval_sec in enumerate(cleaned):
+            matched_bucket = None
+            matched_delta_ratio = None
+            for bucket in buckets:
+                reference = bucket["reference_sec"]
+                if reference <= 0:
+                    continue
+                tolerance = reference * self.cloudv2_median_tolerance_pct
+                delta = abs(interval_sec - reference)
+                if delta > tolerance:
+                    continue
+
+                delta_ratio = delta / reference
+                if matched_bucket is None or delta_ratio < matched_delta_ratio:
+                    matched_bucket = bucket
+                    matched_delta_ratio = delta_ratio
+
+            if matched_bucket is None:
+                buckets.append(
+                    {
+                        "reference_sec": interval_sec,
+                        "samples": [interval_sec],
+                        "last_index": index,
+                    }
+                )
+                continue
+
+            matched_bucket["samples"].append(interval_sec)
+            matched_bucket["last_index"] = index
+            matched_bucket["reference_sec"] = statistics.median(matched_bucket["samples"])
+
+        best_bucket = max(buckets, key=lambda bucket: (len(bucket["samples"]), bucket["last_index"]))
+        best_samples = best_bucket["samples"]
+        return {
+            "median_interval_sec": statistics.median(best_samples),
+            "sample_count": len(best_samples),
+            "total_sample_count": len(cleaned),
+        }
+
     def _new_pivot_state(self, pivot_id, discovered_ts):
         probe_setting = self._probe_settings.get(pivot_id, {})
         probe_enabled = bool(probe_setting.get("enabled", False))
@@ -603,13 +662,16 @@ class TelemetryStore:
         interval_sec = intervals[-1] if intervals else None
         if intervals:
             pivot["cloudv2_intervals_sec"] = intervals[-self.cloudv2_window :]
-            median_value = statistics.median(pivot["cloudv2_intervals_sec"])
-            self.log.debug(
-                "Mediana cloudv2 atualizada: pivot_id=%s mediana=%.2fs amostras=%s",
-                pivot["pivot_id"],
-                median_value,
-                len(pivot["cloudv2_intervals_sec"]),
-            )
+            interval_stats = self._compute_cloudv2_interval_stats_locked(pivot["cloudv2_intervals_sec"])
+            median_value = interval_stats["median_interval_sec"]
+            if median_value is not None:
+                self.log.debug(
+                    "Mediana cloudv2 atualizada: pivot_id=%s mediana=%.2fs amostras_validas=%s total=%s",
+                    pivot["pivot_id"],
+                    median_value,
+                    interval_stats["sample_count"],
+                    interval_stats["total_sample_count"],
+                )
 
         pivot["last_cloudv2_ts"] = ts
 
@@ -1059,8 +1121,9 @@ class TelemetryStore:
             if isinstance(topic_intervals.get(TOPIC_CLOUDV2), list)
             else pivot.get("cloudv2_intervals_sec", [])
         ) or []
-        sample_count = len(cloudv2_intervals)
-        median_interval_sec = statistics.median(cloudv2_intervals) if cloudv2_intervals else None
+        cloudv2_interval_stats = self._compute_cloudv2_interval_stats_locked(cloudv2_intervals)
+        sample_count = cloudv2_interval_stats["sample_count"]
+        median_interval_sec = cloudv2_interval_stats["median_interval_sec"]
         cloudv2_window = None
         cloudv2_ok = False
         cloudv2_age_sec = None
@@ -1075,8 +1138,10 @@ class TelemetryStore:
         for topic in CONNECTIVITY_TOPICS:
             intervals = topic_intervals.get(topic)
             topic_expected = None
-            if isinstance(intervals, list) and intervals:
-                if len(intervals) >= self.cloudv2_min_samples or topic in (TOPIC_PING, TOPIC_CLOUDV2):
+            if topic == TOPIC_CLOUDV2:
+                topic_expected = median_interval_sec
+            elif isinstance(intervals, list) and intervals:
+                if len(intervals) >= self.cloudv2_min_samples or topic == TOPIC_PING:
                     topic_expected = statistics.median(intervals)
             if topic_expected is None and topic == TOPIC_PING:
                 topic_expected = float(self.ping_expected_sec)

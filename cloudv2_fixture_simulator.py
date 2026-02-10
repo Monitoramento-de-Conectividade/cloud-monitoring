@@ -201,6 +201,38 @@ def run_fixture():
     gray_status = ((gray_snapshot or {}).get("summary", {}).get("status") or {}).get("code")
     check(gray_status == "gray", "pivot novo sem amostras suficientes fica cinza")
 
+    # 9.1) Mediana cloudv2 com tolerancia: pequenas variacoes contam na mesma base.
+    emit(1, "cloudv2", "#01-MedianTolPivot_1-start$")
+    emit(300, "cloudv2", "#01-MedianTolPivot_1-sampleA$")
+    emit(310, "cloudv2", "#01-MedianTolPivot_1-sampleB$")
+    emit(295, "cloudv2", "#01-MedianTolPivot_1-sampleC$")
+    emit(305, "cloudv2", "#01-MedianTolPivot_1-sampleD$")
+    median_tol_snapshot = telemetry.get_pivot_snapshot("MedianTolPivot_1", now)
+    median_tol_summary = (median_tol_snapshot or {}).get("summary") or {}
+    median_tol_value = float(median_tol_summary.get("median_cloudv2_interval_sec") or 0.0)
+    median_tol_samples = int(median_tol_summary.get("median_sample_count") or 0)
+    check(295.0 <= median_tol_value <= 310.0, "mediana cloudv2 fica proxima de 300s com variacao leve")
+    check(median_tol_samples >= 4, "variacoes 300/310/295/305 contam como amostras validas")
+
+    emit(360, "cloudv2", "#01-MedianTolPivot_1-outlier360$")
+    outlier_snapshot = telemetry.get_pivot_snapshot("MedianTolPivot_1", now)
+    outlier_summary = (outlier_snapshot or {}).get("summary") or {}
+    outlier_median = float(outlier_summary.get("median_cloudv2_interval_sec") or 0.0)
+    outlier_samples = int(outlier_summary.get("median_sample_count") or 0)
+    check(295.0 <= outlier_median <= 310.0, "intervalo 360s nao derruba candidato de ~300s")
+    check(outlier_samples == median_tol_samples, "intervalo 360s nao entra como equivalente ao bucket de ~300s")
+
+    emit(600, "cloudv2", "#01-MedianTolPivot_1-switchA$")
+    emit(610, "cloudv2", "#01-MedianTolPivot_1-switchB$")
+    emit(590, "cloudv2", "#01-MedianTolPivot_1-switchC$")
+    emit(605, "cloudv2", "#01-MedianTolPivot_1-switchD$")
+    switched_snapshot = telemetry.get_pivot_snapshot("MedianTolPivot_1", now)
+    switched_summary = (switched_snapshot or {}).get("summary") or {}
+    switched_median = float(switched_summary.get("median_cloudv2_interval_sec") or 0.0)
+    switched_samples = int(switched_summary.get("median_sample_count") or 0)
+    check(580.0 <= switched_median <= 620.0, "candidato da mediana migra para ~600s com novas amostras")
+    check(switched_samples >= 4, "tolerancia reaplica no novo candidato de ~600s")
+
     # 10) Garantia final: nenhuma publicacao em topicos fixos.
     check(
         all(item["topic"] not in FIXED_MONITOR_TOPICS for item in published),
