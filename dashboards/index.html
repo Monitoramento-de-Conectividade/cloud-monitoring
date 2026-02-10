@@ -3,86 +3,87 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>CloudV2 Monitor</title>
+  <title>Monitoramento de Conectividade</title>
   <link rel="stylesheet" href="dashboard.css"/>
 </head>
 <body>
-  <a class="skip-link" href="#cardsSection">Ir para lista de pivots</a>
+  <a class="skip-link" href="#cardsSection">Ir para lista de pivôs</a>
   <div class="bg-shape shape-a"></div>
   <div class="bg-shape shape-b"></div>
 
   <main class="layout">
     <header class="hero">
       <div class="hero-main">
-        <p class="kicker">CloudV2 Connectivity</p>
-        <h1>Painel de Saude dos Pivots</h1>
+        <p class="kicker">MONITORAMENTO DE CONECTIVIDADE</p>
+        <h1>Painel de Conectividade dos Pivôs</h1>
         <p class="subtitle">
-          Auto-descoberta via <code>cloudv2</code>, alertas de trafego e monitoramento seletivo de probe <code>#11$</code>.
+          Status em tempo real e histórico de conexão dos pivôs.
         </p>
       </div>
       <div class="hero-meta" role="status" aria-live="polite">
-        <span class="chip" id="updatedAt">Atualizando...</span>
-        <span class="chip" id="countsMeta">0 pivots</span>
+        <span class="chip" id="updatedAt">Última atualização: -</span>
+        <span class="chip" id="countsMeta">0 pivôs</span>
       </div>
       <div class="hero-session">
         <label class="field compact hero-session-field">
-          <span>Sessao de monitoramento</span>
+          <span>MODO</span>
           <select id="sessionAction">
-            <option value="new">Iniciar monitoramento novo</option>
-            <option value="history">Carregar historico</option>
+            <option value="new">Selecione uma opção</option>
+            <option value="new">Iniciar novo monitoramento</option>
+            <option value="history">Carregar histórico</option>
           </select>
         </label>
         <label class="field compact hero-session-field" id="sessionSelectWrap" hidden>
-          <span>Historico</span>
+          <span>HISTÓRICO</span>
           <select id="sessionSelect"></select>
         </label>
         <button id="sessionApply" class="ghost" type="button">Aplicar</button>
-        <button id="purgeDatabase" class="danger" type="button">Deletar dados do banco</button>
+        <button id="purgeDatabase" class="danger" type="button">Excluir histórico</button>
         <p class="hero-session-hint" id="sessionHint">
-          Escolha iniciar monitoramento novo para todo o sistema ou carregar um historico global salvo.
+          Escolha "Iniciar novo monitoramento" para começar do zero ou selecione uma sessão em "Histórico" para carregar dados anteriores.
         </p>
       </div>
     </header>
 
-    <nav class="panel section-nav" aria-label="Navegacao de secoes">
-      <a href="#overviewSection">Visao geral</a>
-      <a href="#pendingPanel">Pendencias</a>
-      <a href="#cardsSection">Pivots</a>
-      <a href="#pivotView">Detalhe do pivot</a>
+    <nav class="panel section-nav" aria-label="Navegação de seções">
+      <a href="#overviewSection">Visão geral</a>
+      <a href="#pendingPanel">Pendências</a>
+      <a href="#cardsSection">Pivôs</a>
+      <a href="#pivotView">Detalhes do pivô</a>
     </nav>
 
     <section id="overviewSection" class="panel controls">
       <div class="panel-head block">
         <div>
-          <h2>Visao geral e filtros</h2>
-          <p class="section-copy">Filtre por status/qualidade, busque por pivot_id e ordene por criticidade ou atividade.</p>
+          <h2>Visão geral e filtros</h2>
+          <p class="section-copy">Filtre por status, busque por pivô e ordene por prioridade ou atividade.</p>
         </div>
       </div>
 
       <div class="control-row">
         <label class="field">
-          <span>Buscar pivot_id</span>
+          <span>Buscar pivô</span>
           <input id="searchInput" type="search" placeholder="Ex.: PioneiraLEM_2" autocomplete="off"/>
         </label>
         <label class="field">
           <span>Ordenar por</span>
           <select id="sortSelect">
-            <option value="critical">Criticidade (Estado + Qualidade)</option>
-            <option value="activity_desc">Ultima atividade (recente)</option>
-            <option value="activity_asc">Ultima atividade (antiga)</option>
-            <option value="pivot_asc">pivot_id (A-Z)</option>
+            <option value="critical">Prioridade (Status + Conectividade)</option>
+            <option value="activity_desc">Última atualização (mais recente)</option>
+            <option value="activity_asc">Última atualização (mais antiga)</option>
+            <option value="pivot_asc">Pivô (A-Z)</option>
           </select>
         </label>
       </div>
 
       <div class="filters" id="statusFilters" role="toolbar" aria-label="Filtro de status">
         <button data-status="all" class="filter active">Todos</button>
-        <button data-status="green" class="filter green">Online</button>
-        <button data-status="quality_green" class="filter green">Saudavel</button>
-        <button data-status="quality_calculating" class="filter calculating">Calculando</button>
-        <button data-status="yellow" class="filter yellow">Atencao</button>
-        <button data-status="critical" class="filter critical">Critico</button>
-        <button data-status="red" class="filter red">Offline</button>
+        <button data-status="green" class="filter green">Conectado</button>
+        <button data-status="quality_green" class="filter green">Estável</button>
+        <button data-status="quality_calculating" class="filter calculating">Em análise</button>
+        <button data-status="yellow" class="filter yellow">Instável</button>
+        <button data-status="critical" class="filter critical">Crítico</button>
+        <button data-status="red" class="filter red">Desconectado</button>
         <button data-status="gray" class="filter gray">Inicial</button>
       </div>
 
@@ -91,7 +92,7 @@
 
     <section class="panel" id="pendingPanel" hidden>
       <div class="panel-head tight">
-        <h2>Pivots vistos em ping e ainda nao descobertos</h2>
+        <h2>Pivôs com atividade inicial</h2>
       </div>
       <div id="pendingList" class="list"></div>
     </section>
@@ -99,13 +100,13 @@
     <section id="cardsSection" class="panel cards-wrap">
       <div class="panel-head tight">
         <div>
-          <h2>Pivots monitorados</h2>
-          <p class="section-copy">Selecione um pivot para abrir a visao detalhada com timeline, metricas e probe.</p>
+          <h2>Pivôs monitorados</h2>
+          <p class="section-copy">Selecione um pivô para ver conectividade, histórico e latência.</p>
         </div>
         <div class="pager">
           <button id="cardsPrev" class="ghost">Anterior</button>
-          <span id="cardsPageInfo">Pagina 1/1</span>
-          <button id="cardsNext" class="ghost">Proxima</button>
+          <span id="cardsPageInfo">Página 1/1</span>
+          <button id="cardsNext" class="ghost">Próxima</button>
         </div>
       </div>
       <div id="cardsGrid" class="cards-grid"></div>
@@ -114,10 +115,10 @@
     <section id="pivotView" class="panel pivot-view" hidden>
         <div class="panel-head">
           <div class="pivot-title-wrap">
-            <button id="closePivot" class="ghost">Fechar visao</button>
-            <h2 id="pivotTitle">Pivot</h2>
-            <span id="pivotStatus" class="badge gray">Estado: Inicial</span>
-            <span id="pivotQuality" class="badge green">Qualidade: Saudavel</span>
+            <button id="closePivot" class="ghost">Fechar visão</button>
+            <h2 id="pivotTitle">Pivô</h2>
+            <span id="pivotStatus" class="badge gray">Status: Inicial</span>
+            <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
           </div>
         </div>
 
@@ -126,18 +127,18 @@
       <div class="pivot-sections">
         <section class="connectivity-panel">
           <div class="panel-head tight">
-            <h3>Timeline de conectividade</h3>
+            <h3>Linha do tempo de conectividade</h3>
             <div class="conn-controls">
               <label class="field compact">
-                <span>Periodo</span>
+                <span>Período</span>
                 <select id="connPreset">
                   <option value="total">Total</option>
-                  <option value="24h">Ultimas 24h</option>
-                  <option value="48h">Ultimas 48h</option>
-                  <option value="7d">Ultimos 7 dias</option>
-                  <option value="15d">Ultimos 15 dias</option>
-                  <option value="30d" selected>Ultimos 30 dias</option>
-                  <option value="custom">Por periodo</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
                 </select>
               </label>
               <label class="field compact conn-custom" id="connFromWrap" hidden>
@@ -145,7 +146,7 @@
                 <input id="connFrom" type="datetime-local"/>
               </label>
               <label class="field compact conn-custom" id="connToWrap" hidden>
-                <span>Ate</span>
+                <span>Até</span>
                 <input id="connTo" type="datetime-local"/>
               </label>
               <button id="connApply" class="ghost">Carregar</button>
@@ -163,20 +164,20 @@
         </section>
 
         <section class="probe-panel">
-          <h3>Monitoramento ativo (#11$)</h3>
+          <h3>Monitoramento de latência</h3>
           <div class="probe-controls">
             <label class="toggle">
               <input id="probeEnabled" type="checkbox"/>
-              <span>Habilitar probe para este pivot</span>
+              <span>Ativar monitoramento de latência para este pivô</span>
             </label>
             <label class="field compact">
               <span>Intervalo (segundos)</span>
               <input id="probeInterval" type="number" min="10" step="1"/>
             </label>
-            <button id="saveProbe" class="primary">Salvar probe</button>
+            <button id="saveProbe" class="primary">Salvar configuração</button>
           </div>
           <div class="probe-stats">
-            <table class="probe-stats-table" aria-label="Resumo do monitoramento ativo">
+            <table class="probe-stats-table" aria-label="Resumo do monitoramento de latência">
               <thead>
                 <tr>
                   <th scope="col">Campo</th>
@@ -185,27 +186,27 @@
               </thead>
               <tbody>
                 <tr>
-                  <th scope="row">Ultimo envio</th>
+                  <th scope="row">Última solicitação</th>
                   <td id="probeStatLastSent">-</td>
                 </tr>
                 <tr>
-                  <th scope="row">Ultima resposta</th>
+                  <th scope="row">Última resposta</th>
                   <td id="probeStatLastResponse">-</td>
                 </tr>
                 <tr>
-                  <th scope="row">Timeout streak</th>
+                  <th scope="row">Falhas consecutivas</th>
                   <td id="probeStatTimeoutStreak">0</td>
                 </tr>
                 <tr>
-                  <th scope="row">Resp/envio</th>
+                  <th scope="row">Respostas/solicitações</th>
                   <td id="probeStatResponseRatio">0/0</td>
                 </tr>
                 <tr>
-                  <th scope="row">Delay ultimo</th>
+                  <th scope="row">Latência da última resposta</th>
                   <td id="probeStatDelayLast">0.000s</td>
                 </tr>
                 <tr>
-                  <th scope="row">Delay medio</th>
+                  <th scope="row">Latência média</th>
                   <td id="probeStatDelayAvg">0.000s</td>
                 </tr>
               </tbody>
@@ -216,18 +217,18 @@
 
         <section class="probe-delay-panel">
           <div class="panel-head tight probe-delay-head">
-            <h3>Delay medio do probe (#11$) no tempo</h3>
+            <h3>Latência ao longo do tempo</h3>
             <div class="probe-delay-controls">
               <label class="field compact">
-                <span>Periodo</span>
+                <span>Período</span>
                 <select id="probeDelayPreset">
                   <option value="total">Total</option>
-                  <option value="24h">Ultimas 24h</option>
-                  <option value="48h">Ultimas 48h</option>
-                  <option value="7d">Ultimos 7 dias</option>
-                  <option value="15d">Ultimos 15 dias</option>
-                  <option value="30d" selected>Ultimos 30 dias</option>
-                  <option value="custom">Por periodo</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
                 </select>
               </label>
               <div class="probe-delay-range" id="probeDelayRange" hidden>
@@ -236,7 +237,7 @@
                   <input id="probeDelayFrom" type="datetime-local"/>
                 </label>
                 <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
-                  <span>Ate</span>
+                  <span>Até</span>
                   <input id="probeDelayTo" type="datetime-local"/>
                 </label>
               </div>
@@ -253,11 +254,11 @@
 
         <section class="timeline-panel">
           <div class="panel-head tight">
-            <h3>Timeline de eventos</h3>
+            <h3>Eventos de conectividade</h3>
             <div class="pager">
               <button id="timelinePrev" class="ghost">Anterior</button>
-              <span id="timelinePageInfo">Pagina 1/1</span>
-              <button id="timelineNext" class="ghost">Proxima</button>
+              <span id="timelinePageInfo">Página 1/1</span>
+              <button id="timelineNext" class="ghost">Próxima</button>
             </div>
           </div>
           <div id="timelineList" class="timeline"></div>
@@ -265,17 +266,17 @@
 
         <section class="table-panel">
           <div class="panel-head tight">
-            <h3>Historico cloud2 recente</h3>
+            <h3>Histórico recente de sinal e rede</h3>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Data</th>
-                  <th>RSSI</th>
-                  <th>Tecnologia</th>
-                  <th>Duracao queda</th>
-                  <th>Firmware</th>
+                  <th>Data/hora</th>
+                  <th>Sinal (RSSI)</th>
+                  <th>Tecnologia de rede</th>
+                  <th>Duração da queda</th>
+                  <th>Versão do firmware</th>
                 </tr>
               </thead>
               <tbody id="cloud2Table"></tbody>

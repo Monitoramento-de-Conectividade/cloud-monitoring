@@ -99,31 +99,45 @@ const state = {
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
-  green: { label: "Online", css: "green", rank: 2 },
-  yellow: { label: "Atencao", css: "yellow", rank: 99 },
-  critical: { label: "Critico", css: "critical", rank: 99 },
-  red: { label: "Offline", css: "red", rank: 0 },
+  green: { label: "Conectado", css: "green", rank: 2 },
+  yellow: { label: "Instável", css: "yellow", rank: 99 },
+  critical: { label: "Crítico", css: "critical", rank: 99 },
+  red: { label: "Desconectado", css: "red", rank: 0 },
   gray: { label: "Inicial", css: "gray", rank: 1 },
 };
 
 const QUALITY_META = {
-  critical: { label: "Critico", rank: 0 },
-  yellow: { label: "Atencao", rank: 1 },
-  calculating: { label: "Calculando", rank: 2 },
-  green: { label: "Saudavel", rank: 3 },
+  critical: { label: "Crítico", rank: 0 },
+  yellow: { label: "Instável", rank: 1 },
+  calculating: { label: "Em análise", rank: 2 },
+  green: { label: "Estável", rank: 3 },
 };
 
 const EVENT_LABEL = {
-  pivot_discovered: "Descoberta",
-  cloudv2: "Pacote cloudv2",
-  ping: "Ping cloudv2-ping",
-  cloud2: "Evento cloud2",
-  probe_sent: "Probe enviado",
-  probe_response: "Probe respondido",
-  probe_timeout: "Probe timeout",
-  probe_response_unmatched: "Resposta sem correlacao",
-  session_started: "Nova sessao",
+  pivot_discovered: "Início de monitoramento",
+  cloudv2: "Atualização de conectividade",
+  ping: "Atualização de conectividade",
+  cloud2: "Atualização de rede",
+  probe_sent: "Solicitação de latência enviada",
+  probe_response: "Resposta de latência recebida",
+  probe_timeout: "Falha de resposta de latência",
+  probe_response_unmatched: "Resposta fora da janela",
+  session_started: "Nova sessão",
 };
+
+const INTERNAL_TERMS = [
+  "cloudv2",
+  "cloud2",
+  "probe",
+  "#11$",
+  "payload",
+  "topico",
+  "tópico",
+  "topic",
+  "ping",
+  "network",
+  "mqtt",
+];
 
 function parseHashPivot() {
   const raw = String(location.hash || "");
@@ -157,7 +171,7 @@ function fmtDuration(seconds) {
   const s = Number(seconds);
   if (!Number.isFinite(s) || s < 0) return "-";
   if (s < 60) return `${Math.round(s)}s`;
-  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 3600) return `${Math.round(s / 60)} min`;
   return `${(s / 3600).toFixed(1)}h`;
 }
 
@@ -185,10 +199,10 @@ function agoFromTs(tsSec) {
   const ts = Number(tsSec);
   if (!Number.isFinite(ts) || ts <= 0) return "-";
   const delta = Math.max(0, Math.floor(Date.now() / 1000 - ts));
-  if (delta < 60) return `${delta}s atras`;
-  if (delta < 3600) return `${Math.floor(delta / 60)}m atras`;
-  if (delta < 86400) return `${(delta / 3600).toFixed(1)}h atras`;
-  return `${(delta / 86400).toFixed(1)}d atras`;
+  if (delta < 60) return `${delta}s atrás`;
+  if (delta < 3600) return `${Math.floor(delta / 60)} min atrás`;
+  if (delta < 86400) return `${(delta / 3600).toFixed(1)}h atrás`;
+  return `${(delta / 86400).toFixed(1)}d atrás`;
 }
 
 function toDateTimeLocal(tsSec) {
@@ -225,29 +239,91 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function sanitizeUserText(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const lowered = raw.toLowerCase();
+  for (const term of INTERNAL_TERMS) {
+    if (lowered.includes(term)) return "";
+  }
+  return raw;
+}
+
+function statusReasonByCode(code) {
+  if (code === "green") return "Conectividade dentro do esperado.";
+  if (code === "red") return "Sem comunicação recente.";
+  if (code === "yellow") return "Oscilações de conectividade detectadas.";
+  if (code === "critical") return "Conectividade crítica no período.";
+  return "Coletando dados para definir o status.";
+}
+
+function qualityReasonByCode(code) {
+  if (code === "green") return "Conectividade estável no período selecionado.";
+  if (code === "yellow") return "Conectividade instável no período selecionado.";
+  if (code === "critical") return "Conectividade crítica no período selecionado.";
+  return "Coletando dados para avaliar a conectividade.";
+}
+
+function buildEventSummary(event) {
+  const type = String((event || {}).type || "").toLowerCase();
+  if (type === "pivot_discovered") return "Monitoramento iniciado para este pivô.";
+  if (type === "cloudv2" || type === "ping" || type === "cloud2") return "Atualização de conectividade registrada.";
+  if (type === "probe_sent") return "Solicitação de latência enviada.";
+  if (type === "probe_response") return "Resposta de latência recebida no período esperado.";
+  if (type === "probe_timeout") return "Sem resposta de latência no tempo esperado.";
+  if (type === "probe_response_unmatched") return "Resposta de latência registrada fora da janela esperada.";
+  if (type === "session_started") return "Nova sessão de monitoramento iniciada.";
+  return sanitizeUserText((event || {}).summary) || "Evento registrado.";
+}
+
+function buildEventDetailsText(event) {
+  const details = (event || {}).details || {};
+  const lines = [];
+  const latencySec = Number(details.latency_sec);
+  const dropDurationSec = Number(details.drop_duration_sec);
+  const timeoutStreak = Number(details.timeout_streak);
+  const count = Number(details.count);
+
+  if (Number.isFinite(latencySec) && latencySec >= 0) {
+    lines.push(`Latência: ${fmtSecondsPrecise(latencySec)}`);
+  }
+  if (Number.isFinite(dropDurationSec) && dropDurationSec >= 0) {
+    lines.push(`Duração da desconexão: ${fmtDuration(dropDurationSec)}`);
+  }
+  if (Number.isFinite(timeoutStreak) && timeoutStreak >= 0) {
+    lines.push(`Falhas consecutivas: ${timeoutStreak}`);
+  }
+  if (Number.isFinite(count) && count >= 0) {
+    lines.push(`Quantidade: ${count}`);
+  }
+
+  return lines.length ? lines.join("\n") : "Sem detalhes adicionais.";
+}
+
 function getDisplayQuality(item) {
   const pivotId = text((item || {}).pivot_id, "").trim();
   const override = pivotId ? state.qualityOverridesByPivotId[pivotId] : null;
   const base = override || ((item || {}).quality || {});
   const displayStatus = getDisplayStatus(item);
   const statusCode = text(displayStatus.code, "gray");
-  const statusReason = text(displayStatus.reason, "");
+  const statusReason = sanitizeUserText(displayStatus.reason);
   if (statusCode === "gray") {
     return {
       code: "calculating",
       label: QUALITY_META.calculating.label,
-      reason: statusReason || "Aguardando amostras de cloudv2 para estimar mediana.",
+      reason: statusReason || qualityReasonByCode("calculating"),
       rank: QUALITY_META.calculating.rank,
     };
   }
   const code = text(base.code, "green");
   const meta = QUALITY_META[code] || QUALITY_META.green;
   const rankRaw = Number(base.rank);
+  const baseReason = sanitizeUserText(base.reason);
 
   return {
     code,
-    label: text(base.label, meta.label),
-    reason: text(base.reason, ""),
+    label: meta.label,
+    reason: baseReason || qualityReasonByCode(code),
     rank: Number.isFinite(rankRaw) ? rankRaw : meta.rank,
   };
 }
@@ -259,11 +335,12 @@ function getDisplayStatus(item) {
   const code = text(base.code, "gray");
   const meta = STATUS_META[code] || STATUS_META.gray;
   const rankRaw = Number(base.rank);
+  const baseReason = sanitizeUserText(base.reason);
 
   return {
     code,
-    label: text(base.label, meta.label),
-    reason: text(base.reason, ""),
+    label: meta.label,
+    reason: baseReason || statusReasonByCode(code),
     rank: Number.isFinite(rankRaw) ? rankRaw : Number(meta.rank ?? 99),
   };
 }
@@ -327,18 +404,19 @@ function formatRunOption(run) {
   const item = run || {};
   const startedAt = text(item.started_at, "-");
   const duration = fmtDuration(item.duration_sec);
-  const source = text(item.source, "runtime");
-  const activeTag = item.is_active ? "Ativo" : "Historico";
+  const activeTag = item.is_active ? "Tempo real" : "Histórico";
   const pivots = Number(item.pivot_count || 0);
-  return `${activeTag} | ${startedAt} | ${duration} | ${source} | ${pivots} pivots`;
+  return `${activeTag} | ${startedAt} | ${duration} | ${pivots} pivôs`;
 }
 
 function renderSessionControls() {
   const isHistory = state.sessionAction === "history";
   const runs = Array.isArray(state.availableRuns) ? state.availableRuns : [];
   const currentRun = state.rawState?.run || state.panelRunMeta || null;
+  const sessionHintBase =
+    'Escolha "Iniciar novo monitoramento" para começar do zero ou selecione uma sessão em "Histórico" para carregar dados anteriores.';
   const currentRunLabel = currentRun
-    ? `Monitoramento atual: ${text(currentRun.started_at)} (${currentRun.is_active ? "ativo" : "historico"})`
+    ? `Sessão atual: ${text(currentRun.started_at)} (${currentRun.is_active ? "tempo real" : "histórico"})`
     : "";
 
   ui.sessionAction.value = state.sessionAction;
@@ -348,10 +426,10 @@ function renderSessionControls() {
     const selectedRunId = String(state.selectedHistoryRunId || state.selectedRunId || "").trim();
 
     if (!runs.length) {
-      ui.sessionSelect.innerHTML = `<option value="">Nenhum historico salvo</option>`;
+      ui.sessionSelect.innerHTML = `<option value="">Nenhum histórico salvo</option>`;
       ui.sessionSelect.disabled = true;
       ui.sessionApply.disabled = true;
-      ui.sessionHint.textContent = "Sem monitoramentos globais salvos no banco.";
+      ui.sessionHint.textContent = sessionHintBase + (currentRunLabel ? ` ${currentRunLabel}` : "");
       return;
     }
 
@@ -368,7 +446,7 @@ function renderSessionControls() {
     }
     ui.sessionApply.disabled = !ui.sessionSelect.value;
     ui.sessionHint.textContent =
-      "Selecione um monitoramento global salvo e clique em Aplicar para carregar o historico completo." +
+      sessionHintBase +
       (currentRunLabel ? ` ${currentRunLabel}` : "");
     return;
   }
@@ -377,7 +455,7 @@ function renderSessionControls() {
   ui.sessionSelect.disabled = true;
   ui.sessionApply.disabled = false;
   ui.sessionHint.textContent =
-    "Clique em Aplicar para iniciar um novo monitoramento global para todo o sistema." +
+    sessionHintBase +
     (currentRunLabel ? ` ${currentRunLabel}` : "");
 }
 
@@ -410,10 +488,10 @@ async function applyMonitoringSessionAction() {
       state.selectedHistoryRunId = runId || null;
       await loadMonitoringRuns();
       await refreshAll();
-      showToast("Novo monitoramento global iniciado.", "success", 3200);
+      showToast("Novo monitoramento iniciado.", "success", 3200);
     } catch (err) {
-      ui.sessionHint.textContent = `Falha ao iniciar monitoramento global: ${err.message}`;
-      showToast(`Falha ao iniciar monitoramento global: ${err.message}`, "error", 4000);
+      ui.sessionHint.textContent = "Não foi possível iniciar um novo monitoramento. Tente novamente.";
+      showToast("Não foi possível iniciar um novo monitoramento. Tente novamente.", "error", 4000);
     } finally {
       renderSessionControls();
     }
@@ -422,7 +500,7 @@ async function applyMonitoringSessionAction() {
 
   const selectedRunId = text(ui.sessionSelect.value, "").trim();
   if (!selectedRunId) {
-    ui.sessionHint.textContent = "Selecione um historico valido para carregar.";
+    ui.sessionHint.textContent = "Selecione uma sessão de histórico para carregar.";
     return;
   }
   ui.sessionApply.disabled = true;
@@ -439,10 +517,10 @@ async function applyMonitoringSessionAction() {
     state.selectedHistoryRunId = selectedRunId;
     state.selectedRunId = selectedRunId;
     await refreshAll();
-    showToast("Historico global carregado.", "success", 2800);
+    showToast("Histórico carregado.", "success", 2800);
   } catch (err) {
-    ui.sessionHint.textContent = `Falha ao carregar historico global: ${err.message}`;
-    showToast(`Falha ao carregar historico global: ${err.message}`, "error", 3800);
+    ui.sessionHint.textContent = "Falha ao carregar histórico. Verifique a conexão e tente novamente.";
+    showToast("Falha ao carregar histórico. Verifique a conexão e tente novamente.", "error", 3800);
   } finally {
     renderSessionControls();
   }
@@ -450,15 +528,15 @@ async function applyMonitoringSessionAction() {
 
 async function purgeDatabaseRecords() {
   const confirmed = window.confirm(
-    "Essa acao vai APAGAR TODOS os dados do banco (runs, sessoes, snapshots e eventos). Deseja continuar?"
+    "Tem certeza que deseja excluir o histórico? Esta ação não pode ser desfeita."
   );
   if (!confirmed) return;
 
-  const password = window.prompt("Digite a senha para deletar todos os dados do banco:");
+  const password = window.prompt("Digite a senha para excluir o histórico:");
   if (password === null) return;
   const normalizedPassword = String(password);
   if (!normalizedPassword.trim()) {
-    showToast("Senha obrigatoria para limpar o banco.", "warn", 3200);
+    showToast("Senha obrigatória para excluir o histórico.", "warn", 3200);
     return;
   }
 
@@ -483,9 +561,9 @@ async function purgeDatabaseRecords() {
     closePivot();
     await loadMonitoringRuns();
     await refreshAll();
-    showToast("Todos os dados do banco foram removidos.", "success", 3600);
+    showToast("Histórico excluído com sucesso.", "success", 3600);
   } catch (err) {
-    showToast(`Falha ao limpar banco: ${err.message}`, "error", 4200);
+    showToast("Não foi possível excluir o histórico. Tente novamente.", "error", 4200);
   } finally {
     ui.purgeDatabase.disabled = false;
     renderSessionControls();
@@ -589,8 +667,8 @@ function renderHeader() {
   const raw = state.rawState || {};
   const updatedAt = text(raw.updated_at, "-");
   const counts = raw.counts || {};
-  ui.updatedAt.textContent = `Atualizado: ${updatedAt}`;
-  ui.countsMeta.textContent = `${counts.pivots || 0} pivots | ${counts.duplicate_drops || 0} duplicadas`;
+  ui.updatedAt.textContent = `Última atualização: ${updatedAt}`;
+  ui.countsMeta.textContent = `${counts.pivots || 0} pivôs • ${counts.duplicate_drops || 0} duplicidades`;
 }
 
 function renderStatusSummary() {
@@ -607,13 +685,13 @@ function renderStatusSummary() {
 
   ui.statusSummary.innerHTML = `
     <div class="summary-pill"><span>Total</span><strong>${stateCounts.all}</strong></div>
-    <div class="summary-pill"><span>Estado Online</span><strong>${stateCounts.green}</strong></div>
-    <div class="summary-pill"><span>Estado Offline</span><strong>${stateCounts.red}</strong></div>
-    <div class="summary-pill"><span>Estado Inicial</span><strong>${stateCounts.gray}</strong></div>
-    <div class="summary-pill"><span>Qualidade Saudavel</span><strong>${qualityCounts.green}</strong></div>
-    <div class="summary-pill"><span>Qualidade Calculando</span><strong>${qualityCounts.calculating}</strong></div>
-    <div class="summary-pill"><span>Qualidade Atencao</span><strong>${qualityCounts.yellow}</strong></div>
-    <div class="summary-pill"><span>Qualidade Critico</span><strong>${qualityCounts.critical}</strong></div>
+    <div class="summary-pill"><span>Conectados</span><strong>${stateCounts.green}</strong></div>
+    <div class="summary-pill"><span>Desconectados</span><strong>${stateCounts.red}</strong></div>
+    <div class="summary-pill"><span>Iniciais</span><strong>${stateCounts.gray}</strong></div>
+    <div class="summary-pill"><span>Conectividade estável</span><strong>${qualityCounts.green}</strong></div>
+    <div class="summary-pill"><span>Em análise</span><strong>${qualityCounts.calculating}</strong></div>
+    <div class="summary-pill"><span>Conectividade instável</span><strong>${qualityCounts.yellow}</strong></div>
+    <div class="summary-pill"><span>Conectividade crítica</span><strong>${qualityCounts.critical}</strong></div>
   `;
 }
 
@@ -629,7 +707,7 @@ function renderPending() {
 
   ui.pendingPanel.hidden = false;
   if (!pending.length) {
-    ui.pendingList.innerHTML = `<div class="empty">Nenhum pendente no momento.</div>`;
+    ui.pendingList.innerHTML = `<div class="empty">Nenhum pivô com atividade inicial no momento.</div>`;
     return;
   }
 
@@ -639,7 +717,7 @@ function renderPending() {
       const id = escapeHtml(text(item.pivot_id));
       const count = Number(item.count || 0);
       const last = escapeHtml(text(item.last_seen_at));
-      return `<div class="list-item"><strong>${id}</strong> visto ${count}x (ultimo em ${last})</div>`;
+      return `<div class="list-item"><strong>${id}</strong> com ${count} registro(s) (última atualização em ${last})</div>`;
     })
     .join("");
 }
@@ -652,7 +730,7 @@ function renderCards() {
   const pageItems = filtered.slice(start, start + state.cardsPageSize);
 
   if (!pageItems.length) {
-    ui.cardsGrid.innerHTML = `<div class="empty">Nenhum pivot encontrado com os filtros atuais.</div>`;
+    ui.cardsGrid.innerHTML = `<div class="empty">Nenhum pivô encontrado para os filtros selecionados.</div>`;
   } else {
     ui.cardsGrid.innerHTML = pageItems
       .map((pivot) => {
@@ -661,8 +739,8 @@ function renderCards() {
         const statusCode = text(status.code, "gray");
         const statusLabel = escapeHtml(text(status.label, "Inicial"));
         const qualityCode = text(quality.code, "green");
-        const qualityLabel = escapeHtml(text(quality.label, "Saudavel"));
-        const pivotId = escapeHtml(text(pivot.pivot_id, "pivot"));
+        const qualityLabel = escapeHtml(text(quality.label, "Estável"));
+        const pivotId = escapeHtml(text(pivot.pivot_id, "pivô"));
         const lastPing = escapeHtml(text(pivot.last_ping_at));
         const lastCloudv2 = escapeHtml(text(pivot.last_cloudv2_at));
         const cloud2 = pivot.last_cloud2 || {};
@@ -670,7 +748,7 @@ function renderCards() {
         const samples = Number(pivot.median_sample_count || 0);
         const medianText = medianReady
           ? `${fmtDuration(pivot.median_cloudv2_interval_sec)} (${samples} amostras)`
-          : `${samples} amostras (inicial)`;
+          : `${samples} amostras (em análise)`;
 
         const rssi = escapeHtml(text(cloud2.rssi));
         const technology = escapeHtml(text(cloud2.technology));
@@ -681,20 +759,20 @@ function renderCards() {
             <div class="pivot-head">
               <div class="pivot-id">${pivotId}</div>
               <div class="badge-stack">
-                <span class="badge ${statusCode}">Estado: ${statusLabel}</span>
-                <span class="badge ${qualityCode}">Qualidade: ${qualityLabel}</span>
+                <span class="badge ${statusCode}">Status: ${statusLabel}</span>
+                <span class="badge ${qualityCode}">Conectividade: ${qualityLabel}</span>
               </div>
             </div>
             <div class="kv-grid">
-              <div class="k">Ultimo ping</div><div>${lastPing}</div>
-              <div class="k">Ultimo cloudv2</div><div>${lastCloudv2}</div>
-              <div class="k">Mediana cloudv2</div><div>${escapeHtml(medianText)}</div>
-              <div class="k">Ultima atividade</div><div>${escapeHtml(text(pivot.last_activity_at))}</div>
-              <div class="k">cloud2 RSSI/Tec</div><div>${rssi} / ${technology}</div>
+              <div class="k">Última atualização de conectividade</div><div>${lastPing}</div>
+              <div class="k">Última atualização de dados</div><div>${lastCloudv2}</div>
+              <div class="k">Intervalo típico de atualização</div><div>${escapeHtml(medianText)}</div>
+              <div class="k">Última atualização</div><div>${escapeHtml(text(pivot.last_activity_at))}</div>
+              <div class="k">Sinal / Tecnologia</div><div>${rssi} / ${technology}</div>
               <div class="k">Firmware</div><div>${firmware}</div>
             </div>
             <div class="card-actions">
-              <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visao</button>
+              <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visão</button>
             </div>
           </article>
         `;
@@ -702,7 +780,7 @@ function renderCards() {
       .join("");
   }
 
-  ui.cardsPageInfo.textContent = `Pagina ${state.cardsPage}/${totalPages}`;
+  ui.cardsPageInfo.textContent = `Página ${state.cardsPage}/${totalPages}`;
   ui.cardsPrev.disabled = state.cardsPage <= 1;
   ui.cardsNext.disabled = state.cardsPage >= totalPages;
 
@@ -715,7 +793,13 @@ function renderPivotMetrics(pivot, qualityView = null, connectivityView = null) 
   const summary = pivot.summary || {};
   const metrics = pivot.metrics || {};
   const status = summary.status || {};
+  const statusCode = text(status.code, "gray");
+  const statusLabel = (STATUS_META[statusCode] || STATUS_META.gray).label;
+  const safeStatusReason = sanitizeUserText(status.reason) || statusReasonByCode(statusCode);
   const quality = qualityView || summary.quality || {};
+  const qualityCode = text(quality.code, "green");
+  const qualityLabel = (QUALITY_META[qualityCode] || QUALITY_META.green).label;
+  const safeQualityReason = sanitizeUserText(quality.reason) || qualityReasonByCode(qualityCode);
   const probe = summary.probe || {};
   const sentCount = Number(probe.sent_count || 0);
   const responseCount = Number(probe.response_count || 0);
@@ -735,37 +819,37 @@ function renderPivotMetrics(pivot, qualityView = null, connectivityView = null) 
       : fmtPercent(summary.disconnected_pct);
 
   const cards = [
-    { label: "Estado atual", value: text(status.label) },
-    { label: "Motivo estado", value: text(status.reason) },
-    { label: "Qualidade", value: text(quality.label, "Saudavel") },
-    { label: "Motivo qualidade", value: text(quality.reason) },
+    { label: "Status atual", value: statusLabel },
+    { label: "Detalhe do status", value: safeStatusReason },
+    { label: "Conectividade", value: qualityLabel },
+    { label: "Detalhe da conectividade", value: safeQualityReason },
     { label: "% Conectado (janela)", value: connectedPctText },
     { label: "% Desconectado (janela)", value: disconnectedPctText },
-    { label: "Ultimo ping", value: text(summary.last_ping_at) },
-    { label: "Ultimo cloudv2", value: text(summary.last_cloudv2_at) },
+    { label: "Última atualização de conectividade", value: text(summary.last_ping_at) },
+    { label: "Última atualização de dados", value: text(summary.last_cloudv2_at) },
     {
-      label: "Mediana cloudv2",
+      label: "Intervalo típico de atualização",
       value: summary.median_ready
         ? `${fmtDuration(summary.median_cloudv2_interval_sec)} (${summary.median_sample_count} amostras)`
         : `${summary.median_sample_count} amostras`,
     },
-    { label: "Quedas 24h", value: text(metrics.drops_24h, "0") },
-    { label: "Quedas 7d", value: text(metrics.drops_7d, "0") },
-    { label: "Ultima duracao queda", value: fmtDuration(metrics.last_drop_duration_sec) },
-    { label: "Ultimo RSSI", value: text(metrics.last_rssi) },
-    { label: "Ultima tecnologia", value: text(metrics.last_technology) },
+    { label: "Desconexões (24h)", value: text(metrics.drops_24h, "0") },
+    { label: "Desconexões (7 dias)", value: text(metrics.drops_7d, "0") },
+    { label: "Duração da última desconexão", value: fmtDuration(metrics.last_drop_duration_sec) },
+    { label: "Último sinal (RSSI)", value: text(metrics.last_rssi) },
+    { label: "Última tecnologia de rede", value: text(metrics.last_technology) },
     { label: "Firmware", value: text(metrics.last_firmware) },
-    { label: "Probe timeout streak", value: text(probe.timeout_streak, "0") },
-    { label: "Probe respostas/envios", value: responseCoverageText },
-    { label: "Probe timeouts", value: text(timeoutCount, "0") },
-    { label: "Delay ultima resposta", value: fmtSecondsPrecise(probe.latency_last_sec) },
-    { label: "Delay medio resposta", value: fmtSecondsPrecise(probe.latency_avg_sec) },
-    { label: "Delay mediano resposta", value: fmtSecondsPrecise(probe.latency_median_sec) },
+    { label: "Falhas consecutivas de resposta", value: text(probe.timeout_streak, "0") },
+    { label: "Respostas/solicitações", value: responseCoverageText },
+    { label: "Total de falhas de resposta", value: text(timeoutCount, "0") },
+    { label: "Latência da última resposta", value: fmtSecondsPrecise(probe.latency_last_sec) },
+    { label: "Latência média", value: fmtSecondsPrecise(probe.latency_avg_sec) },
+    { label: "Latência mediana", value: fmtSecondsPrecise(probe.latency_median_sec) },
     {
-      label: "Delay min/max resposta",
+      label: "Latência mínima/máxima",
       value: `${fmtSecondsPrecise(probe.latency_min_sec)} / ${fmtSecondsPrecise(probe.latency_max_sec)}`,
     },
-    { label: "Amostras de delay", value: text(latencySampleCount, "0") },
+    { label: "Amostras de latência", value: text(latencySampleCount, "0") },
   ];
 
   ui.pivotMetrics.innerHTML = cards
@@ -1097,7 +1181,7 @@ function buildQualityFromConnectivity(pivot, connectivitySummary) {
     return {
       code: "calculating",
       label: QUALITY_META.calculating.label,
-      reason: statusReason || "Aguardando amostras de cloudv2 para estimar mediana.",
+      reason: sanitizeUserText(statusReason) || qualityReasonByCode("calculating"),
       rank: QUALITY_META.calculating.rank,
     };
   }
@@ -1106,8 +1190,8 @@ function buildQualityFromConnectivity(pivot, connectivitySummary) {
     const fallbackCode = text(fallbackQuality.code, "green");
     return {
       code: fallbackCode,
-      label: text(fallbackQuality.label, (QUALITY_META[fallbackCode] || QUALITY_META.green).label),
-      reason: text(fallbackQuality.reason),
+      label: (QUALITY_META[fallbackCode] || QUALITY_META.green).label,
+      reason: sanitizeUserText(fallbackQuality.reason) || qualityReasonByCode(fallbackCode),
       rank: Number(fallbackQuality.rank ?? (QUALITY_META[fallbackCode] || QUALITY_META.green).rank),
     };
   }
@@ -1133,23 +1217,21 @@ function buildQualityFromConnectivity(pivot, connectivitySummary) {
     !connectivitySummary.hasPrincipalPayloadInWindow && connectivitySummary.hasAuxPayloadInWindow;
 
   let qualityCode = "green";
-  let qualityReason = "Percentuais e topicos monitorados dentro da faixa saudavel na janela atual.";
+  let qualityReason = "Conectividade dentro da faixa esperada no período selecionado.";
 
   if (criticalByDisconnectedPct) {
     qualityCode = "critical";
     qualityReason =
-      "Percentual desconectado na janela de monitoramento " +
-      `(${disconnectedPct}%) acima do limite critico (${criticalThreshold.toFixed(1)}%).`;
+      "Percentual desconectado no período " +
+      `(${disconnectedPct}%) acima do limite crítico (${criticalThreshold.toFixed(1)}%).`;
   } else if (attentionByDisconnectedPct) {
     qualityCode = "yellow";
     qualityReason =
-      "Percentual desconectado na janela de monitoramento " +
-      `(${disconnectedPct}%) acima do limite de atencao (${attentionThreshold.toFixed(1)}%).`;
+      "Percentual desconectado no período " +
+      `(${disconnectedPct}%) acima do limite de instabilidade (${attentionThreshold.toFixed(1)}%).`;
   } else if (attentionByOnlyAuxTopics) {
     qualityCode = "yellow";
-    qualityReason =
-      "Sem payload no topico principal cloudv2 na janela atual; " +
-      "recebendo apenas ping/network/info.";
+    qualityReason = "Sinais parciais de conectividade detectados no período selecionado.";
   }
 
   return {
@@ -1202,9 +1284,9 @@ function showConnectivitySegmentCard(segmentEl) {
 
   ui.connSegmentCard.innerHTML = `
     <div class="conn-segment-card-title ${escapeHtml(segmentState)}">${escapeHtml(stateLabel)}</div>
-    <div class="conn-segment-card-row"><span>Inicio</span><strong>${escapeHtml(formatShortDateTime(startTs))}</strong></div>
+    <div class="conn-segment-card-row"><span>Início</span><strong>${escapeHtml(formatShortDateTime(startTs))}</strong></div>
     <div class="conn-segment-card-row"><span>Fim</span><strong>${escapeHtml(formatShortDateTime(endTs))}</strong></div>
-    <div class="conn-segment-card-row"><span>Duracao</span><strong>${escapeHtml(fmtDuration(durationSec))}</strong></div>
+    <div class="conn-segment-card-row"><span>Duração</span><strong>${escapeHtml(fmtDuration(durationSec))}</strong></div>
   `;
   ui.connSegmentCard.hidden = false;
   positionConnectivitySegmentCard(segmentEl);
@@ -1254,9 +1336,7 @@ function renderConnectivityTimeline(pivot) {
   ui.connSummary.innerHTML = `
     <span class="conn-pill connected">Conectado: <strong>${fmtDuration(connectivitySummary.connectedSec)}</strong> (${connectivitySummary.connectedPct}%)</span>
     <span class="conn-pill disconnected">Desconectado: <strong>${fmtDuration(connectivitySummary.disconnectedSec)}</strong> (${connectivitySummary.disconnectedPct}%)</span>
-    <span class="conn-pill">Janela off: <strong>${fmtDuration(connData.disconnectThresholdSec)}</strong> (max mediana ${fmtDuration(
-    connData.maxExpectedIntervalSec
-  )})</span>
+    <span class="conn-pill">Limite para desconexão: <strong>${fmtDuration(connData.disconnectThresholdSec)}</strong></span>
   `;
   ui.connStartLabel.textContent = formatShortDateTime(startTs);
   ui.connEndLabel.textContent = formatShortDateTime(endTs);
@@ -1301,16 +1381,16 @@ function renderProbeDelayChart(pivot) {
   ui.probeDelayEndLabel.textContent = formatShortDateTime(endTs);
 
   if (!enabled) {
-    ui.probeDelayHint.textContent = "Monitoramento ativo desabilitado para este pivot.";
-    ui.probeDelayChart.innerHTML = `<div class="empty">Habilite o probe para acompanhar o delay medio no tempo.</div>`;
+    ui.probeDelayHint.textContent = "Monitoramento de latência desativado para este pivô.";
+    ui.probeDelayChart.innerHTML = `<div class="empty">Ative o monitoramento de latência para acompanhar os dados no período.</div>`;
     return;
   }
 
   const series = buildProbeDelaySeries(pivot, startTs, endTs);
   const points = series.points;
   if (!points.length) {
-    ui.probeDelayHint.textContent = "Sem respostas de probe na janela selecionada.";
-    ui.probeDelayChart.innerHTML = `<div class="empty">Nenhuma resposta #11$ no periodo selecionado.</div>`;
+    ui.probeDelayHint.textContent = "Nenhum dado de latência no período selecionado.";
+    ui.probeDelayChart.innerHTML = `<div class="empty">Nenhum dado disponível para este período.</div>`;
     return;
   }
 
@@ -1354,7 +1434,7 @@ function renderProbeDelayChart(pivot) {
   const lastPoint = points[points.length - 1];
 
   ui.probeDelayChart.innerHTML = `
-    <svg class="probe-delay-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de delay medio do probe">
+    <svg class="probe-delay-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Gráfico de latência média ao longo do tempo">
       ${yTicks
         .map(
           (tick) => `
@@ -1372,9 +1452,9 @@ function renderProbeDelayChart(pivot) {
   `;
 
   ui.probeDelayHint.textContent =
-    `Respostas na janela: ${series.responseCount} | ` +
-    `Delay medio final: ${fmtSecondsPrecise(lastPoint.avgLatencySec)} | ` +
-    `Ultima amostra: ${fmtSecondsPrecise(lastPoint.latencySec)} (${formatShortDateTime(lastPoint.ts)})`;
+    `Registros no período: ${series.responseCount} | ` +
+    `Latência média final: ${fmtSecondsPrecise(lastPoint.avgLatencySec)} | ` +
+    `Última medição: ${fmtSecondsPrecise(lastPoint.latencySec)} (${formatShortDateTime(lastPoint.ts)})`;
 }
 
 function renderTimeline(pivot) {
@@ -1385,24 +1465,25 @@ function renderTimeline(pivot) {
   const pageEvents = allEvents.slice(start, start + state.timelinePageSize);
 
   if (!pageEvents.length) {
-    ui.timelineList.innerHTML = `<div class="empty">Sem eventos para o pivot selecionado.</div>`;
+    ui.timelineList.innerHTML = `<div class="empty">Nenhum evento disponível para este período.</div>`;
   } else {
     ui.timelineList.innerHTML = pageEvents
       .map((event) => {
         const type = text(event.type, "event");
-        const title = text(EVENT_LABEL[type], type);
-        const detailsJson = JSON.stringify(event.details || {}, null, 2);
+        const title = EVENT_LABEL[type] || "Evento";
+        const summaryText = buildEventSummary(event);
+        const detailsText = buildEventDetailsText(event);
         return `
           <article class="event ${escapeHtml(type)}">
             <div class="event-head">
               <div class="event-title">${escapeHtml(title)}</div>
               <div class="event-time">${escapeHtml(text(event.at))}</div>
             </div>
-            <div class="event-topic">Topico: ${escapeHtml(text(event.topic))}</div>
-            <div>${escapeHtml(text(event.summary, ""))}</div>
+            <div class="event-topic">Categoria: Evento de conectividade</div>
+            <div>${escapeHtml(summaryText)}</div>
             <details class="event-details">
-              <summary>Detalhes</summary>
-              <pre>${escapeHtml(detailsJson)}</pre>
+              <summary>Informações adicionais</summary>
+              <pre>${escapeHtml(detailsText)}</pre>
             </details>
           </article>
         `;
@@ -1410,7 +1491,7 @@ function renderTimeline(pivot) {
       .join("");
   }
 
-  ui.timelinePageInfo.textContent = `Pagina ${state.timelinePage}/${totalPages}`;
+  ui.timelinePageInfo.textContent = `Página ${state.timelinePage}/${totalPages}`;
   ui.timelinePrev.disabled = state.timelinePage <= 1;
   ui.timelineNext.disabled = state.timelinePage >= totalPages;
 }
@@ -1418,7 +1499,7 @@ function renderTimeline(pivot) {
 function renderCloud2Table(pivot) {
   const rows = (pivot.cloud2_events || []).slice(0, 20);
   if (!rows.length) {
-    ui.cloud2Table.innerHTML = `<tr><td colspan="5">Sem eventos cloud2.</td></tr>`;
+    ui.cloud2Table.innerHTML = `<tr><td colspan="5">Nenhum dado disponível para este período.</td></tr>`;
     return;
   }
 
@@ -1451,22 +1532,23 @@ function renderPivotView() {
   const probe = summary.probe || {};
   const connectivitySummary = renderConnectivityTimeline(pivot);
   const quality = buildQualityFromConnectivity(pivot, connectivitySummary);
+  const displayStatus = getDisplayStatus({ pivot_id: pivot.pivot_id, status });
   const pivotId = text(pivot.pivot_id, "").trim();
   if (pivotId) {
     state.qualityOverridesByPivotId[pivotId] = quality;
     state.statusOverridesByPivotId[pivotId] = {
       code: text(status.code, "gray"),
-      label: text(status.label, "Inicial"),
-      reason: text(status.reason, ""),
+      label: text(displayStatus.label, "Inicial"),
+      reason: text(displayStatus.reason, ""),
       rank: Number(status.rank ?? 99),
     };
   }
 
-  ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivot");
-  ui.pivotStatus.textContent = `Estado: ${text(status.label, "Inicial")}`;
+  ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivô");
+  ui.pivotStatus.textContent = `Status: ${text(displayStatus.label, "Inicial")}`;
   ui.pivotStatus.className = `badge ${text(status.code, "gray")}`;
   if (ui.pivotQuality) {
-    ui.pivotQuality.textContent = `Qualidade: ${text(quality.label, "Saudavel")}`;
+    ui.pivotQuality.textContent = `Conectividade: ${text(quality.label, "Estável")}`;
     ui.pivotQuality.className = `badge ${text(quality.code, "green")}`;
   }
 
@@ -1619,10 +1701,10 @@ async function refreshAll() {
     await refreshPivot();
     state.lastRefreshToastAtMs = 0;
   } catch (err) {
-    ui.cardsGrid.innerHTML = `<div class="empty">Falha ao carregar dados do monitor. Tentando novamente...</div>`;
+    ui.cardsGrid.innerHTML = `<div class="empty">Não foi possível carregar os dados. Tente novamente.</div>`;
     const now = Date.now();
     if (now - Number(state.lastRefreshToastAtMs || 0) > 15000) {
-      showToast("Falha ao carregar dados do monitor.", "error", 3800);
+      showToast("Não foi possível carregar os dados. Tente novamente.", "error", 3800);
       state.lastRefreshToastAtMs = now;
     }
   }
@@ -1671,12 +1753,12 @@ async function saveProbeSetting() {
     if (!response.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${response.status}`);
     }
-    ui.probeHint.textContent = "Configuracao de probe salva com sucesso.";
-    showToast("Configuracao de probe salva.", "success", 3000);
+    ui.probeHint.textContent = "Configuração de monitoramento de latência salva com sucesso.";
+    showToast("Configuração salva.", "success", 3000);
     await refreshAll();
   } catch (err) {
-    ui.probeHint.textContent = `Falha ao salvar probe: ${err.message}`;
-    showToast(`Falha ao salvar probe: ${err.message}`, "error", 4200);
+    ui.probeHint.textContent = "Não foi possível salvar a configuração. Tente novamente.";
+    showToast("Não foi possível salvar a configuração. Tente novamente.", "error", 4200);
   } finally {
     ui.saveProbe.disabled = false;
   }
