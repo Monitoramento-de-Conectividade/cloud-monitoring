@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 
@@ -7,13 +8,23 @@ from cloudv2_telemetry import TelemetryStore
 
 
 def run_fixture():
+    fixture_db_path = os.path.join("dashboards", "data", "fixture_simulator.sqlite3")
+    if os.path.exists(fixture_db_path):
+        try:
+            os.remove(fixture_db_path)
+        except OSError:
+            pass
+
     config = normalize_config(
         {
             "history_mode": "fresh",
             "dashboard_refresh_sec": 1,
             "history_retention_hours": 24,
+            "require_apply_to_start": False,
             "cloudv2_median_window": 10,
             "cloudv2_min_samples": 3,
+            "enable_background_worker": False,
+            "sqlite_db_path": fixture_db_path,
             "dedupe_window_sec": 8,
             "probe_default_interval_sec": 120,
             "probe_min_interval_sec": 60,

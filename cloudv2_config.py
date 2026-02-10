@@ -33,6 +33,8 @@ DEFAULT_CONFIG = {
     "dashboard_enabled": True,
     "dashboard_port": 8008,
     "dashboard_refresh_sec": 5,
+    "enable_background_worker": True,
+    "require_apply_to_start": True,
     "history_mode": "merge",
     "history_retention_hours": 24,
     "tolerance_factor": 1.25,
@@ -49,6 +51,7 @@ DEFAULT_CONFIG = {
     "probe_timeout_streak_alert": 2,
     "max_events_per_pivot": 5000,
     "probe_settings": {},
+    "sqlite_db_path": os.path.join("dashboards", "data", "telemetry.sqlite3"),
 }
 
 
@@ -190,6 +193,8 @@ def _apply_env_overrides(config):
         "DASHBOARD_ENABLED": "dashboard_enabled",
         "DASHBOARD_PORT": "dashboard_port",
         "DASHBOARD_REFRESH_SEC": "dashboard_refresh_sec",
+        "ENABLE_BACKGROUND_WORKER": "enable_background_worker",
+        "REQUIRE_APPLY_TO_START": "require_apply_to_start",
         "HISTORY_MODE": "history_mode",
         "HISTORY_RETENTION_HOURS": "history_retention_hours",
         "TOLERANCE_FACTOR": "tolerance_factor",
@@ -205,6 +210,7 @@ def _apply_env_overrides(config):
         "PROBE_TIMEOUT_FACTOR": "probe_timeout_factor",
         "PROBE_TIMEOUT_STREAK_ALERT": "probe_timeout_streak_alert",
         "MAX_EVENTS_PER_PIVOT": "max_events_per_pivot",
+        "SQLITE_DB_PATH": "sqlite_db_path",
     }
     for env_name, config_key in overrides.items():
         env_value = os.environ.get(env_name)
@@ -268,6 +274,14 @@ def normalize_config(raw_config):
         base.get("dashboard_refresh_sec"),
         DEFAULT_CONFIG["dashboard_refresh_sec"],
         minimum=1,
+    )
+    base["enable_background_worker"] = _to_bool(
+        base.get("enable_background_worker"),
+        DEFAULT_CONFIG["enable_background_worker"],
+    )
+    base["require_apply_to_start"] = _to_bool(
+        base.get("require_apply_to_start"),
+        DEFAULT_CONFIG["require_apply_to_start"],
     )
 
     base["history_mode"] = _normalize_history_mode(base.get("history_mode", DEFAULT_CONFIG["history_mode"]))
@@ -349,6 +363,10 @@ def normalize_config(raw_config):
         base.get("max_events_per_pivot"),
         DEFAULT_CONFIG["max_events_per_pivot"],
         minimum=100,
+    )
+    base["sqlite_db_path"] = (
+        str(base.get("sqlite_db_path", DEFAULT_CONFIG["sqlite_db_path"])).strip()
+        or DEFAULT_CONFIG["sqlite_db_path"]
     )
 
     base["filter_names"] = _normalize_string_list(base.get("filter_names"))
