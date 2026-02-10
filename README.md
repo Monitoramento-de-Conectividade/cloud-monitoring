@@ -10,14 +10,11 @@ Monitoramento robusto de conectividade e saúde de tráfego dos pivots via MQTT 
 - Probe ativo seletivo com `#11$` publicando apenas no tópico dinâmico `pivot_id`.
 - Dashboard web com visão geral e visão por pivot (timeline, métricas e controle de probe).
 
-## Arquivos principais
+## Estrutura
 
-- `cloudv2-ping-monitoring.py`: processo principal (MQTT + telemetria + dashboard).
-- `cloudv2_telemetry.py`: ingestão, parser, deduplicação, estado, status e persistência.
-- `cloudv2_dashboard.py`: servidor HTTP local e APIs (`/api/state`, `/api/pivot/<id>`, `/api/probe-config`).
-- `dashboards/index.html`: UI principal e UI detalhada por pivot.
-- `cloudv2_config.py`: configuração e normalização.
-- `cloudv2_fixture_simulator.py`: fixture/simulador de validação reprodutível.
+- `backend/`: backend (monitor MQTT, telemetria, persistência, dashboard HTTP e utilitários).
+- `frontend/`: frontend (assets `index.html`, `dashboard.css`, `dashboard.js`).
+- Wrappers legados no root: `cloudv2-ping-monitoring.py`, `cloudv2_fixture_simulator.py`, `cloudv2-config-ui.py`.
 
 ## Regras críticas de tópicos
 
@@ -40,14 +37,14 @@ Ou seja, o limite usa a maior mediana entre esses tópicos para o pivot e aplica
 2. Inicie o monitor:
 
 ```bash
-python cloudv2-ping-monitoring.py
+python backend/run_monitor.py
 ```
 
 Por padrao o hot reload de desenvolvimento ja vem ativo (reinicia o processo em mudanca de `.py/.html/.css/.js`).
 Se quiser desativar:
 
 ```bash
-$env:CLOUDV2_DEV_HOT_RELOAD="0"; python cloudv2-ping-monitoring.py
+$env:CLOUDV2_DEV_HOT_RELOAD="0"; python backend/run_monitor.py
 ```
 
 3. Abra:
@@ -71,7 +68,7 @@ O simulador valida:
 Execute:
 
 ```bash
-python cloudv2_fixture_simulator.py
+python backend/run_fixture_simulator.py
 ```
 
 O script imprime um JSON com todos os checks e retorna código `0` em sucesso.
@@ -129,3 +126,12 @@ Campos importantes em `cloudv2-config.json`:
   }
 }
 ```
+
+## Compatibilidade
+
+- Wrappers legados continuam funcionando:
+  - `python cloudv2-ping-monitoring.py`
+  - `python cloudv2_fixture_simulator.py`
+  - `python cloudv2-config-ui.py`
+- Variável opcional:
+  - `CLOUDV2_WEB_DIR` para forçar o diretório do frontend servido pelo backend.
