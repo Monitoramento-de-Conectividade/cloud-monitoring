@@ -80,15 +80,25 @@ const state = {
   devReloadToken: null,
   toastSeq: 0,
   lastRefreshToastAtMs: 0,
+  qualityOverridesByPivotId: {},
+  statusOverridesByPivotId: {},
+  qualityRefreshSeq: 0,
 };
 
 const STATUS_META = {
-  all: { label: "Todos", css: "gray" },
-  green: { label: "Online", css: "green" },
-  yellow: { label: "Atencao", css: "yellow" },
-  critical: { label: "Critico", css: "critical" },
-  red: { label: "Offline", css: "red" },
-  gray: { label: "Inicial", css: "gray" },
+  all: { label: "Todos", css: "gray", rank: 99 },
+  green: { label: "Online", css: "green", rank: 2 },
+  yellow: { label: "Atencao", css: "yellow", rank: 99 },
+  critical: { label: "Critico", css: "critical", rank: 99 },
+  red: { label: "Offline", css: "red", rank: 0 },
+  gray: { label: "Inicial", css: "gray", rank: 1 },
+};
+
+const QUALITY_META = {
+  critical: { label: "Critico", rank: 0 },
+  yellow: { label: "Atencao", rank: 1 },
+  calculating: { label: "Calculando", rank: 2 },
+  green: { label: "Saudavel", rank: 3 },
 };
 
 const EVENT_LABEL = {
@@ -152,6 +162,12 @@ function fmtPercent(value) {
   return `${n.toFixed(1)}%`;
 }
 
+function fmtPercentWhole(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "-";
+  return `${Math.round(n)}%`;
+}
+
 function agoFromTs(tsSec) {
   const ts = Number(tsSec);
   if (!Number.isFinite(ts) || ts <= 0) return "-";
@@ -194,6 +210,49 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getDisplayQuality(item) {
+  const pivotId = text((item || {}).pivot_id, "").trim();
+  const override = pivotId ? state.qualityOverridesByPivotId[pivotId] : null;
+  const base = override || ((item || {}).quality || {});
+  const displayStatus = getDisplayStatus(item);
+  const statusCode = text(displayStatus.code, "gray");
+  const statusReason = text(displayStatus.reason, "");
+  if (statusCode === "gray") {
+    return {
+      code: "calculating",
+      label: QUALITY_META.calculating.label,
+      reason: statusReason || "Aguardando amostras de cloudv2 para estimar mediana.",
+      rank: QUALITY_META.calculating.rank,
+    };
+  }
+  const code = text(base.code, "green");
+  const meta = QUALITY_META[code] || QUALITY_META.green;
+  const rankRaw = Number(base.rank);
+
+  return {
+    code,
+    label: text(base.label, meta.label),
+    reason: text(base.reason, ""),
+    rank: Number.isFinite(rankRaw) ? rankRaw : meta.rank,
+  };
+}
+
+function getDisplayStatus(item) {
+  const pivotId = text((item || {}).pivot_id, "").trim();
+  const override = pivotId ? state.statusOverridesByPivotId[pivotId] : null;
+  const base = override || ((item || {}).status || {});
+  const code = text(base.code, "gray");
+  const meta = STATUS_META[code] || STATUS_META.gray;
+  const rankRaw = Number(base.rank);
+
+  return {
+    code,
+    label: text(base.label, meta.label),
+    reason: text(base.reason, ""),
+    rank: Number.isFinite(rankRaw) ? rankRaw : Number(meta.rank ?? 99),
+  };
 }
 
 function showToast(message, level = "success", ttlMs = 3200) {
@@ -268,18 +327,25 @@ function applyFilterSort() {
   const needle = state.search.trim().toLowerCase();
 
   let filtered = list.filter((item) => {
+    const quality = getDisplayQuality(item);
+    const status = getDisplayStatus(item);
     if (state.statusFilter !== "all") {
       const selectedCode = state.statusFilter;
-      const stateCode = text((item.status || {}).code, "gray");
-      const qualityCode = text((item.quality || {}).code, "green");
-      if (selectedCode === "yellow" || selectedCode === "critical") {
+      const stateCode = status.code;
+      const qualityCode = quality.code;
+      if (selectedCode === "quality_green") {
+        if (qualityCode !== "green") return false;
+      } else if (selectedCode === "quality_calculating") {
+        if (qualityCode !== "calculating") return false;
+      } else if (selectedCode === "yellow" || selectedCode === "critical") {
         if (qualityCode !== selectedCode) return false;
       } else if (stateCode !== selectedCode) {
         return false;
       }
     }
-    if (needle && !String(item.pivot_id || "").toLowerCase().includes(needle)) {
-      return false;
+    if (needle) {
+      const pivotId = String(item.pivot_id || "").toLowerCase();
+      if (!pivotId.includes(needle)) return false;
     }
     return true;
   });
@@ -295,17 +361,13 @@ function applyFilterSort() {
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
     if (state.sort === "activity_asc") return aActivity - bActivity || ap.localeCompare(bp);
 
-    const aOffline = text((a.status || {}).code, "gray") === "red" ? 1 : 0;
-    const bOffline = text((b.status || {}).code, "gray") === "red" ? 1 : 0;
-    if (aOffline !== bOffline) return bOffline - aOffline;
-
-    const aQualityRank = Number((a.quality || {}).rank ?? 99);
-    const bQualityRank = Number((b.quality || {}).rank ?? 99);
-    if (aQualityRank !== bQualityRank) return aQualityRank - bQualityRank;
-
-    const aStateRank = Number((a.status || {}).rank ?? 99);
-    const bStateRank = Number((b.status || {}).rank ?? 99);
+    const aStateRank = Number(getDisplayStatus(a).rank ?? 99);
+    const bStateRank = Number(getDisplayStatus(b).rank ?? 99);
     if (aStateRank !== bStateRank) return aStateRank - bStateRank;
+
+    const aQualityRank = Number(getDisplayQuality(a).rank ?? 99);
+    const bQualityRank = Number(getDisplayQuality(b).rank ?? 99);
+    if (aQualityRank !== bQualityRank) return aQualityRank - bQualityRank;
 
     const aAlert = (a.probe || {}).alert ? 1 : 0;
     const bAlert = (b.probe || {}).alert ? 1 : 0;
@@ -328,13 +390,13 @@ function renderHeader() {
 
 function renderStatusSummary() {
   const stateCounts = { all: 0, green: 0, red: 0, gray: 0 };
-  const qualityCounts = { green: 0, yellow: 0, critical: 0 };
+  const qualityCounts = { green: 0, yellow: 0, critical: 0, calculating: 0 };
   for (const pivot of state.pivots) {
     stateCounts.all += 1;
-    const stateCode = text((pivot.status || {}).code, "gray");
+    const stateCode = getDisplayStatus(pivot).code;
     if (stateCounts[stateCode] !== undefined) stateCounts[stateCode] += 1;
 
-    const qualityCode = text((pivot.quality || {}).code, "green");
+    const qualityCode = getDisplayQuality(pivot).code;
     if (qualityCounts[qualityCode] !== undefined) qualityCounts[qualityCode] += 1;
   }
 
@@ -344,6 +406,7 @@ function renderStatusSummary() {
     <div class="summary-pill"><span>Estado Offline</span><strong>${stateCounts.red}</strong></div>
     <div class="summary-pill"><span>Estado Inicial</span><strong>${stateCounts.gray}</strong></div>
     <div class="summary-pill"><span>Qualidade Saudavel</span><strong>${qualityCounts.green}</strong></div>
+    <div class="summary-pill"><span>Qualidade Calculando</span><strong>${qualityCounts.calculating}</strong></div>
     <div class="summary-pill"><span>Qualidade Atencao</span><strong>${qualityCounts.yellow}</strong></div>
     <div class="summary-pill"><span>Qualidade Critico</span><strong>${qualityCounts.critical}</strong></div>
   `;
@@ -388,8 +451,8 @@ function renderCards() {
   } else {
     ui.cardsGrid.innerHTML = pageItems
       .map((pivot) => {
-        const status = pivot.status || {};
-        const quality = pivot.quality || {};
+        const status = getDisplayStatus(pivot);
+        const quality = getDisplayQuality(pivot);
         const statusCode = text(status.code, "gray");
         const statusLabel = escapeHtml(text(status.label, "Inicial"));
         const qualityCode = text(quality.code, "green");
@@ -443,11 +506,11 @@ function renderCards() {
   }
 }
 
-function renderPivotMetrics(pivot) {
+function renderPivotMetrics(pivot, qualityView = null, connectivityView = null) {
   const summary = pivot.summary || {};
   const metrics = pivot.metrics || {};
   const status = summary.status || {};
-  const quality = summary.quality || {};
+  const quality = qualityView || summary.quality || {};
   const probe = summary.probe || {};
   const sentCount = Number(probe.sent_count || 0);
   const responseCount = Number(probe.response_count || 0);
@@ -457,14 +520,22 @@ function renderPivotMetrics(pivot) {
     sentCount > 0
       ? `${responseCount}/${sentCount} (${fmtPercent(probe.response_ratio_pct)})`
       : `${responseCount}/${sentCount}`;
+  const connectedPctText =
+    connectivityView && Number.isFinite(Number(connectivityView.connectedPct))
+      ? fmtPercentWhole(connectivityView.connectedPct)
+      : fmtPercent(summary.connected_pct);
+  const disconnectedPctText =
+    connectivityView && Number.isFinite(Number(connectivityView.disconnectedPct))
+      ? fmtPercentWhole(connectivityView.disconnectedPct)
+      : fmtPercent(summary.disconnected_pct);
 
   const cards = [
     { label: "Estado atual", value: text(status.label) },
     { label: "Motivo estado", value: text(status.reason) },
     { label: "Qualidade", value: text(quality.label, "Saudavel") },
     { label: "Motivo qualidade", value: text(quality.reason) },
-    { label: "% Conectado (janela)", value: fmtPercent(summary.connected_pct) },
-    { label: "% Desconectado (janela)", value: fmtPercent(summary.disconnected_pct) },
+    { label: "% Conectado (janela)", value: connectedPctText },
+    { label: "% Desconectado (janela)", value: disconnectedPctText },
     { label: "Ultimo ping", value: text(summary.last_ping_at) },
     { label: "Ultimo cloudv2", value: text(summary.last_cloudv2_at) },
     {
@@ -651,6 +722,16 @@ function buildConnectivitySegments(pivot, startTs, endTs) {
     .filter((event) => Number.isFinite(event.ts) && event.ts > 0 && event.ts <= endTs)
     .sort((a, b) => a.ts - b.ts);
 
+  let hasPrincipalPayloadInWindow = false;
+  let hasAuxPayloadInWindow = false;
+  for (const event of events) {
+    if (event.ts < startTs || event.ts > endTs) continue;
+    if (event.topic === "cloudv2") hasPrincipalPayloadInWindow = true;
+    if (event.topic === "cloudv2-ping" || event.topic === "cloudv2-network" || event.topic === "cloudv2-info") {
+      hasAuxPayloadInWindow = true;
+    }
+  }
+
   let lastMessageTs = null;
   let idx = 0;
 
@@ -715,6 +796,136 @@ function buildConnectivitySegments(pivot, startTs, endTs) {
     segments,
     disconnectThresholdSec,
     maxExpectedIntervalSec,
+    hasPrincipalPayloadInWindow,
+    hasAuxPayloadInWindow,
+  };
+}
+
+function summarizeConnectivitySegments(segments, durationSec) {
+  let connectedSec = 0;
+  let disconnectedSec = 0;
+  const safeDurationSec = Math.max(1, Number(durationSec || 0));
+
+  for (const segment of segments || []) {
+    const segmentDurationSec = Math.max(0, Number(segment.duration || 0));
+    if (segmentDurationSec <= 0) continue;
+    if (segment.state === "connected") connectedSec += segmentDurationSec;
+    else disconnectedSec += segmentDurationSec;
+  }
+
+  const connectedPct = Math.max(0, Math.min(100, Math.round((connectedSec / safeDurationSec) * 100)));
+  const disconnectedPct = Math.max(0, Math.min(100, 100 - connectedPct));
+
+  return {
+    connectedSec,
+    disconnectedSec,
+    connectedPct,
+    disconnectedPct,
+  };
+}
+
+function buildConnectivityQualityInput(connData, durationSec) {
+  const summary = summarizeConnectivitySegments(connData.segments, durationSec);
+  return {
+    connectedSec: summary.connectedSec,
+    disconnectedSec: summary.disconnectedSec,
+    connectedPct: summary.connectedPct,
+    disconnectedPct: summary.disconnectedPct,
+    hasPrincipalPayloadInWindow: !!connData.hasPrincipalPayloadInWindow,
+    hasAuxPayloadInWindow: !!connData.hasAuxPayloadInWindow,
+  };
+}
+
+function computeConnectivityView(pivot) {
+  const range = normalizeRange(pivot);
+  const startTs = range.startTs;
+  const endTs = range.endTs;
+  const durationSec = Math.max(1, endTs - startTs);
+  const connData = buildConnectivitySegments(pivot, startTs, endTs);
+  const connectivityQualityInput = buildConnectivityQualityInput(connData, durationSec);
+
+  return {
+    range,
+    startTs,
+    endTs,
+    durationSec,
+    connData,
+    segments: connData.segments,
+    connectivityQualityInput,
+  };
+}
+
+function buildQualityFromConnectivity(pivot, connectivitySummary) {
+  const summary = pivot.summary || {};
+  const fallbackQuality = summary.quality || {};
+  const status = summary.status || {};
+  const statusCode = text(status.code, "gray");
+  const statusReason = text(status.reason, "");
+
+  if (statusCode === "gray") {
+    return {
+      code: "calculating",
+      label: QUALITY_META.calculating.label,
+      reason: statusReason || "Aguardando amostras de cloudv2 para estimar mediana.",
+      rank: QUALITY_META.calculating.rank,
+    };
+  }
+
+  if (!connectivitySummary) {
+    const fallbackCode = text(fallbackQuality.code, "green");
+    return {
+      code: fallbackCode,
+      label: text(fallbackQuality.label, (QUALITY_META[fallbackCode] || QUALITY_META.green).label),
+      reason: text(fallbackQuality.reason),
+      rank: Number(fallbackQuality.rank ?? (QUALITY_META[fallbackCode] || QUALITY_META.green).rank),
+    };
+  }
+
+  const settings = (state.rawState || {}).settings || {};
+  const attentionThresholdRaw = Number(
+    summary.attention_disconnected_pct_threshold ?? settings.attention_disconnected_pct_threshold ?? 20
+  );
+  const attentionThreshold = Number.isFinite(attentionThresholdRaw)
+    ? Math.max(0, Math.min(100, attentionThresholdRaw))
+    : 20;
+  const criticalThresholdRaw = Number(
+    summary.critical_disconnected_pct_threshold ?? settings.critical_disconnected_pct_threshold ?? 50
+  );
+  const criticalThreshold = Number.isFinite(criticalThresholdRaw)
+    ? Math.max(attentionThreshold, Math.min(100, criticalThresholdRaw))
+    : 50;
+
+  const disconnectedPct = Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.disconnectedPct || 0))));
+  const criticalByDisconnectedPct = disconnectedPct > criticalThreshold;
+  const attentionByDisconnectedPct = disconnectedPct > attentionThreshold;
+  const attentionByOnlyAuxTopics =
+    !connectivitySummary.hasPrincipalPayloadInWindow && connectivitySummary.hasAuxPayloadInWindow;
+
+  let qualityCode = "green";
+  let qualityReason = "Percentuais e topicos monitorados dentro da faixa saudavel na janela atual.";
+
+  if (criticalByDisconnectedPct) {
+    qualityCode = "critical";
+    qualityReason =
+      "Percentual desconectado na janela de monitoramento " +
+      `(${disconnectedPct}%) acima do limite critico (${criticalThreshold.toFixed(1)}%).`;
+  } else if (attentionByDisconnectedPct) {
+    qualityCode = "yellow";
+    qualityReason =
+      "Percentual desconectado na janela de monitoramento " +
+      `(${disconnectedPct}%) acima do limite de atencao (${attentionThreshold.toFixed(1)}%).`;
+  } else if (attentionByOnlyAuxTopics) {
+    qualityCode = "yellow";
+    qualityReason =
+      "Sem payload no topico principal cloudv2 na janela atual; " +
+      "recebendo apenas ping/network/info.";
+  }
+
+  return {
+    code: qualityCode,
+    label: (QUALITY_META[qualityCode] || QUALITY_META.green).label,
+    reason: qualityReason,
+    rank: (QUALITY_META[qualityCode] || QUALITY_META.green).rank,
   };
 }
 
@@ -788,22 +999,19 @@ function restoreConnectivitySegmentSelection() {
 }
 
 function renderConnectivityTimeline(pivot) {
-  const range = normalizeRange(pivot);
-  const startTs = range.startTs;
-  const endTs = range.endTs;
-  const duration = Math.max(1, endTs - startTs);
-  const connData = buildConnectivitySegments(pivot, startTs, endTs);
-  const segments = connData.segments;
-
-  let connectedSec = 0;
-  let disconnectedSec = 0;
+  const view = computeConnectivityView(pivot);
+  const range = view.range;
+  const startTs = view.startTs;
+  const endTs = view.endTs;
+  const duration = view.durationSec;
+  const connData = view.connData;
+  const segments = view.segments;
+  const connectivitySummary = view.connectivityQualityInput;
 
   ui.connTrack.innerHTML = segments
     .map((segment) => {
       const leftPct = ((segment.start - startTs) / duration) * 100;
       const widthPct = Math.max(0.15, (segment.duration / duration) * 100);
-      if (segment.state === "connected") connectedSec += segment.duration;
-      else disconnectedSec += segment.duration;
       const segmentKey = `${segment.state}:${segment.start}:${segment.end}`;
       const selectedClass = state.connSelectedSegmentKey === segmentKey ? " selected" : "";
       return `<div class="conn-segment ${segment.state}${selectedClass}" style="left:${leftPct}%;width:${widthPct}%;" data-key="${escapeHtml(
@@ -812,12 +1020,9 @@ function renderConnectivityTimeline(pivot) {
     })
     .join("");
 
-  const connectedPct = Math.round((connectedSec / duration) * 100);
-  const disconnectedPct = Math.max(0, 100 - connectedPct);
-
   ui.connSummary.innerHTML = `
-    <span class="conn-pill connected">Conectado: <strong>${fmtDuration(connectedSec)}</strong> (${connectedPct}%)</span>
-    <span class="conn-pill disconnected">Desconectado: <strong>${fmtDuration(disconnectedSec)}</strong> (${disconnectedPct}%)</span>
+    <span class="conn-pill connected">Conectado: <strong>${fmtDuration(connectivitySummary.connectedSec)}</strong> (${connectivitySummary.connectedPct}%)</span>
+    <span class="conn-pill disconnected">Desconectado: <strong>${fmtDuration(connectivitySummary.disconnectedSec)}</strong> (${connectivitySummary.disconnectedPct}%)</span>
     <span class="conn-pill">Janela off: <strong>${fmtDuration(connData.disconnectThresholdSec)}</strong> (max mediana ${fmtDuration(
     connData.maxExpectedIntervalSec
   )})</span>
@@ -834,6 +1039,7 @@ function renderConnectivityTimeline(pivot) {
   ui.connFrom.value = state.connCustomFrom;
   ui.connTo.value = state.connCustomTo;
   restoreConnectivitySegmentSelection();
+  return connectivitySummary;
 }
 
 function renderProbeDelayChart(pivot) {
@@ -1011,8 +1217,19 @@ function renderPivotView() {
   ui.pivotView.hidden = false;
   const summary = pivot.summary || {};
   const status = summary.status || {};
-  const quality = summary.quality || {};
   const probe = summary.probe || {};
+  const connectivitySummary = renderConnectivityTimeline(pivot);
+  const quality = buildQualityFromConnectivity(pivot, connectivitySummary);
+  const pivotId = text(pivot.pivot_id, "").trim();
+  if (pivotId) {
+    state.qualityOverridesByPivotId[pivotId] = quality;
+    state.statusOverridesByPivotId[pivotId] = {
+      code: text(status.code, "gray"),
+      label: text(status.label, "Inicial"),
+      reason: text(status.reason, ""),
+      rank: Number(status.rank ?? 99),
+    };
+  }
 
   ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivot");
   ui.pivotStatus.textContent = `Estado: ${text(status.label, "Inicial")}`;
@@ -1038,8 +1255,9 @@ function renderPivotView() {
   ui.probeStatDelayAvg.textContent = fmtSecondsPrecise(probe.latency_avg_sec);
   ui.probeHint.textContent = "";
 
-  renderPivotMetrics(pivot);
-  renderConnectivityTimeline(pivot);
+  renderStatusSummary();
+  renderCards();
+  renderPivotMetrics(pivot, quality, connectivitySummary);
   renderProbeDelayChart(pivot);
   renderTimeline(pivot);
   renderCloud2Table(pivot);
@@ -1061,6 +1279,17 @@ async function refreshState() {
   const data = await getJson("/api/state");
   state.rawState = data;
   state.pivots = data.pivots || [];
+  const currentPivotIds = new Set(state.pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean));
+  for (const pivotId of Object.keys(state.qualityOverridesByPivotId)) {
+    if (!currentPivotIds.has(pivotId)) {
+      delete state.qualityOverridesByPivotId[pivotId];
+    }
+  }
+  for (const pivotId of Object.keys(state.statusOverridesByPivotId)) {
+    if (!currentPivotIds.has(pivotId)) {
+      delete state.statusOverridesByPivotId[pivotId];
+    }
+  }
   renderHeader();
   renderStatusSummary();
   renderPending();
@@ -1083,9 +1312,61 @@ async function refreshPivot() {
   renderPivotView();
 }
 
+async function refreshQualityOverrides() {
+  const pivots = state.pivots || [];
+  if (!pivots.length) {
+    state.qualityOverridesByPivotId = {};
+    state.statusOverridesByPivotId = {};
+    return;
+  }
+
+  const seq = Number(state.qualityRefreshSeq || 0) + 1;
+  state.qualityRefreshSeq = seq;
+
+  const pivotIds = pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean);
+  const nextOverrides = {};
+  const nextStatusOverrides = {};
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(6, pivotIds.length));
+
+  const runWorker = async () => {
+    while (cursor < pivotIds.length) {
+      const currentIndex = cursor;
+      cursor += 1;
+      const pivotId = pivotIds[currentIndex];
+      if (!pivotId) continue;
+      try {
+        const pivotData = await getJson(`/api/pivot/${encodeURIComponent(pivotId)}`);
+        const view = computeConnectivityView(pivotData);
+        const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
+        nextOverrides[pivotId] = quality;
+        const summary = (pivotData || {}).summary || {};
+        const detailStatus = summary.status || {};
+        nextStatusOverrides[pivotId] = {
+          code: text(detailStatus.code, "gray"),
+          label: text(detailStatus.label, "Inicial"),
+          reason: text(detailStatus.reason, ""),
+          rank: Number(detailStatus.rank ?? 99),
+        };
+      } catch (err) {
+        continue;
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  if (seq !== state.qualityRefreshSeq) return;
+
+  state.qualityOverridesByPivotId = nextOverrides;
+  state.statusOverridesByPivotId = nextStatusOverrides;
+  renderStatusSummary();
+  renderCards();
+}
+
 async function refreshAll() {
   try {
     await refreshState();
+    await refreshQualityOverrides();
     await refreshPivot();
     state.lastRefreshToastAtMs = 0;
   } catch (err) {
