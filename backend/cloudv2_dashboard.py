@@ -1,11 +1,21 @@
 import json
+import logging
+import mimetypes
 import os
 import re
 import shutil
 import threading
+from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+from backend.cloudv2_auth import (
+    PRIVACY_POLICY_VERSION,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SEC,
+    AuthService,
+    InMemoryRateLimiter,
+)
 from backend.cloudv2_paths import DATA_SUBDIR, LEGACY_WEB_DIRS, resolve_data_dir, resolve_web_dir
 
 
@@ -127,14 +137,116 @@ def generate_dashboard_assets(refresh_sec):
 
 
 def _build_handler(telemetry_store, reload_token_getter=None):
+    auth_service = AuthService(db_path=telemetry_store.persistence.db_path, logger=logging.getLogger("cloudv2.auth"))
+    rate_limiter = InMemoryRateLimiter()
+    auth_blocked = object()
+
+    page_aliases = {
+        "/": "index.html",
+        "/login": "login.html",
+        "/register": "register.html",
+        "/verify-email": "verify-email.html",
+        "/forgot-password": "forgot-password.html",
+        "/reset-password": "reset-password.html",
+        "/privacy-policy": "privacy-policy.html",
+    }
+    public_get_paths = {
+        "/login",
+        "/register",
+        "/verify-email",
+        "/forgot-password",
+        "/reset-password",
+        "/privacy-policy",
+        "/auth.css",
+        "/auth.js",
+        "/auth/verify",
+    }
+    public_post_paths = {
+        "/auth/register",
+        "/auth/login",
+        "/auth/resend-verification",
+        "/auth/forgot-password",
+        "/auth/reset-password",
+    }
+    unverified_allowed_get = {
+        "/verify-email",
+        "/login",
+        "/register",
+        "/forgot-password",
+        "/reset-password",
+        "/privacy-policy",
+        "/auth.css",
+        "/auth.js",
+        "/auth/me",
+        "/auth/verify",
+    }
+    unverified_allowed_post = {
+        "/auth/resend-verification",
+        "/auth/logout",
+        "/auth/forgot-password",
+        "/auth/reset-password",
+        "/account/delete",
+    }
+    rate_limit_rules = {
+        "/auth/login": (8, 300),
+        "/auth/resend-verification": (5, 600),
+        "/auth/forgot-password": (5, 600),
+    }
+
     class DashboardHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=DASHBOARD_DIR, **kwargs)
 
-        def _write_json(self, status_code, payload):
+        def _write_json(self, status_code, payload, extra_headers=None, cookies=None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            if extra_headers:
+                for key, value in extra_headers.items():
+                    self.send_header(str(key), str(value))
+            if cookies:
+                for cookie_value in cookies:
+                    self.send_header("Set-Cookie", str(cookie_value))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _write_text(self, status_code, content_type, body_text):
+            body = str(body_text or "").encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _redirect(self, location, cookies=None):
+            self.send_response(302)
+            self.send_header("Location", str(location))
+            self.send_header("Cache-Control", "no-store")
+            if cookies:
+                for cookie_value in cookies:
+                    self.send_header("Set-Cookie", str(cookie_value))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _write_html_file(self, filename):
+            path = os.path.join(DASHBOARD_DIR, str(filename or "").strip())
+            if not os.path.isfile(path):
+                self._write_text(404, "text/plain", "arquivo nao encontrado")
+                return
+            with open(path, "rb") as file:
+                body = file.read()
+
+            content_type, _ = mimetypes.guess_type(path)
+            if not content_type:
+                content_type = "text/html"
+            if content_type.startswith("text/"):
+                content_type = f"{content_type}; charset=utf-8"
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -149,10 +261,352 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return {}
             return json.loads(raw.decode("utf-8"))
 
+        def _is_api_path(self, path):
+            normalized = str(path or "").strip()
+            return normalized.startswith("/api/") or normalized in ("/auth/me", "/account/export", "/account/delete")
+
+        def _is_public_path(self, path, method):
+            safe_method = str(method or "").upper()
+            safe_path = str(path or "").strip()
+            if safe_method == "GET":
+                return safe_path in public_get_paths
+            if safe_method == "POST":
+                return safe_path in public_post_paths
+            return False
+
+        def _is_allowed_for_unverified(self, path, method):
+            safe_method = str(method or "").upper()
+            safe_path = str(path or "").strip()
+            if safe_method == "GET":
+                return safe_path in unverified_allowed_get
+            if safe_method == "POST":
+                return safe_path in unverified_allowed_post
+            return False
+
+        def _get_raw_session_token(self):
+            raw_cookie = str(self.headers.get("Cookie", "") or "")
+            if not raw_cookie.strip():
+                return ""
+            parsed = SimpleCookie()
+            try:
+                parsed.load(raw_cookie)
+            except Exception:
+                return ""
+            item = parsed.get(SESSION_COOKIE_NAME)
+            return str(item.value or "").strip() if item is not None else ""
+
+        def _resolve_auth_context(self):
+            cached = getattr(self, "_auth_context_cache", None)
+            if cached is not None:
+                return cached
+
+            token = self._get_raw_session_token()
+            context = auth_service.resolve_session(token, touch=True) if token else None
+            self._auth_context_cache = context if context is not None else False
+            return context
+
+        def _request_is_secure(self):
+            forced_secure = str(os.environ.get("AUTH_COOKIE_SECURE", "")).strip().lower() in ("1", "true", "yes", "on")
+            if forced_secure:
+                return True
+            forwarded_proto = str(self.headers.get("X-Forwarded-Proto", "")).split(",")[0].strip().lower()
+            if forwarded_proto == "https":
+                return True
+            return bool(getattr(self.connection, "cipher", None))
+
+        def _build_session_cookie(self, session_token, max_age=None):
+            ttl = int(max_age or SESSION_TTL_SEC)
+            parts = [
+                f"{SESSION_COOKIE_NAME}={str(session_token or '').strip()}",
+                "Path=/",
+                "HttpOnly",
+                "SameSite=Lax",
+                f"Max-Age={max(0, ttl)}",
+            ]
+            if self._request_is_secure():
+                parts.append("Secure")
+            return "; ".join(parts)
+
+        def _build_clear_session_cookie(self):
+            parts = [
+                f"{SESSION_COOKIE_NAME}=",
+                "Path=/",
+                "HttpOnly",
+                "SameSite=Lax",
+                "Max-Age=0",
+            ]
+            if self._request_is_secure():
+                parts.append("Secure")
+            return "; ".join(parts)
+
+        def _client_ip(self):
+            forwarded_for = str(self.headers.get("X-Forwarded-For", "")).strip()
+            if forwarded_for:
+                first = forwarded_for.split(",")[0].strip()
+                if first:
+                    return first
+            return str((self.client_address or ("", 0))[0] or "unknown").strip() or "unknown"
+
+        def _request_base_url(self):
+            forwarded_proto = str(self.headers.get("X-Forwarded-Proto", "")).split(",")[0].strip().lower()
+            scheme = "https" if forwarded_proto == "https" else "http"
+            if not forwarded_proto and self._request_is_secure():
+                scheme = "https"
+
+            forwarded_host = str(self.headers.get("X-Forwarded-Host", "")).split(",")[0].strip()
+            host = forwarded_host or str(self.headers.get("Host", "")).strip()
+            if not host:
+                host = f"{self.server.server_name}:{self.server.server_port}"
+            return f"{scheme}://{host}"
+
+        def _respond_auth_required(self, path):
+            if self._is_api_path(path):
+                self._write_json(401, {"ok": False, "code": "auth_required", "redirect": "/login"})
+                return
+            self._redirect("/login")
+
+        def _respond_email_not_verified(self, path):
+            if self._is_api_path(path):
+                self._write_json(403, {"ok": False, "code": "email_not_verified", "redirect": "/verify-email"})
+                return
+            self._redirect("/verify-email")
+
+        def _enforce_auth(self, path, method):
+            if self._is_public_path(path, method):
+                return self._resolve_auth_context()
+
+            context = self._resolve_auth_context()
+            if not context:
+                self._respond_auth_required(path)
+                return auth_blocked
+
+            user = (context or {}).get("user") or {}
+            if (not bool(user.get("email_verified"))) and (not self._is_allowed_for_unverified(path, method)):
+                self._respond_email_not_verified(path)
+                return auth_blocked
+
+            return context
+
+        def _check_rate_limit(self, path):
+            rule = rate_limit_rules.get(str(path or "").strip())
+            if rule is None:
+                return True
+            limit, window_sec = rule
+            allowed, retry_after = rate_limiter.allow(str(path or "").strip(), self._client_ip(), limit, window_sec)
+            if allowed:
+                return True
+            self._write_json(
+                429,
+                {"ok": False, "code": "rate_limited", "message": "Muitas tentativas. Tente novamente em instantes."},
+                extra_headers={"Retry-After": str(int(retry_after))},
+            )
+            return False
+
+        def _handle_auth_get(self, path, query, auth_context):
+            if path == "/auth/verify":
+                token = (query.get("token") or [""])[0]
+                result = auth_service.verify_email_token(token)
+                if result.get("ok"):
+                    self._redirect("/login?verified=1")
+                    return True
+
+                code = str(result.get("code") or "")
+                if code == "token_expired":
+                    self._redirect("/verify-email?status=expired")
+                    return True
+                if code == "token_used":
+                    self._redirect("/login?verified=1")
+                    return True
+                self._redirect("/verify-email?status=invalid")
+                return True
+
+            if path == "/auth/me":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "authenticated": False, "redirect": "/login"})
+                    return True
+                self._write_json(
+                    200,
+                    {
+                        "ok": True,
+                        "authenticated": True,
+                        "user": (auth_context or {}).get("user"),
+                        "privacy_policy_version": PRIVACY_POLICY_VERSION,
+                    },
+                )
+                return True
+
+            if path == "/account/export":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "redirect": "/login"})
+                    return True
+                export_payload = auth_service.export_account_data((auth_context or {}).get("session_user_id"))
+                if export_payload is None:
+                    self._write_json(404, {"ok": False, "error": "usuario nao encontrado"})
+                    return True
+                self._write_json(200, {"ok": True, "data": export_payload})
+                return True
+
+            return False
+
+        def _handle_auth_post(self, path, auth_context):
+            if path in ("/auth/login", "/auth/resend-verification", "/auth/forgot-password"):
+                if not self._check_rate_limit(path):
+                    return True
+
+            if path == "/auth/register":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                result = auth_service.register_user(
+                    email=body.get("email"),
+                    password=body.get("password"),
+                    password_confirm=body.get("password_confirm"),
+                    name=body.get("name"),
+                    privacy_policy_accepted=bool(body.get("privacy_policy_accepted")),
+                    request_base_url=self._request_base_url(),
+                )
+                status_code = 200 if result.get("ok") else 400
+                if result.get("code") == "email_in_use":
+                    status_code = 409
+                self._write_json(status_code, result)
+                return True
+
+            if path == "/auth/login":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                result = auth_service.login_user(
+                    email=body.get("email"),
+                    password=body.get("password"),
+                    ip_address=self._client_ip(),
+                    user_agent=self.headers.get("User-Agent", ""),
+                )
+                if not result.get("ok"):
+                    status_code = 403 if result.get("code") == "email_not_verified" else 401
+                    payload = dict(result)
+                    if result.get("code") == "email_not_verified":
+                        payload["redirect"] = "/verify-email"
+                    self._write_json(status_code, payload)
+                    return True
+
+                session_token = result.get("session_token")
+                payload = dict(result)
+                payload.pop("session_token", None)
+                payload["redirect"] = "/index.html"
+                self._write_json(
+                    200,
+                    payload,
+                    cookies=[self._build_session_cookie(session_token, max_age=payload.get("session_ttl_sec"))],
+                )
+                return True
+
+            if path == "/auth/logout":
+                auth_service.logout_session(self._get_raw_session_token())
+                self._write_json(
+                    200,
+                    {"ok": True, "message": "Sessao encerrada."},
+                    cookies=[self._build_clear_session_cookie()],
+                )
+                return True
+
+            if path == "/auth/resend-verification":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                user_id = None
+                if auth_context and not bool(((auth_context or {}).get("user") or {}).get("email_verified")):
+                    user_id = (auth_context or {}).get("session_user_id")
+
+                result = auth_service.resend_verification(
+                    email=body.get("email"),
+                    user_id=user_id,
+                    request_base_url=self._request_base_url(),
+                )
+                self._write_json(200, result)
+                return True
+
+            if path == "/auth/forgot-password":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                result = auth_service.forgot_password(
+                    email=body.get("email"),
+                    request_base_url=self._request_base_url(),
+                )
+                self._write_json(200, result)
+                return True
+
+            if path == "/auth/reset-password":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                result = auth_service.reset_password(
+                    raw_token=body.get("token"),
+                    new_password=body.get("password"),
+                    confirm_password=body.get("password_confirm"),
+                )
+                status_code = 200 if result.get("ok") else 400
+                if result.get("code") == "token_expired":
+                    status_code = 410
+                self._write_json(status_code, result, cookies=[self._build_clear_session_cookie()])
+                return True
+
+            if path == "/account/delete":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "redirect": "/login"})
+                    return True
+                deleted = auth_service.delete_account((auth_context or {}).get("session_user_id"))
+                auth_service.logout_session(self._get_raw_session_token())
+                if not deleted:
+                    self._write_json(
+                        404,
+                        {"ok": False, "error": "conta nao encontrada"},
+                        cookies=[self._build_clear_session_cookie()],
+                    )
+                    return True
+                self._write_json(
+                    200,
+                    {"ok": True, "message": "Conta excluida com sucesso."},
+                    cookies=[self._build_clear_session_cookie()],
+                )
+                return True
+
+            return False
+
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
             query = parse_qs(parsed.query or "")
+
+            auth_context = self._enforce_auth(path, "GET")
+            if auth_context is auth_blocked:
+                return
+
+            if path in ("/login", "/register"):
+                if auth_context and bool(((auth_context or {}).get("user") or {}).get("email_verified")):
+                    self._redirect("/index.html")
+                    return
+                if auth_context and (not bool(((auth_context or {}).get("user") or {}).get("email_verified"))):
+                    self._redirect("/verify-email")
+                    return
+
+            if self._handle_auth_get(path, query, auth_context):
+                return
 
             if path == "/api/health":
                 self._write_json(200, {"ok": True})
@@ -253,11 +707,23 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"token": token})
                 return
 
+            alias_file = page_aliases.get(path)
+            if alias_file:
+                self._write_html_file(alias_file)
+                return
+
             super().do_GET()
 
         def do_POST(self):
             parsed = urlparse(self.path)
             path = parsed.path
+
+            auth_context = self._enforce_auth(path, "POST")
+            if auth_context is auth_blocked:
+                return
+
+            if self._handle_auth_post(path, auth_context):
+                return
 
             if path == "/api/admin/purge-database":
                 try:
