@@ -3,7 +3,7 @@ import os
 import re
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 DASHBOARD_DIR = "dashboards"
@@ -103,13 +103,74 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path
+            query = parse_qs(parsed.query or "")
 
             if path == "/api/health":
                 self._write_json(200, {"ok": True})
                 return
 
             if path == "/api/state":
-                payload = telemetry_store.get_state_snapshot()
+                run_id = (query.get("run_id") or [None])[0]
+                if isinstance(run_id, str):
+                    run_id = run_id.strip() or None
+                payload = telemetry_store.get_state_snapshot(run_id=run_id)
+                self._write_json(200, payload)
+                return
+
+            if path == "/api/monitoring/runs":
+                limit_raw = (query.get("limit") or [None])[0]
+                try:
+                    limit = int(limit_raw) if limit_raw is not None else 200
+                except (TypeError, ValueError):
+                    limit = 200
+                runs = telemetry_store.list_monitoring_runs(limit=limit)
+                self._write_json(
+                    200,
+                    {
+                        "runs": runs,
+                    },
+                )
+                return
+
+            if path.startswith("/api/pivot/") and path.endswith("/sessions"):
+                pivot_id = unquote(path[len("/api/pivot/") : -len("/sessions")]).strip("/").strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id invalido"})
+                    return
+                limit_raw = (query.get("limit") or [None])[0]
+                try:
+                    limit = int(limit_raw) if limit_raw is not None else 200
+                except (TypeError, ValueError):
+                    limit = 200
+                run_id = (query.get("run_id") or [None])[0]
+                if isinstance(run_id, str):
+                    run_id = run_id.strip() or None
+                sessions = telemetry_store.list_monitoring_sessions(pivot_id, limit=limit, run_id=run_id)
+                self._write_json(
+                    200,
+                    {
+                        "pivot_id": pivot_id,
+                        "run_id": run_id,
+                        "sessions": sessions,
+                    },
+                )
+                return
+
+            if path.startswith("/api/pivot/") and path.endswith("/panel"):
+                pivot_id = unquote(path[len("/api/pivot/") : -len("/panel")]).strip("/").strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id invalido"})
+                    return
+                session_id = (query.get("session_id") or [None])[0]
+                if isinstance(session_id, str):
+                    session_id = session_id.strip() or None
+                run_id = (query.get("run_id") or [None])[0]
+                if isinstance(run_id, str):
+                    run_id = run_id.strip() or None
+                payload = telemetry_store.get_complete_panel(pivot_id, session_id=session_id, run_id=run_id)
+                if payload is None:
+                    self._write_json(404, {"error": "pivot nao encontrado"})
+                    return
                 self._write_json(200, payload)
                 return
 
@@ -118,7 +179,13 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 if not pivot_id:
                     self._write_json(400, {"error": "pivot_id invalido"})
                     return
-                payload = telemetry_store.get_pivot_snapshot(pivot_id)
+                session_id = (query.get("session_id") or [None])[0]
+                if isinstance(session_id, str):
+                    session_id = session_id.strip() or None
+                run_id = (query.get("run_id") or [None])[0]
+                if isinstance(run_id, str):
+                    run_id = run_id.strip() or None
+                payload = telemetry_store.get_pivot_snapshot(pivot_id, session_id=session_id, run_id=run_id)
                 if payload is None:
                     self._write_json(404, {"error": "pivot nao encontrado"})
                     return
@@ -142,6 +209,78 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         def do_POST(self):
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path == "/api/admin/purge-database":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                password = body.get("password")
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    result = telemetry_store.purge_database_records(password=password, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+                self._write_json(200, {"ok": True, "result": result})
+                return
+
+            if path == "/api/monitoring/runs":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    created = telemetry_store.start_new_monitoring_run(source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+                self._write_json(200, {"ok": True, "created": created})
+                return
+
+            if path == "/api/monitoring/history":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                run_id = str(body.get("run_id") or "").strip()
+                if not run_id:
+                    self._write_json(400, {"error": "run_id obrigatorio"})
+                    return
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    activated = telemetry_store.activate_history_run(run_id=run_id, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+                self._write_json(200, {"ok": True, "activated": activated})
+                return
+
+            if path.startswith("/api/pivot/") and path.endswith("/sessions"):
+                pivot_id = unquote(path[len("/api/pivot/") : -len("/sessions")]).strip("/").strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    created = telemetry_store.start_new_monitoring_session(pivot_id, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+                self._write_json(200, {"ok": True, "created": created})
+                return
 
             if path != "/api/probe-config":
                 self._write_json(404, {"error": "rota nao encontrada"})
