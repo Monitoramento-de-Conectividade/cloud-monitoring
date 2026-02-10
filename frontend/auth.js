@@ -147,10 +147,28 @@
       try {
         const { response, data } = await postJson("/auth/register", payload);
         if (response.ok && data.ok) {
+          const delivery = String(data.email_delivery || "").trim().toLowerCase();
+          if (delivery === "smtp_failed") {
+            const detail = String(data.email_error || "").trim();
+            setStatus(
+              (data.message || "Cadastro concluido, mas houve falha no envio do e-mail.")
+                + (detail ? ` Detalhe: ${detail}` : ""),
+              "error"
+            );
+            return;
+          }
+          if (delivery === "console_link") {
+            setStatus(
+              (data.message || "Cadastro concluido.")
+                + " Abra o console do servidor para copiar o link de verificacao.",
+              "warn"
+            );
+            return;
+          }
           setStatus(data.message || "Cadastro concluido.", "success");
           window.setTimeout(() => {
             window.location.assign("/verify-email?registered=1");
-          }, 500);
+          }, 600);
           return;
         }
         const details = Array.isArray(data.details) ? ` ${data.details.join(" ")}` : "";
@@ -214,6 +232,24 @@
       setStatus("Solicitando envio de verificacao...", "warn");
       try {
         const { data } = await postJson("/auth/resend-verification", { email });
+        const delivery = String(data.email_delivery || "").trim().toLowerCase();
+        if (delivery === "smtp_failed") {
+          const detail = String(data.email_error || "").trim();
+          setStatus(
+            (data.message || "Falha ao enviar e-mail de verificacao.")
+              + (detail ? ` Detalhe: ${detail}` : ""),
+            "error"
+          );
+          return;
+        }
+        if (delivery === "console_link") {
+          setStatus(
+            (data.message || "Solicitacao aceita.")
+              + " Em modo dev, o link esta no console do servidor.",
+            "warn"
+          );
+          return;
+        }
         setStatus(data.message || "Se o e-mail existir, enviaremos o link.", "success");
       } catch (err) {
         setStatus("Falha de conexao. Tente novamente.", "error");
@@ -282,6 +318,24 @@
       setStatus("Solicitando redefinicao...", "warn");
       try {
         const { data } = await postJson("/auth/forgot-password", { email });
+        const delivery = String(data.email_delivery || "").trim().toLowerCase();
+        if (delivery === "smtp_failed") {
+          const detail = String(data.email_error || "").trim();
+          setStatus(
+            (data.message || "Falha ao enviar e-mail de redefinicao.")
+              + (detail ? ` Detalhe: ${detail}` : ""),
+            "error"
+          );
+          return;
+        }
+        if (delivery === "console_link") {
+          setStatus(
+            (data.message || "Solicitacao aceita.")
+              + " Em modo dev, o link esta no console do servidor.",
+            "warn"
+          );
+          return;
+        }
         setStatus(data.message || "Se o e-mail existir, enviaremos o link.", "success");
       } catch (err) {
         setStatus("Falha de conexao. Tente novamente.", "error");
