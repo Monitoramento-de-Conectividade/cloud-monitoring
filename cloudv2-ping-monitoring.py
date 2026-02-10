@@ -74,7 +74,7 @@ def _is_process_running(pid):
         return False
     try:
         os.kill(pid, 0)
-    except OSError:
+    except (OSError, SystemError):
         return False
     return True
 
