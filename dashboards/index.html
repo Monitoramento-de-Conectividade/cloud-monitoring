@@ -24,6 +24,24 @@
         <span class="chip" id="updatedAt">Atualizando...</span>
         <span class="chip" id="countsMeta">0 pivots</span>
       </div>
+      <div class="hero-session">
+        <label class="field compact hero-session-field">
+          <span>Sessao de monitoramento</span>
+          <select id="sessionAction">
+            <option value="new">Iniciar monitoramento novo</option>
+            <option value="history">Carregar historico</option>
+          </select>
+        </label>
+        <label class="field compact hero-session-field" id="sessionSelectWrap" hidden>
+          <span>Historico</span>
+          <select id="sessionSelect"></select>
+        </label>
+        <button id="sessionApply" class="ghost" type="button">Aplicar</button>
+        <button id="purgeDatabase" class="danger" type="button">Deletar dados do banco</button>
+        <p class="hero-session-hint" id="sessionHint">
+          Escolha iniciar monitoramento novo para todo o sistema ou carregar um historico global salvo.
+        </p>
+      </div>
     </header>
 
     <nav class="panel section-nav" aria-label="Navegacao de secoes">

@@ -55,6 +55,12 @@ const ui = {
   timelinePageInfo: document.getElementById("timelinePageInfo"),
   cloud2Table: document.getElementById("cloud2Table"),
   toastRegion: document.getElementById("toastRegion"),
+  sessionAction: document.getElementById("sessionAction"),
+  sessionSelectWrap: document.getElementById("sessionSelectWrap"),
+  sessionSelect: document.getElementById("sessionSelect"),
+  sessionApply: document.getElementById("sessionApply"),
+  purgeDatabase: document.getElementById("purgeDatabase"),
+  sessionHint: document.getElementById("sessionHint"),
 };
 
 const state = {
@@ -83,6 +89,12 @@ const state = {
   qualityOverridesByPivotId: {},
   statusOverridesByPivotId: {},
   qualityRefreshSeq: 0,
+  sessionAction: "new",
+  availableRuns: [],
+  selectedRunId: null,
+  selectedHistoryRunId: null,
+  panelSessionMeta: null,
+  panelRunMeta: null,
 };
 
 const STATUS_META = {
@@ -110,6 +122,7 @@ const EVENT_LABEL = {
   probe_response: "Probe respondido",
   probe_timeout: "Probe timeout",
   probe_response_unmatched: "Resposta sem correlacao",
+  session_started: "Nova sessao",
 };
 
 function parseHashPivot() {
@@ -285,6 +298,198 @@ async function getJson(url) {
   const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`);
   if (!response.ok) throw new Error(`${response.status}`);
   return response.json();
+}
+
+function buildStateUrl(runId = null) {
+  const normalizedRun = String(runId || "").trim();
+  if (!normalizedRun) return "/api/state";
+  return `/api/state?run_id=${encodeURIComponent(normalizedRun)}`;
+}
+
+function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
+  const normalized = String(pivotId || "").trim();
+  if (!normalized) return "";
+  const params = new URLSearchParams();
+  const normalizedRun = String(runId || "").trim();
+  if (normalizedRun) {
+    params.set("run_id", normalizedRun);
+  }
+  const normalizedSession = String(sessionId || "").trim();
+  if (normalizedSession) {
+    params.set("session_id", normalizedSession);
+  }
+  const query = params.toString();
+  const base = `/api/pivot/${encodeURIComponent(normalized)}/panel`;
+  return query ? `${base}?${query}` : base;
+}
+
+function formatRunOption(run) {
+  const item = run || {};
+  const startedAt = text(item.started_at, "-");
+  const duration = fmtDuration(item.duration_sec);
+  const source = text(item.source, "runtime");
+  const activeTag = item.is_active ? "Ativo" : "Historico";
+  const pivots = Number(item.pivot_count || 0);
+  return `${activeTag} | ${startedAt} | ${duration} | ${source} | ${pivots} pivots`;
+}
+
+function renderSessionControls() {
+  const isHistory = state.sessionAction === "history";
+  const runs = Array.isArray(state.availableRuns) ? state.availableRuns : [];
+  const currentRun = state.rawState?.run || state.panelRunMeta || null;
+  const currentRunLabel = currentRun
+    ? `Monitoramento atual: ${text(currentRun.started_at)} (${currentRun.is_active ? "ativo" : "historico"})`
+    : "";
+
+  ui.sessionAction.value = state.sessionAction;
+  ui.sessionSelectWrap.hidden = !isHistory;
+
+  if (isHistory) {
+    const selectedRunId = String(state.selectedHistoryRunId || state.selectedRunId || "").trim();
+
+    if (!runs.length) {
+      ui.sessionSelect.innerHTML = `<option value="">Nenhum historico salvo</option>`;
+      ui.sessionSelect.disabled = true;
+      ui.sessionApply.disabled = true;
+      ui.sessionHint.textContent = "Sem monitoramentos globais salvos no banco.";
+      return;
+    }
+
+    ui.sessionSelect.innerHTML = runs
+      .map((run) => {
+        const runId = text(run.run_id, "");
+        const selected = selectedRunId && selectedRunId === runId ? " selected" : "";
+        return `<option value="${escapeHtml(runId)}"${selected}>${escapeHtml(formatRunOption(run))}</option>`;
+      })
+      .join("");
+    ui.sessionSelect.disabled = false;
+    if (!ui.sessionSelect.value && runs.length) {
+      ui.sessionSelect.value = text(runs[0].run_id, "");
+    }
+    ui.sessionApply.disabled = !ui.sessionSelect.value;
+    ui.sessionHint.textContent =
+      "Selecione um monitoramento global salvo e clique em Aplicar para carregar o historico completo." +
+      (currentRunLabel ? ` ${currentRunLabel}` : "");
+    return;
+  }
+
+  ui.sessionSelect.innerHTML = "";
+  ui.sessionSelect.disabled = true;
+  ui.sessionApply.disabled = false;
+  ui.sessionHint.textContent =
+    "Clique em Aplicar para iniciar um novo monitoramento global para todo o sistema." +
+    (currentRunLabel ? ` ${currentRunLabel}` : "");
+}
+
+async function loadMonitoringRuns() {
+  try {
+    const payload = await getJson("/api/monitoring/runs");
+    state.availableRuns = Array.isArray(payload.runs) ? payload.runs : [];
+  } catch (err) {
+    state.availableRuns = [];
+  }
+  renderSessionControls();
+}
+
+async function applyMonitoringSessionAction() {
+  if (state.sessionAction === "new") {
+    ui.sessionApply.disabled = true;
+    try {
+      const response = await fetch("/api/monitoring/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "ui_header_global" }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      const created = data.created || {};
+      const runId = text(created.run_id, "").trim();
+      state.selectedRunId = null;
+      state.selectedHistoryRunId = runId || null;
+      await loadMonitoringRuns();
+      await refreshAll();
+      showToast("Novo monitoramento global iniciado.", "success", 3200);
+    } catch (err) {
+      ui.sessionHint.textContent = `Falha ao iniciar monitoramento global: ${err.message}`;
+      showToast(`Falha ao iniciar monitoramento global: ${err.message}`, "error", 4000);
+    } finally {
+      renderSessionControls();
+    }
+    return;
+  }
+
+  const selectedRunId = text(ui.sessionSelect.value, "").trim();
+  if (!selectedRunId) {
+    ui.sessionHint.textContent = "Selecione um historico valido para carregar.";
+    return;
+  }
+  ui.sessionApply.disabled = true;
+  try {
+    const response = await fetch("/api/monitoring/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_id: selectedRunId, source: "ui_header_global" }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    state.selectedHistoryRunId = selectedRunId;
+    state.selectedRunId = selectedRunId;
+    await refreshAll();
+    showToast("Historico global carregado.", "success", 2800);
+  } catch (err) {
+    ui.sessionHint.textContent = `Falha ao carregar historico global: ${err.message}`;
+    showToast(`Falha ao carregar historico global: ${err.message}`, "error", 3800);
+  } finally {
+    renderSessionControls();
+  }
+}
+
+async function purgeDatabaseRecords() {
+  const confirmed = window.confirm(
+    "Essa acao vai APAGAR TODOS os dados do banco (runs, sessoes, snapshots e eventos). Deseja continuar?"
+  );
+  if (!confirmed) return;
+
+  const password = window.prompt("Digite a senha para deletar todos os dados do banco:");
+  if (password === null) return;
+  const normalizedPassword = String(password);
+  if (!normalizedPassword.trim()) {
+    showToast("Senha obrigatoria para limpar o banco.", "warn", 3200);
+    return;
+  }
+
+  ui.purgeDatabase.disabled = true;
+  try {
+    const response = await fetch("/api/admin/purge-database", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        password: normalizedPassword,
+        source: "ui_header_global",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    state.availableRuns = [];
+    state.selectedRunId = null;
+    state.selectedHistoryRunId = null;
+    closePivot();
+    await loadMonitoringRuns();
+    await refreshAll();
+    showToast("Todos os dados do banco foram removidos.", "success", 3600);
+  } catch (err) {
+    showToast(`Falha ao limpar banco: ${err.message}`, "error", 4200);
+  } finally {
+    ui.purgeDatabase.disabled = false;
+    renderSessionControls();
+  }
 }
 
 function isLocalhostRuntime() {
@@ -655,6 +860,32 @@ function normalizeProbeDelayRange(pivot) {
 }
 
 function buildProbeDelaySeries(pivot, startTs, endTs) {
+  const persistedPoints = (pivot.probe_delay_points || [])
+    .map((point) => ({
+      ts: Number(point.ts || 0),
+      latencySec: Number(point.latency_sec),
+      sampleCount: Number(point.sample_count || 0),
+      avgLatencySec: Number(point.avg_latency_sec),
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.ts) &&
+        point.ts >= startTs &&
+        point.ts <= endTs &&
+        Number.isFinite(point.latencySec) &&
+        point.latencySec >= 0 &&
+        Number.isFinite(point.avgLatencySec) &&
+        point.avgLatencySec >= 0
+    )
+    .sort((a, b) => a.ts - b.ts);
+
+  if (persistedPoints.length) {
+    return {
+      points: persistedPoints,
+      responseCount: persistedPoints.length,
+    };
+  }
+
   const responses = (pivot.probe_events || [])
     .filter((event) => String(event.type || "").toLowerCase() === "response")
     .map((event) => ({
@@ -1276,9 +1507,10 @@ async function loadUiConfig() {
 }
 
 async function refreshState() {
-  const data = await getJson("/api/state");
+  const data = await getJson(buildStateUrl(state.selectedRunId));
   state.rawState = data;
   state.pivots = data.pivots || [];
+  state.panelRunMeta = data.run || null;
   const currentPivotIds = new Set(state.pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean));
   for (const pivotId of Object.keys(state.qualityOverridesByPivotId)) {
     if (!currentPivotIds.has(pivotId)) {
@@ -1290,6 +1522,9 @@ async function refreshState() {
       delete state.statusOverridesByPivotId[pivotId];
     }
   }
+  if (state.selectedPivot && !currentPivotIds.has(state.selectedPivot)) {
+    closePivot();
+  }
   renderHeader();
   renderStatusSummary();
   renderPending();
@@ -1299,16 +1534,30 @@ async function refreshState() {
 async function refreshPivot() {
   if (!state.selectedPivot) {
     state.pivotData = null;
+    state.panelSessionMeta = null;
+    state.panelRunMeta = state.rawState?.run || null;
+    renderSessionControls();
     renderPivotView();
     return;
   }
 
+  const pivotId = String(state.selectedPivot || "").trim();
+  const selectedRunId = text(state.selectedRunId, "").trim() || null;
+
   try {
-    const pivot = await getJson(`/api/pivot/${encodeURIComponent(state.selectedPivot)}`);
-    state.pivotData = pivot;
+    state.pivotData = await getJson(buildPivotPanelUrl(pivotId, selectedRunId));
   } catch (err) {
     state.pivotData = null;
   }
+
+  if (state.pivotData) {
+    state.panelSessionMeta = state.pivotData.session || null;
+    state.panelRunMeta = state.pivotData.run || state.rawState?.run || null;
+  } else {
+    state.panelSessionMeta = null;
+    state.panelRunMeta = state.rawState?.run || null;
+  }
+  renderSessionControls();
   renderPivotView();
 }
 
@@ -1336,7 +1585,7 @@ async function refreshQualityOverrides() {
       const pivotId = pivotIds[currentIndex];
       if (!pivotId) continue;
       try {
-        const pivotData = await getJson(`/api/pivot/${encodeURIComponent(pivotId)}`);
+        const pivotData = await getJson(buildPivotPanelUrl(pivotId, state.selectedRunId));
         const view = computeConnectivityView(pivotData);
         const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
         nextOverrides[pivotId] = quality;
@@ -1384,6 +1633,7 @@ async function openPivot(pivotId) {
   if (!id) return;
   state.connSelectedSegmentKey = null;
   state.selectedPivot = id;
+  state.panelSessionMeta = null;
   state.timelinePage = 1;
   setHashPivot(id);
   await refreshPivot();
@@ -1394,7 +1644,10 @@ function closePivot() {
   state.connSelectedSegmentKey = null;
   state.selectedPivot = null;
   state.pivotData = null;
+  state.panelSessionMeta = null;
+  state.panelRunMeta = state.rawState?.run || null;
   setHashPivot("");
+  renderSessionControls();
   renderPivotView();
 }
 
@@ -1468,6 +1721,16 @@ function wireEvents() {
 
   ui.closePivot.addEventListener("click", closePivot);
   ui.saveProbe.addEventListener("click", saveProbeSetting);
+  ui.sessionAction.addEventListener("change", async () => {
+    state.sessionAction = ui.sessionAction.value || "new";
+    if (state.sessionAction === "history") {
+      await loadMonitoringRuns();
+      return;
+    }
+    renderSessionControls();
+  });
+  ui.sessionApply.addEventListener("click", applyMonitoringSessionAction);
+  ui.purgeDatabase.addEventListener("click", purgeDatabaseRecords);
 
   ui.connPreset.addEventListener("change", () => {
     state.connPreset = ui.connPreset.value || "30d";
@@ -1577,10 +1840,13 @@ async function boot() {
   ui.probeDelayRange.hidden = true;
   ui.probeDelayFromWrap.hidden = true;
   ui.probeDelayToWrap.hidden = true;
+  ui.sessionAction.value = state.sessionAction;
   const hashPivot = parseHashPivot();
   if (hashPivot) {
     state.selectedPivot = hashPivot;
   }
+  await loadMonitoringRuns();
+  renderSessionControls();
   await refreshAll();
   setInterval(refreshAll, state.refreshMs);
 }
