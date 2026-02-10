@@ -372,9 +372,24 @@ function showToast(message, level = "success", ttlMs = 3200) {
 }
 
 async function getJson(url) {
-  const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`);
-  if (!response.ok) throw new Error(`${response.status}`);
-  return response.json();
+  const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+    credentials: "same-origin",
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch (err) {
+    payload = {};
+  }
+  if (!response.ok) {
+    const redirect = String(payload.redirect || "").trim();
+    if (redirect) {
+      window.location.assign(redirect);
+      throw new Error(`AUTH_REDIRECT_${response.status}`);
+    }
+    throw new Error(String(payload.error || payload.message || response.status));
+  }
+  return payload;
 }
 
 function buildStateUrl(runId = null) {
