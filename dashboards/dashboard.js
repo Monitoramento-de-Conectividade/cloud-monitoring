@@ -15,6 +15,7 @@ const ui = {
   closePivot: document.getElementById("closePivot"),
   pivotTitle: document.getElementById("pivotTitle"),
   pivotStatus: document.getElementById("pivotStatus"),
+  pivotQuality: document.getElementById("pivotQuality"),
   pivotMetrics: document.getElementById("pivotMetrics"),
   connPreset: document.getElementById("connPreset"),
   connFromWrap: document.getElementById("connFromWrap"),
@@ -83,7 +84,7 @@ const state = {
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray" },
-  green: { label: "Conectado", css: "green" },
+  green: { label: "Online", css: "green" },
   yellow: { label: "Atencao", css: "yellow" },
   critical: { label: "Critico", css: "critical" },
   red: { label: "Offline", css: "red" },
@@ -268,7 +269,14 @@ function applyFilterSort() {
 
   let filtered = list.filter((item) => {
     if (state.statusFilter !== "all") {
-      if ((item.status || {}).code !== state.statusFilter) return false;
+      const selectedCode = state.statusFilter;
+      const stateCode = text((item.status || {}).code, "gray");
+      const qualityCode = text((item.quality || {}).code, "green");
+      if (selectedCode === "yellow" || selectedCode === "critical") {
+        if (qualityCode !== selectedCode) return false;
+      } else if (stateCode !== selectedCode) {
+        return false;
+      }
     }
     if (needle && !String(item.pivot_id || "").toLowerCase().includes(needle)) {
       return false;
@@ -287,9 +295,17 @@ function applyFilterSort() {
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
     if (state.sort === "activity_asc") return aActivity - bActivity || ap.localeCompare(bp);
 
-    const aRank = Number((a.status || {}).rank ?? 99);
-    const bRank = Number((b.status || {}).rank ?? 99);
-    if (aRank !== bRank) return aRank - bRank;
+    const aOffline = text((a.status || {}).code, "gray") === "red" ? 1 : 0;
+    const bOffline = text((b.status || {}).code, "gray") === "red" ? 1 : 0;
+    if (aOffline !== bOffline) return bOffline - aOffline;
+
+    const aQualityRank = Number((a.quality || {}).rank ?? 99);
+    const bQualityRank = Number((b.quality || {}).rank ?? 99);
+    if (aQualityRank !== bQualityRank) return aQualityRank - bQualityRank;
+
+    const aStateRank = Number((a.status || {}).rank ?? 99);
+    const bStateRank = Number((b.status || {}).rank ?? 99);
+    if (aStateRank !== bStateRank) return aStateRank - bStateRank;
 
     const aAlert = (a.probe || {}).alert ? 1 : 0;
     const bAlert = (b.probe || {}).alert ? 1 : 0;
@@ -311,21 +327,25 @@ function renderHeader() {
 }
 
 function renderStatusSummary() {
-  const counts = { all: 0, green: 0, yellow: 0, critical: 0, red: 0, gray: 0 };
+  const stateCounts = { all: 0, green: 0, red: 0, gray: 0 };
+  const qualityCounts = { green: 0, yellow: 0, critical: 0 };
   for (const pivot of state.pivots) {
-    counts.all += 1;
-    const code = (pivot.status || {}).code || "gray";
-    if (counts[code] === undefined) counts[code] = 0;
-    counts[code] += 1;
+    stateCounts.all += 1;
+    const stateCode = text((pivot.status || {}).code, "gray");
+    if (stateCounts[stateCode] !== undefined) stateCounts[stateCode] += 1;
+
+    const qualityCode = text((pivot.quality || {}).code, "green");
+    if (qualityCounts[qualityCode] !== undefined) qualityCounts[qualityCode] += 1;
   }
 
   ui.statusSummary.innerHTML = `
-    <div class="summary-pill"><span>Total</span><strong>${counts.all}</strong></div>
-    <div class="summary-pill"><span>Conectado</span><strong>${counts.green}</strong></div>
-    <div class="summary-pill"><span>Atencao</span><strong>${counts.yellow}</strong></div>
-    <div class="summary-pill"><span>Critico</span><strong>${counts.critical}</strong></div>
-    <div class="summary-pill"><span>Offline</span><strong>${counts.red}</strong></div>
-    <div class="summary-pill"><span>Inicial</span><strong>${counts.gray}</strong></div>
+    <div class="summary-pill"><span>Total</span><strong>${stateCounts.all}</strong></div>
+    <div class="summary-pill"><span>Estado Online</span><strong>${stateCounts.green}</strong></div>
+    <div class="summary-pill"><span>Estado Offline</span><strong>${stateCounts.red}</strong></div>
+    <div class="summary-pill"><span>Estado Inicial</span><strong>${stateCounts.gray}</strong></div>
+    <div class="summary-pill"><span>Qualidade Saudavel</span><strong>${qualityCounts.green}</strong></div>
+    <div class="summary-pill"><span>Qualidade Atencao</span><strong>${qualityCounts.yellow}</strong></div>
+    <div class="summary-pill"><span>Qualidade Critico</span><strong>${qualityCounts.critical}</strong></div>
   `;
 }
 
@@ -369,8 +389,11 @@ function renderCards() {
     ui.cardsGrid.innerHTML = pageItems
       .map((pivot) => {
         const status = pivot.status || {};
+        const quality = pivot.quality || {};
         const statusCode = text(status.code, "gray");
-        const label = escapeHtml(text(status.label, "Inicial"));
+        const statusLabel = escapeHtml(text(status.label, "Inicial"));
+        const qualityCode = text(quality.code, "green");
+        const qualityLabel = escapeHtml(text(quality.label, "Saudavel"));
         const pivotId = escapeHtml(text(pivot.pivot_id, "pivot"));
         const lastPing = escapeHtml(text(pivot.last_ping_at));
         const lastCloudv2 = escapeHtml(text(pivot.last_cloudv2_at));
@@ -389,7 +412,10 @@ function renderCards() {
           <article class="pivot-card">
             <div class="pivot-head">
               <div class="pivot-id">${pivotId}</div>
-              <span class="badge ${statusCode}">${label}</span>
+              <div class="badge-stack">
+                <span class="badge ${statusCode}">Estado: ${statusLabel}</span>
+                <span class="badge ${qualityCode}">Qualidade: ${qualityLabel}</span>
+              </div>
             </div>
             <div class="kv-grid">
               <div class="k">Ultimo ping</div><div>${lastPing}</div>
@@ -421,6 +447,7 @@ function renderPivotMetrics(pivot) {
   const summary = pivot.summary || {};
   const metrics = pivot.metrics || {};
   const status = summary.status || {};
+  const quality = summary.quality || {};
   const probe = summary.probe || {};
   const sentCount = Number(probe.sent_count || 0);
   const responseCount = Number(probe.response_count || 0);
@@ -432,8 +459,12 @@ function renderPivotMetrics(pivot) {
       : `${responseCount}/${sentCount}`;
 
   const cards = [
-    { label: "Status", value: text(status.label) },
-    { label: "Razao", value: text(status.reason) },
+    { label: "Estado atual", value: text(status.label) },
+    { label: "Motivo estado", value: text(status.reason) },
+    { label: "Qualidade", value: text(quality.label, "Saudavel") },
+    { label: "Motivo qualidade", value: text(quality.reason) },
+    { label: "% Conectado (janela)", value: fmtPercent(summary.connected_pct) },
+    { label: "% Desconectado (janela)", value: fmtPercent(summary.disconnected_pct) },
     { label: "Ultimo ping", value: text(summary.last_ping_at) },
     { label: "Ultimo cloudv2", value: text(summary.last_cloudv2_at) },
     {
@@ -980,11 +1011,16 @@ function renderPivotView() {
   ui.pivotView.hidden = false;
   const summary = pivot.summary || {};
   const status = summary.status || {};
+  const quality = summary.quality || {};
   const probe = summary.probe || {};
 
   ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivot");
-  ui.pivotStatus.textContent = text(status.label, "Inicial");
+  ui.pivotStatus.textContent = `Estado: ${text(status.label, "Inicial")}`;
   ui.pivotStatus.className = `badge ${text(status.code, "gray")}`;
+  if (ui.pivotQuality) {
+    ui.pivotQuality.textContent = `Qualidade: ${text(quality.label, "Saudavel")}`;
+    ui.pivotQuality.className = `badge ${text(quality.code, "green")}`;
+  }
 
   ui.probeEnabled.checked = !!probe.enabled;
   ui.probeInterval.value = Number(probe.interval_sec || 0);
