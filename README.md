@@ -135,3 +135,23 @@ Campos importantes em `cloudv2-config.json`:
   - `python cloudv2-config-ui.py`
 - Variável opcional:
   - `CLOUDV2_WEB_DIR` para forçar o diretório do frontend servido pelo backend.
+
+## Deploy no Render (quick start)
+
+1. Configure o servico `Web Service` com:
+   - Build command: `pip install -r requirements.txt`
+   - Start command: `python backend/run_monitor.py`
+   - Health check path: `/api/health`
+2. Configure os secrets:
+   - `CA_CERT_CONTENT`
+   - `CLIENT_CERT_CONTENT`
+   - `CLIENT_KEY_CONTENT`
+3. Configure variaveis de runtime (opcionais):
+   - `BROKER` (default ja vem no `cloudv2-config.json`)
+   - `MQTT_PORT` (porta MQTT, default `8883`)
+   - `DASHBOARD_PORT` (se quiser forcar; no Render usa `PORT` automaticamente)
+   - `CLOUDV2_DEV_HOT_RELOAD=0` (recomendado em producao)
+
+Notas:
+- Em Render, `PORT` e reservado para HTTP do dashboard.
+- Para mudar a porta MQTT por variavel de ambiente, use `MQTT_PORT`.
