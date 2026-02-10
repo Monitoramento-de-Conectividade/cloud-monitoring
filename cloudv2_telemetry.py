@@ -21,19 +21,27 @@ PROBE_RESPONSE_TOPICS = {TOPIC_NETWORK, TOPIC_INFO}
 CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 
 STATUS_LABELS = {
-    "green": "Conectado",
-    "critical": "Critico",
-    "yellow": "Atencao",
+    "green": "Online",
     "red": "Offline",
     "gray": "Inicial",
 }
 
 STATUS_RANK = {
     "red": 0,
-    "critical": 1,
-    "yellow": 2,
-    "gray": 3,
-    "green": 4,
+    "gray": 1,
+    "green": 2,
+}
+
+QUALITY_LABELS = {
+    "green": "Saudavel",
+    "yellow": "Atencao",
+    "critical": "Critico",
+}
+
+QUALITY_RANK = {
+    "critical": 0,
+    "yellow": 1,
+    "green": 2,
 }
 
 
@@ -545,6 +553,8 @@ class TelemetryStore:
             "status_cache": {
                 "code": "gray",
                 "reason": "Aguardando amostras iniciais de cloudv2.",
+                "quality_code": "green",
+                "quality_reason": "Qualidade aguardando dados da janela.",
                 "changed_at_ts": discovered_ts,
             },
         }
@@ -1092,19 +1102,42 @@ class TelemetryStore:
         if disconnect_threshold_sec is not None and monitored_age_sec is not None:
             disconnected_by_inactivity = monitored_age_sec > disconnect_threshold_sec
 
+        attention_window_sec = min(self.attention_disconnected_window_sec, self.retention_sec)
         attention_disconnected_pct = self._compute_disconnected_pct_locked(
             pivot,
             now,
             disconnect_threshold_sec,
         )
+        connected_pct = None
+        if attention_disconnected_pct is not None:
+            connected_pct = max(0.0, min(100.0, 100.0 - attention_disconnected_pct))
+
         attention_by_disconnected_pct = (
             attention_disconnected_pct is not None
-            and attention_disconnected_pct >= self.attention_disconnected_pct_threshold
+            and attention_disconnected_pct > self.attention_disconnected_pct_threshold
         )
         critical_by_disconnected_pct = (
             attention_disconnected_pct is not None
-            and attention_disconnected_pct >= self.critical_disconnected_pct_threshold
+            and attention_disconnected_pct > self.critical_disconnected_pct_threshold
         )
+
+        has_principal_payload_in_window = False
+        has_aux_payload_in_window = False
+        if attention_window_sec > 0:
+            start_ts = now - attention_window_sec
+            for event in pivot.get("timeline", []):
+                topic = str(event.get("topic") or "")
+                if topic not in CONNECTIVITY_TOPICS:
+                    continue
+                ts = _safe_float(event.get("ts"), None)
+                if ts is None or ts < start_ts or ts > now:
+                    continue
+                if topic == TOPIC_CLOUDV2:
+                    has_principal_payload_in_window = True
+                elif topic in (TOPIC_PING, TOPIC_NETWORK, TOPIC_INFO):
+                    has_aux_payload_in_window = True
+
+        attention_by_only_aux_topics = (not has_principal_payload_in_window) and has_aux_payload_in_window
 
         if disconnected_by_inactivity:
             code = "red"
@@ -1119,36 +1152,51 @@ class TelemetryStore:
                 "Aguardando amostras de cloudv2 para estimar mediana "
                 f"({sample_count}/{self.cloudv2_min_samples})."
             )
-        elif critical_by_disconnected_pct:
-            code = "critical"
-            reason = (
-                "Percentual desconectado na janela de monitoramento "
-                f"({attention_disconnected_pct:.1f}%) acima ou igual ao limite critico "
-                f"({self.critical_disconnected_pct_threshold:.1f}%)."
-            )
-        elif attention_by_disconnected_pct:
-            code = "yellow"
-            reason = (
-                "Percentual desconectado na janela de monitoramento "
-                f"({attention_disconnected_pct:.1f}%) acima ou igual ao limite de atencao "
-                f"({self.attention_disconnected_pct_threshold:.1f}%) "
-                f"e abaixo do limite critico ({self.critical_disconnected_pct_threshold:.1f}%)."
-            )
-        elif ping_ok and not cloudv2_ok:
-            code = "yellow"
-            reason = "Ping dentro do esperado, mas cloudv2 fora da janela estimada."
         elif ping_ok and cloudv2_ok:
             code = "green"
             reason = "Mensagens monitoradas dentro da janela esperada."
+        elif ping_ok and not cloudv2_ok:
+            code = "green"
+            reason = "Online por atividade recente; cloudv2 fora da janela estimada."
         else:
             code = "green"
-            reason = "Conectado por atividade recente em topicos monitorados."
+            reason = "Online por atividade recente em topicos monitorados."
+
+        if critical_by_disconnected_pct:
+            quality_code = "critical"
+            quality_reason = (
+                "Percentual desconectado na janela de monitoramento "
+                f"({attention_disconnected_pct:.1f}%) acima do limite critico "
+                f"({self.critical_disconnected_pct_threshold:.1f}%)."
+            )
+        elif attention_by_disconnected_pct:
+            quality_code = "yellow"
+            quality_reason = (
+                "Percentual desconectado na janela de monitoramento "
+                f"({attention_disconnected_pct:.1f}%) acima do limite de atencao "
+                f"({self.attention_disconnected_pct_threshold:.1f}%)."
+            )
+        elif attention_by_only_aux_topics:
+            quality_code = "yellow"
+            quality_reason = (
+                "Sem payload no topico principal cloudv2 na janela atual; "
+                "recebendo apenas ping/network/info."
+            )
+        else:
+            quality_code = "green"
+            quality_reason = "Percentuais e topicos monitorados dentro da faixa saudavel na janela atual."
 
         return {
             "code": code,
             "label": STATUS_LABELS[code],
             "rank": STATUS_RANK[code],
             "reason": reason,
+            "online": not disconnected_by_inactivity,
+            "offline": disconnected_by_inactivity,
+            "quality_code": quality_code,
+            "quality_label": QUALITY_LABELS[quality_code],
+            "quality_rank": QUALITY_RANK[quality_code],
+            "quality_reason": quality_reason,
             "ping_ok": ping_ok,
             "ping_age_sec": ping_age_sec,
             "ping_window_sec": ping_window,
@@ -1164,10 +1212,14 @@ class TelemetryStore:
             "last_monitored_message_ts": last_monitored_message_ts,
             "last_monitored_message_age_sec": monitored_age_sec,
             "disconnected_by_inactivity": disconnected_by_inactivity,
+            "connected_pct": connected_pct,
             "attention_disconnected_pct": attention_disconnected_pct,
             "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
             "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
-            "attention_window_sec": min(self.attention_disconnected_window_sec, self.retention_sec),
+            "attention_window_sec": attention_window_sec,
+            "has_principal_payload_in_window": has_principal_payload_in_window,
+            "has_aux_payload_in_window": has_aux_payload_in_window,
+            "attention_by_only_aux_topics": attention_by_only_aux_topics,
             "critical_by_disconnected_pct": critical_by_disconnected_pct,
             "attention_by_disconnected_pct": attention_by_disconnected_pct,
         }
@@ -1177,24 +1229,42 @@ class TelemetryStore:
         cached = pivot.get("status_cache", {})
         previous_code = cached.get("code")
         previous_reason = cached.get("reason")
+        previous_quality_code = cached.get("quality_code")
+        previous_quality_reason = cached.get("quality_reason")
 
-        changed = (computed["code"] != previous_code) or (computed["reason"] != previous_reason)
+        changed = (
+            (computed["code"] != previous_code)
+            or (computed["reason"] != previous_reason)
+            or (computed["quality_code"] != previous_quality_code)
+            or (computed["quality_reason"] != previous_quality_reason)
+        )
         if not changed:
             return False
 
         pivot["status_cache"] = {
             "code": computed["code"],
             "reason": computed["reason"],
+            "quality_code": computed["quality_code"],
+            "quality_reason": computed["quality_reason"],
             "changed_at_ts": now,
         }
 
         if previous_code != computed["code"]:
             self.log.info(
-                "Mudanca de status: pivot_id=%s %s -> %s (%s)",
+                "Mudanca de estado: pivot_id=%s %s -> %s (%s)",
                 pivot["pivot_id"],
                 previous_code or "-",
                 computed["code"],
                 computed["reason"],
+            )
+
+        if previous_quality_code != computed["quality_code"]:
+            self.log.info(
+                "Mudanca de qualidade: pivot_id=%s %s -> %s (%s)",
+                pivot["pivot_id"],
+                previous_quality_code or "-",
+                computed["quality_code"],
+                computed["quality_reason"],
             )
 
         return True
@@ -1319,11 +1389,21 @@ class TelemetryStore:
         return {
             "pivot_id": pivot["pivot_id"],
             "pivot_slug": pivot["pivot_slug"],
+            "flags": {
+                "online": status["online"],
+                "offline": status["offline"],
+            },
             "status": {
                 "code": status["code"],
                 "label": status["label"],
                 "rank": status["rank"],
                 "reason": status["reason"],
+            },
+            "quality": {
+                "code": status["quality_code"],
+                "label": status["quality_label"],
+                "rank": status["quality_rank"],
+                "reason": status["quality_reason"],
             },
             "ping_ok": status["ping_ok"],
             "cloudv2_ok": status["cloudv2_ok"],
@@ -1333,10 +1413,15 @@ class TelemetryStore:
             "max_expected_interval_sec": status["max_expected_interval_sec"],
             "disconnect_threshold_sec": status["disconnect_threshold_sec"],
             "disconnected_by_inactivity": status["disconnected_by_inactivity"],
+            "connected_pct": status["connected_pct"],
+            "disconnected_pct": status["attention_disconnected_pct"],
             "attention_disconnected_pct": status["attention_disconnected_pct"],
             "attention_disconnected_pct_threshold": status["attention_disconnected_pct_threshold"],
             "critical_disconnected_pct_threshold": status["critical_disconnected_pct_threshold"],
             "attention_window_sec": status["attention_window_sec"],
+            "has_principal_payload_in_window": status["has_principal_payload_in_window"],
+            "has_aux_payload_in_window": status["has_aux_payload_in_window"],
+            "attention_by_only_aux_topics": status["attention_by_only_aux_topics"],
             "critical_by_disconnected_pct": status["critical_by_disconnected_pct"],
             "attention_by_disconnected_pct": status["attention_by_disconnected_pct"],
             "last_monitored_message_ts": status["last_monitored_message_ts"],
@@ -1554,6 +1639,8 @@ class TelemetryStore:
                         pivot["status_cache"] = {
                             "code": str(raw_status.get("code") or "gray"),
                             "reason": str(raw_status.get("reason") or ""),
+                            "quality_code": str(raw_status.get("quality_code") or "green"),
+                            "quality_reason": str(raw_status.get("quality_reason") or ""),
                             "changed_at_ts": _safe_float(raw_status.get("changed_at_ts"), discovered_ts),
                         }
 
