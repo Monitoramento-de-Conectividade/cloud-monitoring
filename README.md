@@ -98,6 +98,13 @@ http://localhost:8008/login
   - `AUTH_SMTP_USER`
   - `AUTH_SMTP_PASSWORD`
   - `AUTH_SMTP_FROM`
+  - opcional: `AUTH_SMTP_STARTTLS=1`, `AUTH_SMTP_SSL=0`
+
+Sem `AUTH_SMTP_*` validos, o sistema permanece em `AUTH_EMAIL_MODE=console` e nao envia e-mail real.
+Se apenas `AUTH_SMTP_USER`/`AUTH_SMTP_PASSWORD` forem definidos, o backend tenta inferir host por provedor:
+- Gmail: `smtp.gmail.com`
+- Outlook/Hotmail/Live: `smtp.office365.com`
+- Yahoo: `smtp.mail.yahoo.com`
 
 ### Seguranca
 
