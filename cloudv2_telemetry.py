@@ -9,6 +9,8 @@ import time
 from datetime import datetime
 
 from cloudv2_dashboard import DATA_DIR, ensure_dirs, slugify, write_json_atomic
+from cloudv2_persistence import TelemetryPersistence
+from cloudv2_security import get_db_purge_password
 
 
 TOPIC_CLOUDV2 = "cloudv2"
@@ -151,6 +153,8 @@ class TelemetryStore:
 
         self.monitor_topics = tuple(config.get("monitor_topics") or MONITOR_TOPICS)
         self.refresh_sec = max(1, int(config.get("dashboard_refresh_sec", 5)))
+        self.enable_background_worker = bool(config.get("enable_background_worker", True))
+        self.require_apply_to_start = bool(config.get("require_apply_to_start", True))
         self.history_mode = str(config.get("history_mode", "merge")).strip().lower()
 
         self.ping_expected_sec = max(1, int(config.get("ping_interval_minutes", 3)) * 60)
@@ -206,22 +210,87 @@ class TelemetryStore:
 
         self._dedupe_cache = {}
         self._probe_settings = self._normalize_probe_settings(config.get("probe_settings", {}))
+        self._active_session_by_pivot = {}
+        self._active_run_id = None
+        self._monitoring_mode = "idle" if self.require_apply_to_start else "live"
+
+        self.sqlite_db_path = str(config.get("sqlite_db_path", os.path.join(DATA_DIR, "telemetry.sqlite3"))).strip()
+        if not self.sqlite_db_path:
+            self.sqlite_db_path = os.path.join(DATA_DIR, "telemetry.sqlite3")
+        self.persistence = TelemetryPersistence(
+            db_path=self.sqlite_db_path,
+            max_events_per_pivot=self.max_events_per_pivot,
+            log=self.log,
+        )
 
         self.runtime_path = os.path.join(DATA_DIR, "runtime_store.json")
 
     def start(self):
         ensure_dirs()
         os.makedirs(self.log_dir, exist_ok=True)
+        self.persistence.start()
 
-        if self.history_mode == "merge":
-            self._load_runtime_state()
-        else:
+        db_probe_settings = self.persistence.load_probe_settings()
+        if isinstance(db_probe_settings, dict) and db_probe_settings:
+            self._probe_settings.update(db_probe_settings)
+
+        if self.history_mode == "fresh":
+            self.persistence.deactivate_all_active_sessions()
+            self.persistence.deactivate_all_active_runs()
+
+        for pivot_id, setting in self._probe_settings.items():
+            self.persistence.upsert_probe_setting(
+                pivot_id,
+                bool(setting.get("enabled")),
+                int(setting.get("interval_sec", self.probe_default_interval_sec)),
+            )
+
+        if self.require_apply_to_start:
+            with self._lock:
+                self._active_session_by_pivot = {}
+                self._active_run_id = None
+                self._monitoring_mode = "idle"
+                self.pivots = {}
+                self.pending_ping_unknown = {}
+                self.malformed_messages = []
+                self.duplicate_count = 0
+                self._dirty = True
             self._clear_dashboard_data_files()
+            self.write()
+        else:
+            if self.history_mode == "merge":
+                active_run = self.persistence.get_or_create_active_run(source="runtime_start")
+                active_run_id = str((active_run or {}).get("run_id") or "").strip()
+                with self._lock:
+                    self._active_run_id = active_run_id or None
+                    self._active_session_by_pivot = self.persistence.get_active_sessions_map(run_id=active_run_id)
+            else:
+                with self._lock:
+                    self._active_session_by_pivot = {}
+                    self._active_run_id = None
 
-        self._dirty = True
-        self.write()
+            if self.history_mode == "merge":
+                self._load_runtime_state()
+            else:
+                self._clear_dashboard_data_files()
 
-        if not self._started:
+            now = time.time()
+            with self._lock:
+                self._monitoring_mode = "live"
+                self._ensure_active_run_locked(now, source="runtime_start")
+                for pivot_id, pivot in self.pivots.items():
+                    discovered_ts = _safe_float(pivot.get("discovered_at_ts"), now)
+                    session_id = self._ensure_active_session_locked(pivot_id, discovered_ts, source="runtime")
+                    pivot["session_id"] = session_id
+                    pivot["run_id"] = self._active_run_id
+                    self._backfill_pivot_session_locked(pivot)
+                    self._refresh_status_locked(pivot, now)
+                    self._persist_pivot_snapshot_locked(pivot, now)
+
+                self._dirty = True
+            self.write()
+
+        if self.enable_background_worker and (not self._started):
             self._started = True
             self._worker.start()
 
@@ -230,6 +299,7 @@ class TelemetryStore:
         if self._started:
             self._worker.join(timeout=2.5)
         self.write()
+        self.persistence.stop()
 
     def set_probe_sender(self, sender_fn):
         self._probe_sender = sender_fn
@@ -243,6 +313,13 @@ class TelemetryStore:
             return {"accepted": False, "reason": "topic vazio"}
 
         with self._lock:
+            if self._monitoring_mode != "live":
+                return {
+                    "accepted": False,
+                    "reason": "monitoramento aguardando aplicacao",
+                    "mode": self._monitoring_mode,
+                }
+
             if topic not in self.monitor_topics:
                 self.log.warning("Mensagem em topico nao monitorado descartada: topic=%s", topic)
                 return {"accepted": False, "reason": "topic nao monitorado"}
@@ -261,11 +338,17 @@ class TelemetryStore:
             if topic == TOPIC_CLOUDV2:
                 pivot = self._get_or_create_pivot_locked(pivot_id, ts)
                 self._record_message_common_locked(pivot, topic, ts)
-                self._record_cloudv2_locked(pivot, parsed, topic, ts)
+                self._record_cloudv2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
                 self._refresh_status_locked(pivot, ts)
                 self._prune_pivot_locked(pivot, ts)
+                self._persist_pivot_snapshot_locked(pivot, ts)
                 self._dirty = True
-                return {"accepted": True, "pivot_id": pivot_id, "event": "cloudv2"}
+                return {
+                    "accepted": True,
+                    "pivot_id": pivot_id,
+                    "event": "cloudv2",
+                    "session_id": pivot.get("session_id"),
+                }
 
             pivot = self.pivots.get(pivot_id)
             if pivot is None:
@@ -291,16 +374,22 @@ class TelemetryStore:
             self._record_message_common_locked(pivot, topic, ts)
 
             if topic == TOPIC_PING:
-                self._record_ping_locked(pivot, parsed, topic, ts)
+                self._record_ping_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
             elif topic == TOPIC_CLOUD2:
-                self._record_cloud2_locked(pivot, parsed, topic, ts)
+                self._record_cloud2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
             elif topic in PROBE_RESPONSE_TOPICS:
-                self._record_probe_response_locked(pivot, parsed, topic, ts)
+                self._record_probe_response_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
 
             self._refresh_status_locked(pivot, ts)
             self._prune_pivot_locked(pivot, ts)
+            self._persist_pivot_snapshot_locked(pivot, ts)
             self._dirty = True
-            return {"accepted": True, "pivot_id": pivot_id, "event": topic}
+            return {
+                "accepted": True,
+                "pivot_id": pivot_id,
+                "event": topic,
+                "session_id": pivot.get("session_id"),
+            }
 
     def tick(self, now=None):
         now = float(now if now is not None else time.time())
@@ -308,13 +397,22 @@ class TelemetryStore:
         changed = False
 
         with self._lock:
+            if self._monitoring_mode != "live":
+                return False
             for pivot in self.pivots.values():
+                pivot_changed = False
                 timed_out = self._check_probe_timeout_locked(pivot, now)
                 if timed_out:
+                    pivot_changed = True
                     changed = True
                 if self._refresh_status_locked(pivot, now):
+                    pivot_changed = True
                     changed = True
-                self._prune_pivot_locked(pivot, now)
+                if self._prune_pivot_locked(pivot, now):
+                    pivot_changed = True
+                    changed = True
+                if pivot_changed:
+                    self._persist_pivot_snapshot_locked(pivot, now)
                 if (not timed_out) and self._probe_should_send_locked(pivot, now):
                     send_candidates.append(pivot["pivot_id"])
 
@@ -345,6 +443,7 @@ class TelemetryStore:
                     if pivot is not None:
                         self._record_probe_sent_locked(pivot, now)
                         self._refresh_status_locked(pivot, now)
+                        self._persist_pivot_snapshot_locked(pivot, now)
                         changed = True
             else:
                 self.log.warning("Falha ao publicar probe #11$ para pivot %s", pivot_id)
@@ -383,21 +482,435 @@ class TelemetryStore:
 
         write_json_atomic(self.runtime_path, runtime_payload)
 
-    def get_state_snapshot(self, now=None):
+    def get_state_snapshot(self, now=None, run_id=None):
         now = float(now if now is not None else time.time())
+        normalized_run = str(run_id or "").strip()
+        if normalized_run:
+            try:
+                persisted = self.persistence.get_run_state_payload(run_id=normalized_run)
+            except RuntimeError:
+                persisted = None
+            if persisted is None:
+                return {
+                    "updated_at": _ts_to_str(now),
+                    "updated_at_ts": now,
+                    "run_id": normalized_run,
+                    "run": None,
+                    "settings": {
+                        "monitor_topics": list(self.monitor_topics),
+                        "connectivity_topics": list(CONNECTIVITY_TOPICS),
+                        "tolerance_factor": self.tolerance_factor,
+                        "ping_expected_sec": self.ping_expected_sec,
+                        "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+                        "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
+                        "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
+                        "cloudv2_median_window": self.cloudv2_window,
+                        "cloudv2_min_samples": self.cloudv2_min_samples,
+                        "show_pending_ping_pivots": self.show_pending_ping_pivots,
+                        "probe_timeout_streak_alert": self.probe_timeout_streak_alert,
+                    },
+                    "counts": {
+                        "pivots": 0,
+                        "pending_ping_unknown": 0,
+                        "malformed_messages": 0,
+                        "duplicate_drops": 0,
+                    },
+                    "pivots": [],
+                    "pending_ping": [],
+                    "malformed_recent": [],
+                    "mode": "history",
+                }
+
+            pivot_items = persisted.get("pivots") if isinstance(persisted.get("pivots"), list) else []
+            with self._lock:
+                settings = self._build_state_settings_locked()
+            return {
+                "updated_at": persisted.get("updated_at") or _ts_to_str(now),
+                "updated_at_ts": _safe_float(persisted.get("updated_at_ts"), now),
+                "run_id": str(persisted.get("run_id") or normalized_run),
+                "run": persisted.get("run"),
+                "settings": settings,
+                "counts": {
+                    "pivots": len(pivot_items),
+                    "pending_ping_unknown": 0,
+                    "malformed_messages": 0,
+                    "duplicate_drops": 0,
+                },
+                "pivots": pivot_items,
+                "pending_ping": [],
+                "malformed_recent": [],
+                "mode": "history",
+            }
+
         with self._lock:
             return self._build_state_snapshot_locked(now)
 
-    def get_pivot_snapshot(self, pivot_id, now=None):
+    def get_pivot_snapshot(self, pivot_id, now=None, session_id=None, run_id=None):
+        explicit_now = now is not None
         now = float(now if now is not None else time.time())
         normalized = str(pivot_id or "").strip()
+        normalized_run = str(run_id or "").strip() or None
         if not normalized:
             return None
+
+        # Mantem compatibilidade para simuladores/tests que passam "now" explicitamente.
+        if explicit_now and session_id is None and normalized_run is None:
+            with self._lock:
+                pivot = self.pivots.get(normalized)
+                if pivot is not None:
+                    return self._build_pivot_snapshot_locked(pivot, now)
+
+        try:
+            panel = self.persistence.get_panel_payload(
+                normalized,
+                session_id=session_id,
+                run_id=normalized_run,
+            )
+        except RuntimeError:
+            panel = None
+        if panel is not None:
+            return panel
+        if normalized_run is not None:
+            return None
+
         with self._lock:
             pivot = self.pivots.get(normalized)
             if pivot is None:
                 return None
             return self._build_pivot_snapshot_locked(pivot, now)
+
+    def get_complete_panel(self, pivot_id, session_id=None, run_id=None, now=None):
+        return self.get_pivot_snapshot(pivot_id, now=now, session_id=session_id, run_id=run_id)
+
+    def list_monitoring_runs(self, limit=200):
+        try:
+            return self.persistence.list_runs(limit=limit)
+        except RuntimeError:
+            return []
+
+    def purge_database_records(self, password, now=None, source="ui"):
+        expected_password = get_db_purge_password()
+        if not expected_password:
+            raise ValueError(
+                "senha de limpeza nao configurada; defina DB_PURGE_PASSWORD em cloudv2_local_secrets.py"
+            )
+
+        provided_password = str(password or "")
+        if provided_password != expected_password:
+            raise ValueError("senha invalida")
+
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            self.persistence.purge_all_data()
+            self._active_session_by_pivot = {}
+            self._active_run_id = None
+            self._monitoring_mode = "idle"
+            self.pivots = {}
+            self.pending_ping_unknown = {}
+            self.malformed_messages = []
+            self.duplicate_count = 0
+            self._dedupe_cache = {}
+            self._event_seq = 0
+            self._dirty = True
+
+            result = {
+                "ok": True,
+                "mode": self._monitoring_mode,
+                "purged_at_ts": current_ts,
+                "purged_at": _ts_to_str(current_ts),
+                "source": str(source or "ui"),
+            }
+
+        self._clear_dashboard_data_files()
+        self.write()
+        return result
+
+    def activate_history_run(self, run_id, now=None, source="ui"):
+        normalized_run = str(run_id or "").strip()
+        if not normalized_run:
+            raise ValueError("run_id obrigatorio")
+
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            run = self.persistence.resolve_run(run_id=normalized_run)
+            if not run:
+                raise ValueError("historico nao encontrado")
+
+            self._monitoring_mode = "history"
+            self._active_run_id = None
+            self._active_session_by_pivot = {}
+            self.pivots = {}
+            self.pending_ping_unknown = {}
+            self.malformed_messages = []
+            self.duplicate_count = 0
+            self._dirty = True
+
+            result = {
+                "run_id": normalized_run,
+                "run": run,
+                "mode": self._monitoring_mode,
+                "source": str(source or "ui"),
+                "applied_at_ts": current_ts,
+                "applied_at": _ts_to_str(current_ts),
+            }
+        self.write()
+        return result
+
+    def start_new_monitoring_run(self, now=None, source="ui"):
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            self.persistence.deactivate_all_active_sessions(now_ts=current_ts)
+            created_run = self.persistence.create_new_run(
+                now_ts=current_ts,
+                source=source,
+                label="Monitoramento global",
+                metadata={"trigger": "ui_global_action"},
+            )
+            run_id = str((created_run or {}).get("run_id") or "").strip()
+            if not run_id:
+                raise ValueError("nao foi possivel criar monitoramento global")
+
+            previous_pivot_ids = sorted(self.pivots.keys(), key=lambda item: item.lower())
+            self._active_run_id = run_id
+            self._monitoring_mode = "live"
+            self._active_session_by_pivot = {}
+            self.pending_ping_unknown = {}
+            self.malformed_messages = []
+            self.duplicate_count = 0
+
+            rebuilt = {}
+            for pivot_id in previous_pivot_ids:
+                session_id = self._ensure_active_session_locked(pivot_id, current_ts, source="new_monitoring_run")
+                pivot = self._new_pivot_state(
+                    pivot_id,
+                    current_ts,
+                    session_id=session_id,
+                    run_id=run_id,
+                )
+                rebuilt[pivot_id] = pivot
+                self._record_timeline_locked(
+                    pivot,
+                    event_type="session_started",
+                    topic="monitoring_run",
+                    ts=current_ts,
+                    summary="Novo monitoramento global iniciado.",
+                    details={
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "source": source,
+                    },
+                )
+                self._refresh_status_locked(pivot, current_ts)
+                self._persist_pivot_snapshot_locked(pivot, current_ts)
+
+            self.pivots = rebuilt
+            self._dirty = True
+
+            result = {
+                "run_id": run_id,
+                "run": created_run,
+                "pivot_count": len(rebuilt),
+                "mode": self._monitoring_mode,
+            }
+        self.write()
+        return result
+
+    def list_monitoring_sessions(self, pivot_id, limit=200, run_id=None):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            return []
+        normalized_run = str(run_id or "").strip() or None
+        try:
+            return self.persistence.list_sessions(normalized, limit=limit, run_id=normalized_run)
+        except RuntimeError:
+            return []
+
+    def start_new_monitoring_session(self, pivot_id, now=None, source="ui"):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            raise ValueError("pivot_id obrigatorio")
+
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            self._monitoring_mode = "live"
+            active_run_id = self._ensure_active_run_locked(current_ts, source=source)
+            if not active_run_id:
+                raise ValueError("nao foi possivel resolver monitoramento global ativo")
+            created = self.persistence.create_new_session(
+                normalized,
+                pivot_slug=slugify(normalized),
+                now_ts=current_ts,
+                source=source,
+                run_id=active_run_id,
+            )
+            if not created:
+                raise ValueError("nao foi possivel criar sessao")
+
+            session_id = str(created.get("session_id") or "").strip()
+            self._active_session_by_pivot[normalized] = session_id
+
+            pivot = self._new_pivot_state(
+                normalized,
+                current_ts,
+                session_id=session_id,
+                run_id=active_run_id,
+            )
+            self.pivots[normalized] = pivot
+
+            self._record_timeline_locked(
+                pivot,
+                event_type="session_started",
+                topic="monitoring_session",
+                ts=current_ts,
+                summary="Nova sessao de monitoramento iniciada manualmente.",
+                details={
+                    "run_id": active_run_id,
+                    "session_id": session_id,
+                    "source": source,
+                },
+            )
+            self._refresh_status_locked(pivot, current_ts)
+            self._persist_pivot_snapshot_locked(pivot, current_ts)
+            self._dirty = True
+
+            return {
+                "pivot_id": normalized,
+                "run_id": active_run_id,
+                "session_id": session_id,
+                "session": created,
+            }
+
+    def _ensure_active_run_locked(self, ts, source="runtime"):
+        cached_run_id = str(self._active_run_id or "").strip()
+        if cached_run_id:
+            run = self.persistence.resolve_run(run_id=cached_run_id)
+            if run and bool(run.get("is_active")):
+                return cached_run_id
+
+        if self.history_mode == "fresh":
+            created = self.persistence.create_new_run(now_ts=ts, source=source)
+        else:
+            created = self.persistence.get_or_create_active_run(now_ts=ts, source=source)
+
+        run_id = str((created or {}).get("run_id") or "").strip()
+        self._active_run_id = run_id or None
+        return self._active_run_id
+
+    def _ensure_active_session_locked(self, pivot_id, ts, source="runtime"):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            return None
+
+        active_run_id = self._ensure_active_run_locked(ts, source=source)
+        if not active_run_id:
+            return None
+
+        cached_session_id = str(self._active_session_by_pivot.get(normalized) or "").strip()
+        if cached_session_id:
+            session = self.persistence.resolve_session(
+                normalized,
+                session_id=cached_session_id,
+                run_id=active_run_id,
+            )
+            if session and bool(session.get("is_active")):
+                return cached_session_id
+
+        created = self.persistence.get_or_create_active_session(
+            normalized,
+            pivot_slug=slugify(normalized),
+            now_ts=ts,
+            source=source,
+            run_id=active_run_id,
+        )
+
+        session_id = str((created or {}).get("session_id") or "").strip()
+        if session_id:
+            self._active_session_by_pivot[normalized] = session_id
+            return session_id
+        return None
+
+    def _persist_pivot_snapshot_locked(self, pivot, now):
+        if not isinstance(pivot, dict):
+            return None
+
+        pivot_id = str(pivot.get("pivot_id") or "").strip()
+        if not pivot_id:
+            return None
+
+        session_id = str(pivot.get("session_id") or "").strip()
+        if not session_id:
+            session_id = self._ensure_active_session_locked(pivot_id, now, source="runtime")
+            pivot["session_id"] = session_id
+        if not session_id:
+            return None
+
+        if not pivot.get("run_id"):
+            pivot["run_id"] = self._active_run_id
+
+        self.persistence.ensure_pivot(pivot_id, pivot_slug=slugify(pivot_id), seen_ts=now)
+        snapshot = self._build_pivot_snapshot_locked(pivot, now)
+        self.persistence.upsert_snapshot(pivot_id, session_id, snapshot, updated_at_ts=now)
+        return snapshot
+
+    def _backfill_pivot_session_locked(self, pivot):
+        if not isinstance(pivot, dict):
+            return
+
+        pivot_id = str(pivot.get("pivot_id") or "").strip()
+        session_id = str(pivot.get("session_id") or "").strip()
+        if not pivot_id or not session_id:
+            return
+
+        if self.persistence.session_has_events(pivot_id, session_id):
+            return
+
+        timeline = sorted(list(pivot.get("timeline", [])), key=lambda item: _safe_float(item.get("ts"), 0))
+        for event in timeline:
+            if not isinstance(event, dict):
+                continue
+            details = event.get("details") if isinstance(event.get("details"), dict) else {}
+            parsed_payload = details.get("parsed_payload") if isinstance(details.get("parsed_payload"), dict) else None
+            raw_payload = details.get("raw_payload")
+            source_topic = details.get("source_topic") or event.get("topic")
+            self.persistence.insert_connectivity_event(
+                pivot_id,
+                session_id,
+                event,
+                source_topic=source_topic,
+                raw_payload=raw_payload,
+                parsed_payload=parsed_payload,
+            )
+
+        cloud2_events = sorted(list(pivot.get("cloud2_events", [])), key=lambda item: _safe_float(item.get("ts"), 0))
+        for event in cloud2_events:
+            if not isinstance(event, dict):
+                continue
+            self.persistence.insert_cloud2_event(pivot_id, session_id, event)
+
+        drop_events = sorted(list(pivot.get("drop_events", [])), key=lambda item: _safe_float(item.get("ts"), 0))
+        for event in drop_events:
+            if not isinstance(event, dict):
+                continue
+            self.persistence.insert_drop_event(pivot_id, session_id, event)
+
+        probe = pivot.get("probe") if isinstance(pivot.get("probe"), dict) else {}
+        probe_events = sorted(list(probe.get("events", [])), key=lambda item: _safe_float(item.get("ts"), 0))
+        for event in probe_events:
+            if not isinstance(event, dict):
+                continue
+            self.persistence.insert_probe_event(pivot_id, session_id, event)
+
+        probe_delay_points = self._build_probe_delay_points_locked(probe_events)
+        for point in probe_delay_points:
+            self.persistence.insert_probe_delay_point(
+                pivot_id,
+                session_id,
+                ts=point.get("ts"),
+                latency_sec=point.get("latency_sec"),
+                avg_latency_sec=point.get("avg_latency_sec"),
+                median_latency_sec=point.get("median_latency_sec"),
+                sample_count=point.get("sample_count"),
+            )
 
     def get_probe_config_snapshot(self):
         with self._lock:
@@ -434,6 +947,7 @@ class TelemetryStore:
                 "enabled": normalized_enabled,
                 "interval_sec": normalized_interval,
             }
+            self.persistence.upsert_probe_setting(normalized_pivot, normalized_enabled, normalized_interval)
 
             pivot = self.pivots.get(normalized_pivot)
             if pivot is not None:
@@ -443,7 +957,9 @@ class TelemetryStore:
                 if not normalized_enabled:
                     probe["pending_sent_ts"] = None
                     probe["pending_deadline_ts"] = None
-                self._refresh_status_locked(pivot, time.time())
+                now_ts = time.time()
+                self._refresh_status_locked(pivot, now_ts)
+                self._persist_pivot_snapshot_locked(pivot, now_ts)
 
             self._dirty = True
 
@@ -573,7 +1089,7 @@ class TelemetryStore:
             "total_sample_count": len(cleaned),
         }
 
-    def _new_pivot_state(self, pivot_id, discovered_ts):
+    def _new_pivot_state(self, pivot_id, discovered_ts, session_id=None, run_id=None):
         probe_setting = self._probe_settings.get(pivot_id, {})
         probe_enabled = bool(probe_setting.get("enabled", False))
         probe_interval = _safe_int(probe_setting.get("interval_sec"), self.probe_default_interval_sec)
@@ -585,6 +1101,8 @@ class TelemetryStore:
         return {
             "pivot_id": pivot_id,
             "pivot_slug": slugify(pivot_id),
+            "session_id": session_id,
+            "run_id": run_id,
             "discovered_at_ts": discovered_ts,
             "last_seen_ts": discovered_ts,
             "last_ping_ts": None,
@@ -621,10 +1139,21 @@ class TelemetryStore:
     def _get_or_create_pivot_locked(self, pivot_id, ts):
         pivot = self.pivots.get(pivot_id)
         if pivot is not None:
+            if not pivot.get("session_id"):
+                pivot["session_id"] = self._ensure_active_session_locked(pivot_id, ts, source="runtime")
+            if not pivot.get("run_id"):
+                pivot["run_id"] = self._active_run_id
             return pivot
 
-        pivot = self._new_pivot_state(pivot_id, ts)
+        session_id = self._ensure_active_session_locked(pivot_id, ts, source="auto_discovery")
+        pivot = self._new_pivot_state(
+            pivot_id,
+            ts,
+            session_id=session_id,
+            run_id=self._active_run_id,
+        )
         self.pivots[pivot_id] = pivot
+        self.persistence.ensure_pivot(pivot_id, pivot_slug=pivot["pivot_slug"], seen_ts=ts)
 
         self._record_timeline_locked(
             pivot,
@@ -639,6 +1168,9 @@ class TelemetryStore:
 
     def _record_message_common_locked(self, pivot, topic, ts):
         pivot["last_seen_ts"] = ts
+        pivot_id = pivot.get("pivot_id")
+        if pivot_id:
+            self.persistence.touch_pivot_seen(pivot_id, ts)
         counters = pivot["topic_counters"]
         counters[topic] = counters.get(topic, 0) + 1
 
@@ -654,7 +1186,7 @@ class TelemetryStore:
                     topic_intervals[topic] = intervals[-self.cloudv2_window :]
             topic_last[topic] = ts
 
-    def _record_cloudv2_locked(self, pivot, parsed, topic, ts):
+    def _record_cloudv2_locked(self, pivot, parsed, topic, ts, raw_payload=None):
         intervals = (
             pivot.get("topic_intervals_sec", {}).get(TOPIC_CLOUDV2)
             or pivot.get("cloudv2_intervals_sec", [])
@@ -689,9 +1221,12 @@ class TelemetryStore:
             ts=ts,
             summary="Pacote cloudv2 recebido.",
             details=details,
+            source_topic=topic,
+            raw_payload=raw_payload,
+            parsed_payload=parsed,
         )
 
-    def _record_ping_locked(self, pivot, parsed, topic, ts):
+    def _record_ping_locked(self, pivot, parsed, topic, ts, raw_payload=None):
         pivot["last_ping_ts"] = ts
         self._record_timeline_locked(
             pivot,
@@ -700,9 +1235,12 @@ class TelemetryStore:
             ts=ts,
             summary="Ping passivo recebido em cloudv2-ping.",
             details={"idp": parsed.get("idp")},
+            source_topic=topic,
+            raw_payload=raw_payload,
+            parsed_payload=parsed,
         )
 
-    def _record_cloud2_locked(self, pivot, parsed, topic, ts):
+    def _record_cloud2_locked(self, pivot, parsed, topic, ts, raw_payload=None):
         parts = parsed.get("parts", [])
 
         # cloud2 pode trazer RSSI negativo no formato "...-<pivot>--67-..."
@@ -713,8 +1251,8 @@ class TelemetryStore:
         firmware = None
         event_date = None
 
-        raw_payload = parsed.get("raw", "")
-        core = raw_payload[1:-1] if raw_payload.startswith("#") and raw_payload.endswith("$") else ""
+        payload_source = raw_payload if raw_payload is not None else parsed.get("raw", "")
+        core = payload_source[1:-1] if payload_source.startswith("#") and payload_source.endswith("$") else ""
         core_parts = core.split("-", 2)
         tail = core_parts[2] if len(core_parts) >= 3 else ""
         tail_tokens = tail.split("-") if tail else []
@@ -764,6 +1302,7 @@ class TelemetryStore:
             "event_date": event_date,
             "raw": parsed.get("raw"),
         }
+        self.persistence.insert_cloud2_event(pivot.get("pivot_id"), pivot.get("session_id"), cloud2_event)
 
         pivot["last_cloud2_ts"] = ts
         pivot["last_cloud2"] = cloud2_event
@@ -771,16 +1310,17 @@ class TelemetryStore:
         if len(pivot["cloud2_events"]) > self.max_events_per_pivot:
             pivot["cloud2_events"] = pivot["cloud2_events"][-self.max_events_per_pivot :]
 
+        drop_event = None
         if drop_duration_sec is not None and drop_duration_sec > 0:
-            pivot["drop_events"].append(
-                {
-                    "ts": ts,
-                    "at": _ts_to_str(ts),
-                    "duration_sec": drop_duration_sec,
-                    "technology": technology,
-                    "rssi": rssi,
-                }
-            )
+            drop_event = {
+                "ts": ts,
+                "at": _ts_to_str(ts),
+                "duration_sec": drop_duration_sec,
+                "technology": technology,
+                "rssi": rssi,
+            }
+            self.persistence.insert_drop_event(pivot.get("pivot_id"), pivot.get("session_id"), drop_event)
+            pivot["drop_events"].append(drop_event)
             if len(pivot["drop_events"]) > self.max_events_per_pivot:
                 pivot["drop_events"] = pivot["drop_events"][-self.max_events_per_pivot :]
 
@@ -798,9 +1338,12 @@ class TelemetryStore:
                 "firmware": firmware,
                 "event_date": event_date,
             },
+            source_topic=topic,
+            raw_payload=payload_source,
+            parsed_payload=parsed,
         )
 
-    def _record_probe_response_locked(self, pivot, parsed, topic, ts):
+    def _record_probe_response_locked(self, pivot, parsed, topic, ts, raw_payload=None):
         probe = pivot["probe"]
         pending_sent_ts = probe.get("pending_sent_ts")
         pending_deadline_ts = probe.get("pending_deadline_ts")
@@ -816,17 +1359,28 @@ class TelemetryStore:
             probe["last_response_ts"] = ts
             probe["timeout_streak"] = 0
             probe["last_result"] = "response"
-            probe["events"].append(
-                {
-                    "type": "response",
-                    "ts": ts,
-                    "at": _ts_to_str(ts),
-                    "topic": topic,
-                    "latency_sec": latency,
-                }
-            )
+            response_event = {
+                "type": "response",
+                "ts": ts,
+                "at": _ts_to_str(ts),
+                "topic": topic,
+                "latency_sec": latency,
+            }
+            probe["events"].append(response_event)
             if len(probe["events"]) > self.max_events_per_pivot:
                 probe["events"] = probe["events"][-self.max_events_per_pivot :]
+            self.persistence.insert_probe_event(pivot.get("pivot_id"), pivot.get("session_id"), response_event)
+
+            probe_stats = self._summarize_probe_stats_locked(probe)
+            self.persistence.insert_probe_delay_point(
+                pivot.get("pivot_id"),
+                pivot.get("session_id"),
+                ts=ts,
+                latency_sec=latency,
+                avg_latency_sec=probe_stats.get("latency_avg_sec"),
+                median_latency_sec=probe_stats.get("latency_median_sec"),
+                sample_count=probe_stats.get("latency_sample_count"),
+            )
 
             self._record_timeline_locked(
                 pivot,
@@ -838,6 +1392,9 @@ class TelemetryStore:
                     "latency_sec": latency,
                     "source_topic": topic,
                 },
+                source_topic=topic,
+                raw_payload=raw_payload,
+                parsed_payload=parsed,
             )
             self.log.info(
                 "Probe respondido: pivot_id=%s topic=%s latency=%.2fs",
@@ -847,6 +1404,13 @@ class TelemetryStore:
             )
             return
 
+        unmatched_event = {
+            "type": "response_unmatched",
+            "ts": ts,
+            "at": _ts_to_str(ts),
+            "topic": topic,
+        }
+        self.persistence.insert_probe_event(pivot.get("pivot_id"), pivot.get("session_id"), unmatched_event)
         self._record_timeline_locked(
             pivot,
             event_type="probe_response_unmatched",
@@ -854,6 +1418,9 @@ class TelemetryStore:
             ts=ts,
             summary="Resposta recebida sem probe pendente na janela temporal.",
             details={"source_topic": topic},
+            source_topic=topic,
+            raw_payload=raw_payload,
+            parsed_payload=parsed,
         )
 
     def _probe_should_send_locked(self, pivot, now):
@@ -891,19 +1458,19 @@ class TelemetryStore:
         probe["pending_deadline_ts"] = deadline_ts
         probe["last_result"] = "sent"
 
-        probe["events"].append(
-            {
-                "type": "sent",
-                "ts": ts,
-                "at": _ts_to_str(ts),
-                "topic": pivot["pivot_id"],
-                "payload": "#11$",
-                "deadline_ts": deadline_ts,
-                "deadline_at": _ts_to_str(deadline_ts),
-            }
-        )
+        sent_event = {
+            "type": "sent",
+            "ts": ts,
+            "at": _ts_to_str(ts),
+            "topic": pivot["pivot_id"],
+            "payload": "#11$",
+            "deadline_ts": deadline_ts,
+            "deadline_at": _ts_to_str(deadline_ts),
+        }
+        probe["events"].append(sent_event)
         if len(probe["events"]) > self.max_events_per_pivot:
             probe["events"] = probe["events"][-self.max_events_per_pivot :]
+        self.persistence.insert_probe_event(pivot.get("pivot_id"), pivot.get("session_id"), sent_event)
 
         self._record_timeline_locked(
             pivot,
@@ -916,6 +1483,7 @@ class TelemetryStore:
                 "deadline_ts": deadline_ts,
                 "deadline_at": _ts_to_str(deadline_ts),
             },
+            source_topic=pivot["pivot_id"],
         )
         self.log.info("Probe #11$ enviado: pivot_id=%s", pivot["pivot_id"])
 
@@ -934,17 +1502,17 @@ class TelemetryStore:
         probe["timeout_streak"] = int(probe.get("timeout_streak", 0)) + 1
         probe["last_result"] = "timeout"
 
-        probe["events"].append(
-            {
-                "type": "timeout",
-                "ts": now,
-                "at": _ts_to_str(now),
-                "sent_ts": pending_sent_ts,
-                "sent_at": _ts_to_str(pending_sent_ts),
-            }
-        )
+        timeout_event = {
+            "type": "timeout",
+            "ts": now,
+            "at": _ts_to_str(now),
+            "sent_ts": pending_sent_ts,
+            "sent_at": _ts_to_str(pending_sent_ts),
+        }
+        probe["events"].append(timeout_event)
         if len(probe["events"]) > self.max_events_per_pivot:
             probe["events"] = probe["events"][-self.max_events_per_pivot :]
+        self.persistence.insert_probe_event(pivot.get("pivot_id"), pivot.get("session_id"), timeout_event)
 
         self._record_timeline_locked(
             pivot,
@@ -956,6 +1524,7 @@ class TelemetryStore:
                 "sent_ts": pending_sent_ts,
                 "deadline_ts": pending_deadline_ts,
             },
+            source_topic=pivot["pivot_id"],
         )
 
         self.log.warning(
@@ -965,7 +1534,18 @@ class TelemetryStore:
         )
         return True
 
-    def _record_timeline_locked(self, pivot, event_type, topic, ts, summary, details=None):
+    def _record_timeline_locked(
+        self,
+        pivot,
+        event_type,
+        topic,
+        ts,
+        summary,
+        details=None,
+        source_topic=None,
+        raw_payload=None,
+        parsed_payload=None,
+    ):
         self._event_seq += 1
         event = {
             "id": self._event_seq,
@@ -979,6 +1559,15 @@ class TelemetryStore:
         pivot["timeline"].append(event)
         if len(pivot["timeline"]) > self.max_events_per_pivot:
             pivot["timeline"] = pivot["timeline"][-self.max_events_per_pivot :]
+
+        self.persistence.insert_connectivity_event(
+            pivot.get("pivot_id"),
+            pivot.get("session_id"),
+            event,
+            source_topic=source_topic,
+            raw_payload=raw_payload,
+            parsed_payload=parsed_payload,
+        )
 
     def _record_malformed_locked(self, topic, payload, reason, ts):
         excerpt = payload[:240]
@@ -1033,15 +1622,29 @@ class TelemetryStore:
 
     def _prune_pivot_locked(self, pivot, now):
         cutoff = now - self.retention_sec
+        changed = False
 
-        pivot["timeline"] = [event for event in pivot["timeline"] if _safe_float(event.get("ts"), 0) >= cutoff]
-        pivot["cloud2_events"] = [
-            event for event in pivot["cloud2_events"] if _safe_float(event.get("ts"), 0) >= cutoff
-        ]
-        pivot["drop_events"] = [event for event in pivot["drop_events"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        timeline = [event for event in pivot["timeline"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        if len(timeline) != len(pivot["timeline"]):
+            changed = True
+        pivot["timeline"] = timeline
+
+        cloud2_events = [event for event in pivot["cloud2_events"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        if len(cloud2_events) != len(pivot["cloud2_events"]):
+            changed = True
+        pivot["cloud2_events"] = cloud2_events
+
+        drop_events = [event for event in pivot["drop_events"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        if len(drop_events) != len(pivot["drop_events"]):
+            changed = True
+        pivot["drop_events"] = drop_events
 
         probe = pivot["probe"]
-        probe["events"] = [event for event in probe["events"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        probe_events = [event for event in probe["events"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        if len(probe_events) != len(probe["events"]):
+            changed = True
+        probe["events"] = probe_events
+        return changed
 
     def _compute_disconnected_pct_locked(self, pivot, now, disconnect_threshold_sec):
         if disconnect_threshold_sec is None or disconnect_threshold_sec <= 0:
@@ -1334,6 +1937,21 @@ class TelemetryStore:
 
         return True
 
+    def _build_state_settings_locked(self):
+        return {
+            "monitor_topics": list(self.monitor_topics),
+            "connectivity_topics": list(CONNECTIVITY_TOPICS),
+            "tolerance_factor": self.tolerance_factor,
+            "ping_expected_sec": self.ping_expected_sec,
+            "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
+            "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
+            "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
+            "cloudv2_median_window": self.cloudv2_window,
+            "cloudv2_min_samples": self.cloudv2_min_samples,
+            "show_pending_ping_pivots": self.show_pending_ping_pivots,
+            "probe_timeout_streak_alert": self.probe_timeout_streak_alert,
+        }
+
     def _build_state_snapshot_locked(self, now):
         pivots = [
             self._build_pivot_summary_locked(pivot, now)
@@ -1365,22 +1983,22 @@ class TelemetryStore:
             for item in self.malformed_messages[-50:]
         ]
 
+        run_info = None
+        active_run_id = str(self._active_run_id or "").strip() or None
+        if active_run_id:
+            try:
+                run_info = self.persistence.resolve_run(run_id=active_run_id)
+            except RuntimeError:
+                run_info = None
+
         return {
             "updated_at": _ts_to_str(now),
             "updated_at_ts": now,
-            "settings": {
-                "monitor_topics": list(self.monitor_topics),
-                "connectivity_topics": list(CONNECTIVITY_TOPICS),
-                "tolerance_factor": self.tolerance_factor,
-                "ping_expected_sec": self.ping_expected_sec,
-                "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
-                "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
-                "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
-                "cloudv2_median_window": self.cloudv2_window,
-                "cloudv2_min_samples": self.cloudv2_min_samples,
-                "show_pending_ping_pivots": self.show_pending_ping_pivots,
-                "probe_timeout_streak_alert": self.probe_timeout_streak_alert,
-            },
+            "mode": str(self._monitoring_mode or "idle"),
+            "run_id": active_run_id,
+            "run": run_info,
+            "require_apply_to_start": bool(self.require_apply_to_start),
+            "settings": self._build_state_settings_locked(),
             "counts": {
                 "pivots": len(pivots),
                 "pending_ping_unknown": len(pending_ping),
@@ -1434,6 +2052,41 @@ class TelemetryStore:
             "latency_max_sec": max(latency_samples) if latency_samples else None,
         }
 
+    def _build_probe_delay_points_locked(self, probe_events):
+        points = []
+        if not isinstance(probe_events, list):
+            return points
+
+        responses = []
+        for event in probe_events:
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("type") or "").strip().lower() != "response":
+                continue
+            ts_value = _safe_float(event.get("ts"), None)
+            latency = _safe_float(event.get("latency_sec"), None)
+            if ts_value is None or latency is None or latency < 0:
+                continue
+            responses.append((ts_value, latency))
+
+        responses.sort(key=lambda item: item[0])
+        running_total = 0.0
+        sample_count = 0
+        for ts_value, latency in responses:
+            sample_count += 1
+            running_total += latency
+            points.append(
+                {
+                    "ts": ts_value,
+                    "at": _ts_to_str(ts_value),
+                    "latency_sec": latency,
+                    "avg_latency_sec": running_total / sample_count,
+                    "median_latency_sec": None,
+                    "sample_count": sample_count,
+                }
+            )
+        return points
+
     def _build_pivot_summary_locked(self, pivot, now):
         status = self._compute_status_locked(pivot, now)
         probe = pivot["probe"]
@@ -1454,6 +2107,8 @@ class TelemetryStore:
         return {
             "pivot_id": pivot["pivot_id"],
             "pivot_slug": pivot["pivot_slug"],
+            "session_id": pivot.get("session_id"),
+            "run_id": pivot.get("run_id"),
             "flags": {
                 "online": status["online"],
                 "offline": status["offline"],
@@ -1549,10 +2204,27 @@ class TelemetryStore:
             key=lambda item: _safe_float(item.get("ts"), 0),
             reverse=True,
         )
+        probe_delay_points = self._build_probe_delay_points_locked(probe_events)
+        session_info = self.persistence.resolve_session(
+            pivot["pivot_id"],
+            session_id=pivot.get("session_id"),
+            run_id=pivot.get("run_id"),
+        )
+        run_id = str(
+            pivot.get("run_id")
+            or (session_info or {}).get("run_id")
+            or self._active_run_id
+            or ""
+        ).strip() or None
+        run_info = self.persistence.resolve_run(run_id=run_id) if run_id else None
 
         return {
             "pivot_id": pivot["pivot_id"],
             "pivot_slug": pivot["pivot_slug"],
+            "session_id": pivot.get("session_id"),
+            "run_id": run_id,
+            "run": run_info,
+            "session": session_info,
             "updated_at": _ts_to_str(now),
             "updated_at_ts": now,
             "summary": summary,
@@ -1569,6 +2241,7 @@ class TelemetryStore:
             },
             "timeline": timeline,
             "probe_events": probe_events,
+            "probe_delay_points": probe_delay_points,
             "cloud2_events": sorted(
                 list(pivot.get("cloud2_events", [])),
                 key=lambda item: _safe_float(item.get("ts"), 0),
@@ -1578,10 +2251,12 @@ class TelemetryStore:
 
     def _build_runtime_payload_locked(self, now):
         payload = {
-            "version": 2,
+            "version": 4,
             "updated_at": _ts_to_str(now),
             "updated_at_ts": now,
             "event_seq": self._event_seq,
+            "active_run_id": self._active_run_id,
+            "monitoring_mode": self._monitoring_mode,
             "probe_settings": self._probe_settings,
             "pending_ping_unknown": self.pending_ping_unknown,
             "malformed_messages": self.malformed_messages,
@@ -1607,6 +2282,13 @@ class TelemetryStore:
             return
 
         with self._lock:
+            loaded_run_id = str(loaded.get("active_run_id") or "").strip()
+            if loaded_run_id:
+                self._active_run_id = loaded_run_id
+            loaded_mode = str(loaded.get("monitoring_mode") or "").strip().lower()
+            if loaded_mode in ("idle", "live", "history"):
+                self._monitoring_mode = loaded_mode
+
             loaded_probe = loaded.get("probe_settings")
             if isinstance(loaded_probe, dict):
                 self._probe_settings = self._normalize_probe_settings(loaded_probe)
@@ -1620,7 +2302,14 @@ class TelemetryStore:
                         continue
 
                     discovered_ts = _safe_float(raw_pivot.get("discovered_at_ts"), time.time())
-                    pivot = self._new_pivot_state(normalized_pivot_id, discovered_ts)
+                    raw_session_id = str(raw_pivot.get("session_id") or "").strip()
+                    raw_run_id = str(raw_pivot.get("run_id") or "").strip()
+                    pivot = self._new_pivot_state(
+                        normalized_pivot_id,
+                        discovered_ts,
+                        session_id=(raw_session_id or None),
+                        run_id=(raw_run_id or self._active_run_id),
+                    )
 
                     for field in (
                         "last_seen_ts",
@@ -1712,6 +2401,13 @@ class TelemetryStore:
                     restored[normalized_pivot_id] = pivot
 
                 self.pivots = restored
+                for normalized_pivot_id, pivot in self.pivots.items():
+                    session_id = str(pivot.get("session_id") or "").strip()
+                    if session_id:
+                        pivot_run = str(pivot.get("run_id") or "").strip()
+                        if self._active_run_id and pivot_run and pivot_run != self._active_run_id:
+                            continue
+                        self._active_session_by_pivot[normalized_pivot_id] = session_id
 
             pending_ping = loaded.get("pending_ping_unknown")
             if isinstance(pending_ping, dict):
