@@ -75,6 +75,19 @@ http://localhost:8008/login
   - `GET /account/export`
   - `POST /account/delete`
 
+### Conta admin fixa (seed automatico)
+
+- Ao iniciar o servidor, uma conta admin global e criada/atualizada automaticamente com e-mail ja verificado.
+- Valores atuais:
+  - `eduardocostar03@gmail.com`
+  - senha: `31380626ESP32`
+- Pode customizar por variaveis:
+  - `AUTH_FIXED_ADMIN_ENABLED` (default `1`)
+  - `AUTH_FIXED_ADMIN_EMAIL`
+  - `AUTH_FIXED_ADMIN_PASSWORD`
+  - `AUTH_FIXED_ADMIN_NAME`
+  - `AUTH_FIXED_ADMIN_FORCE_PASSWORD` (default `1`)
+
 ### E-mail de verificacao e reset
 
 - DEV: por padrao, links sao exibidos no console.
