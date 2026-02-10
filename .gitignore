@@ -212,6 +212,9 @@ device.pem.crt
 private.pem.key
 logs_mqtt/*.txt
 dashboards/
+frontend/data/*
+!frontend/data/.gitkeep
+frontend/pivot_*.html
 
 # Local-only security secrets (never commit)
 cloudv2_local_secrets.py
