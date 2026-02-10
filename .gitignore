@@ -212,3 +212,6 @@ device.pem.crt
 private.pem.key
 logs_mqtt/*.txt
 dashboards/
+
+# Local-only security secrets (never commit)
+cloudv2_local_secrets.py
