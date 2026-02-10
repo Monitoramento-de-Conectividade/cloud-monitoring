@@ -59,7 +59,7 @@
 
       <div class="filters" id="statusFilters" role="toolbar" aria-label="Filtro de status">
         <button data-status="all" class="filter active">Todos</button>
-        <button data-status="green" class="filter green">Conectado</button>
+        <button data-status="green" class="filter green">Online</button>
         <button data-status="yellow" class="filter yellow">Atencao</button>
         <button data-status="critical" class="filter critical">Critico</button>
         <button data-status="red" class="filter red">Offline</button>
@@ -92,13 +92,14 @@
     </section>
 
     <section id="pivotView" class="panel pivot-view" hidden>
-      <div class="panel-head">
-        <div class="pivot-title-wrap">
-          <button id="closePivot" class="ghost">Fechar visao</button>
-          <h2 id="pivotTitle">Pivot</h2>
-          <span id="pivotStatus" class="badge gray">Inicial</span>
+        <div class="panel-head">
+          <div class="pivot-title-wrap">
+            <button id="closePivot" class="ghost">Fechar visao</button>
+            <h2 id="pivotTitle">Pivot</h2>
+            <span id="pivotStatus" class="badge gray">Estado: Inicial</span>
+            <span id="pivotQuality" class="badge green">Qualidade: Saudavel</span>
+          </div>
         </div>
-      </div>
 
       <div class="metrics-grid" id="pivotMetrics"></div>
 
