@@ -33,6 +33,19 @@ RESET_TOKEN_TTL_SEC = _env_int("AUTH_RESET_TOKEN_TTL_SEC", 3600, minimum=300)
 PASSWORD_MIN_LENGTH = _env_int("AUTH_PASSWORD_MIN_LENGTH", 8, minimum=8)
 PRIVACY_POLICY_VERSION = str(os.environ.get("PRIVACY_POLICY_VERSION", "2026-02-10")).strip() or "2026-02-10"
 TOKEN_PEPPER = str(os.environ.get("AUTH_TOKEN_PEPPER", "cloudv2-dev-token-pepper")).strip() or "cloudv2-dev-token-pepper"
+FIXED_ADMIN_ENABLED = str(os.environ.get("AUTH_FIXED_ADMIN_ENABLED", "1")).strip().lower() in ("1", "true", "yes", "on")
+FIXED_ADMIN_EMAIL = (
+    str(os.environ.get("AUTH_FIXED_ADMIN_EMAIL", "eduardocostar03@gmail.com")).strip().lower()
+    or "eduardocostar03@gmail.com"
+)
+FIXED_ADMIN_PASSWORD = str(os.environ.get("AUTH_FIXED_ADMIN_PASSWORD", "31380626ESP32")).strip() or "31380626ESP32"
+FIXED_ADMIN_NAME = str(os.environ.get("AUTH_FIXED_ADMIN_NAME", "Administrador Global")).strip() or "Administrador Global"
+FIXED_ADMIN_FORCE_PASSWORD = str(os.environ.get("AUTH_FIXED_ADMIN_FORCE_PASSWORD", "1")).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 def mask_email(email):
@@ -380,11 +393,17 @@ class AuthService:
         if row is None:
             return None
         email = str(row["email"] or "").strip().lower()
+        role = "user"
+        try:
+            role = str(row["role"] or "user").strip().lower() or "user"
+        except Exception:
+            role = "user"
         return {
             "id": str(row["id"]),
             "email": email,
             "email_masked": mask_email(email),
             "name": str(row["name"] or ""),
+            "role": role,
             "status": str(row["status"] or "active"),
             "email_verified": row["email_verified_at"] is not None,
             "email_verified_at": row["email_verified_at"],
@@ -394,6 +413,151 @@ class AuthService:
             "updated_at": row["updated_at"],
             "last_login_at": row["last_login_at"],
             "deleted_at": row["deleted_at"],
+        }
+
+    def ensure_fixed_admin_account(self):
+        if not FIXED_ADMIN_ENABLED:
+            return {
+                "ok": False,
+                "disabled": True,
+            }
+
+        admin_email = self._normalize_email(FIXED_ADMIN_EMAIL)
+        admin_password = str(FIXED_ADMIN_PASSWORD or "").strip()
+        admin_name = self._normalize_name(FIXED_ADMIN_NAME) or "Administrador Global"
+        if not self._is_valid_email(admin_email):
+            return {
+                "ok": False,
+                "error": "AUTH_FIXED_ADMIN_EMAIL invalido",
+            }
+        if not admin_password:
+            return {
+                "ok": False,
+                "error": "AUTH_FIXED_ADMIN_PASSWORD vazio",
+            }
+
+        now_ts = _now_ts()
+        created = False
+        password_hash = self._hash_password(admin_password)
+        with self._connect() as conn:
+            self._cleanup_expired_records(conn, now_ts)
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE email = ?
+                LIMIT 1
+                """,
+                (admin_email,),
+            ).fetchone()
+
+            with conn:
+                if existing is None:
+                    created = True
+                    user_id = str(uuid.uuid4())
+                    conn.execute(
+                        """
+                        INSERT INTO users (
+                            id,
+                            email,
+                            name,
+                            password_hash,
+                            email_verified_at,
+                            status,
+                            role,
+                            privacy_policy_version,
+                            privacy_policy_accepted_at,
+                            created_at,
+                            updated_at,
+                            last_login_at,
+                            deleted_at
+                        ) VALUES (?, ?, ?, ?, ?, 'active', 'admin', ?, ?, ?, ?, NULL, NULL)
+                        """,
+                        (
+                            user_id,
+                            admin_email,
+                            admin_name,
+                            password_hash,
+                            now_ts,
+                            PRIVACY_POLICY_VERSION,
+                            now_ts,
+                            now_ts,
+                            now_ts,
+                        ),
+                    )
+                else:
+                    user_id = str(existing["id"])
+                    if FIXED_ADMIN_FORCE_PASSWORD:
+                        conn.execute(
+                            """
+                            UPDATE users
+                            SET
+                                name = ?,
+                                password_hash = ?,
+                                email_verified_at = ?,
+                                status = 'active',
+                                role = 'admin',
+                                privacy_policy_version = ?,
+                                privacy_policy_accepted_at = COALESCE(privacy_policy_accepted_at, ?),
+                                updated_at = ?,
+                                deleted_at = NULL
+                            WHERE id = ?
+                            """,
+                            (
+                                admin_name,
+                                password_hash,
+                                now_ts,
+                                PRIVACY_POLICY_VERSION,
+                                now_ts,
+                                now_ts,
+                                user_id,
+                            ),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE users
+                            SET
+                                name = ?,
+                                email_verified_at = ?,
+                                status = 'active',
+                                role = 'admin',
+                                privacy_policy_version = ?,
+                                privacy_policy_accepted_at = COALESCE(privacy_policy_accepted_at, ?),
+                                updated_at = ?,
+                                deleted_at = NULL
+                            WHERE id = ?
+                            """,
+                            (
+                                admin_name,
+                                now_ts,
+                                PRIVACY_POLICY_VERSION,
+                                now_ts,
+                                now_ts,
+                                user_id,
+                            ),
+                        )
+
+                self._invalidate_token_type(conn, user_id, "email_verify", now_ts)
+                conn.execute(
+                    """
+                    UPDATE user_tokens
+                    SET used_at = COALESCE(used_at, ?)
+                    WHERE user_id = ?
+                        AND type = 'password_reset'
+                        AND used_at IS NULL
+                    """,
+                    (now_ts, user_id),
+                )
+
+        if self.logger is not None:
+            self.logger.info("Conta admin fixa garantida para %s", mask_email(admin_email))
+
+        return {
+            "ok": True,
+            "created": created,
+            "email_masked": mask_email(admin_email),
+            "role": "admin",
         }
 
     def register_user(
@@ -467,6 +631,7 @@ class AuthService:
                             password_hash = ?,
                             email_verified_at = NULL,
                             status = 'active',
+                            role = 'user',
                             privacy_policy_version = ?,
                             privacy_policy_accepted_at = ?,
                             updated_at = ?,
@@ -494,13 +659,14 @@ class AuthService:
                             password_hash,
                             email_verified_at,
                             status,
+                            role,
                             privacy_policy_version,
                             privacy_policy_accepted_at,
                             created_at,
                             updated_at,
                             last_login_at,
                             deleted_at
-                        ) VALUES (?, ?, ?, ?, NULL, 'active', ?, ?, ?, ?, NULL, NULL)
+                        ) VALUES (?, ?, ?, ?, NULL, 'active', 'user', ?, ?, ?, ?, NULL, NULL)
                         """,
                         (
                             user_id,
@@ -1049,6 +1215,7 @@ class AuthService:
                         password_hash = ?,
                         email_verified_at = NULL,
                         status = 'disabled',
+                        role = 'user',
                         privacy_policy_accepted_at = NULL,
                         updated_at = ?,
                         deleted_at = ?

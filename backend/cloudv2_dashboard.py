@@ -138,6 +138,12 @@ def generate_dashboard_assets(refresh_sec):
 
 def _build_handler(telemetry_store, reload_token_getter=None):
     auth_service = AuthService(db_path=telemetry_store.persistence.db_path, logger=logging.getLogger("cloudv2.auth"))
+    auth_seed_result = auth_service.ensure_fixed_admin_account()
+    if not auth_seed_result.get("ok"):
+        logging.getLogger("cloudv2.auth").warning(
+            "Conta admin fixa nao foi inicializada: %s",
+            str(auth_seed_result.get("error") or "desabilitada"),
+        )
     rate_limiter = InMemoryRateLimiter()
     auth_blocked = object()
 
