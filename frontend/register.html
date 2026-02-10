@@ -1,0 +1,53 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Cadastro - Cloud Monitoring</title>
+  <link rel="stylesheet" href="auth.css"/>
+</head>
+<body data-auth-page="register">
+  <main>
+    <h1>Criar conta</h1>
+    <p>Cadastre-se para acessar o painel de monitoramento.</p>
+
+    <form id="registerForm" novalidate>
+      <label>
+        Nome (opcional)
+        <input id="name" type="text" autocomplete="name" maxlength="120"/>
+      </label>
+      <label>
+        E-mail
+        <input id="email" type="email" autocomplete="email" required/>
+      </label>
+      <label>
+        Senha
+        <input id="password" type="password" autocomplete="new-password" required/>
+      </label>
+      <label>
+        Confirmar senha
+        <input id="passwordConfirm" type="password" autocomplete="new-password" required/>
+      </label>
+
+      <label class="checkbox-row">
+        <input id="privacyAccepted" type="checkbox" required/>
+        <span>Li e aceito a <a href="/privacy-policy">Politica de Privacidade</a>.</span>
+      </label>
+
+      <button type="submit">Cadastrar</button>
+    </form>
+
+    <div id="statusMessage" class="status"> </div>
+
+    <div class="links">
+      <a href="/login">Ja tenho conta</a>
+      <a href="/forgot-password">Esqueci minha senha</a>
+    </div>
+
+    <p class="muted-small">
+      Requisitos minimos de senha: 8+ caracteres, letra maiuscula, letra minuscula e numero.
+    </p>
+  </main>
+  <script src="auth.js"></script>
+</body>
+</html>
