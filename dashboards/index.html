@@ -37,7 +37,7 @@
       <div class="panel-head block">
         <div>
           <h2>Visao geral e filtros</h2>
-          <p class="section-copy">Filtre por status, busque por pivot_id e ordene por criticidade ou atividade.</p>
+          <p class="section-copy">Filtre por status/qualidade, busque por pivot_id e ordene por criticidade ou atividade.</p>
         </div>
       </div>
 
@@ -49,7 +49,7 @@
         <label class="field">
           <span>Ordenar por</span>
           <select id="sortSelect">
-            <option value="critical">Criticidade</option>
+            <option value="critical">Criticidade (Estado + Qualidade)</option>
             <option value="activity_desc">Ultima atividade (recente)</option>
             <option value="activity_asc">Ultima atividade (antiga)</option>
             <option value="pivot_asc">pivot_id (A-Z)</option>
@@ -60,6 +60,8 @@
       <div class="filters" id="statusFilters" role="toolbar" aria-label="Filtro de status">
         <button data-status="all" class="filter active">Todos</button>
         <button data-status="green" class="filter green">Online</button>
+        <button data-status="quality_green" class="filter green">Saudavel</button>
+        <button data-status="quality_calculating" class="filter calculating">Calculando</button>
         <button data-status="yellow" class="filter yellow">Atencao</button>
         <button data-status="critical" class="filter critical">Critico</button>
         <button data-status="red" class="filter red">Offline</button>

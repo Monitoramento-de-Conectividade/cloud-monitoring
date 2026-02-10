@@ -13,6 +13,7 @@
   --critical: #d86a1a;
   --red: #b43d2a;
   --gray: #70857a;
+  --calculating: #5c7390;
   --accent: #14563b;
   --accent-soft: #e1f2e8;
   --radius-sm: 10px;
@@ -360,6 +361,10 @@ a:focus {
   border-color: var(--gray);
 }
 
+.filter.calculating.active {
+  border-color: var(--calculating);
+}
+
 .status-summary {
   display: grid;
   gap: 8px;
@@ -477,6 +482,10 @@ a:focus {
 
 .badge.gray {
   background: var(--gray);
+}
+
+.badge.calculating {
+  background: var(--calculating);
 }
 
 .kv-grid {
