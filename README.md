@@ -50,8 +50,48 @@ $env:CLOUDV2_DEV_HOT_RELOAD="0"; python backend/run_monitor.py
 3. Abra:
 
 ```text
-http://localhost:8008/index.html
+http://localhost:8008/login
 ```
+
+## Autenticacao e LGPD
+
+- Todas as rotas e APIs do dashboard exigem autenticacao.
+- Fluxos disponiveis:
+  - `GET /login`
+  - `GET /register`
+  - `GET /verify-email`
+  - `GET /forgot-password`
+  - `GET /reset-password?token=...`
+- Endpoints principais:
+  - `POST /auth/register`
+  - `POST /auth/login`
+  - `POST /auth/logout`
+  - `GET /auth/verify?token=...`
+  - `POST /auth/resend-verification`
+  - `POST /auth/forgot-password`
+  - `POST /auth/reset-password`
+  - `GET /auth/me`
+- Direitos do titular:
+  - `GET /account/export`
+  - `POST /account/delete`
+
+### E-mail de verificacao e reset
+
+- DEV: por padrao, links sao exibidos no console.
+- PROD: configure SMTP via variaveis:
+  - `AUTH_EMAIL_MODE=smtp`
+  - `AUTH_SMTP_HOST`
+  - `AUTH_SMTP_PORT`
+  - `AUTH_SMTP_USER`
+  - `AUTH_SMTP_PASSWORD`
+  - `AUTH_SMTP_FROM`
+
+### Seguranca
+
+- Senha com hash `scrypt` (nunca em texto puro).
+- Tokens de verificacao/reset armazenados apenas em hash.
+- Sessao por cookie `HttpOnly` com `SameSite=Lax` e `Secure` quando HTTPS.
+- Rate limit basico aplicado em login/reenvio/esqueci senha.
 
 ## Simulador/fixture
 
@@ -141,7 +181,7 @@ Campos importantes em `cloudv2-config.json`:
 1. Configure o servico `Web Service` com:
    - Build command: `pip install -r requirements.txt`
    - Start command: `python backend/run_monitor.py`
-   - Health check path: `/api/health`
+   - Health check path: `/login`
 2. Configure os secrets:
    - `CA_CERT_CONTENT`
    - `CLIENT_CERT_CONTENT`
