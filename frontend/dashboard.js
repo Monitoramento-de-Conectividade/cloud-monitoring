@@ -1,67 +1,71 @@
-const ui = {
-  updatedAt: document.getElementById("updatedAt"),
-  countsMeta: document.getElementById("countsMeta"),
-  searchInput: document.getElementById("searchInput"),
-  sortSelect: document.getElementById("sortSelect"),
-  statusFilters: document.getElementById("statusFilters"),
-  statusSummary: document.getElementById("statusSummary"),
-  pendingPanel: document.getElementById("pendingPanel"),
-  pendingList: document.getElementById("pendingList"),
-  cardsGrid: document.getElementById("cardsGrid"),
-  cardsPrev: document.getElementById("cardsPrev"),
-  cardsNext: document.getElementById("cardsNext"),
-  cardsPageInfo: document.getElementById("cardsPageInfo"),
-  pivotView: document.getElementById("pivotView"),
-  closePivot: document.getElementById("closePivot"),
-  pivotTitle: document.getElementById("pivotTitle"),
-  pivotStatus: document.getElementById("pivotStatus"),
-  pivotQuality: document.getElementById("pivotQuality"),
-  pivotMetrics: document.getElementById("pivotMetrics"),
-  connPreset: document.getElementById("connPreset"),
-  connFromWrap: document.getElementById("connFromWrap"),
-  connToWrap: document.getElementById("connToWrap"),
-  connFrom: document.getElementById("connFrom"),
-  connTo: document.getElementById("connTo"),
-  connApply: document.getElementById("connApply"),
-  connSummary: document.getElementById("connSummary"),
-  connTrack: document.getElementById("connTrack"),
-  connSegmentCard: document.getElementById("connSegmentCard"),
-  connStartLabel: document.getElementById("connStartLabel"),
-  connEndLabel: document.getElementById("connEndLabel"),
-  probeEnabled: document.getElementById("probeEnabled"),
-  probeInterval: document.getElementById("probeInterval"),
-  saveProbe: document.getElementById("saveProbe"),
-  probeHint: document.getElementById("probeHint"),
-  probeStatLastSent: document.getElementById("probeStatLastSent"),
-  probeStatLastResponse: document.getElementById("probeStatLastResponse"),
-  probeStatTimeoutStreak: document.getElementById("probeStatTimeoutStreak"),
-  probeStatResponseRatio: document.getElementById("probeStatResponseRatio"),
-  probeStatDelayLast: document.getElementById("probeStatDelayLast"),
-  probeStatDelayAvg: document.getElementById("probeStatDelayAvg"),
-  probeDelayPreset: document.getElementById("probeDelayPreset"),
-  probeDelayRange: document.getElementById("probeDelayRange"),
-  probeDelayFromWrap: document.getElementById("probeDelayFromWrap"),
-  probeDelayToWrap: document.getElementById("probeDelayToWrap"),
-  probeDelayFrom: document.getElementById("probeDelayFrom"),
-  probeDelayTo: document.getElementById("probeDelayTo"),
-  probeDelayApply: document.getElementById("probeDelayApply"),
-  probeDelayHint: document.getElementById("probeDelayHint"),
-  probeDelayChart: document.getElementById("probeDelayChart"),
-  probeDelayStartLabel: document.getElementById("probeDelayStartLabel"),
-  probeDelayEndLabel: document.getElementById("probeDelayEndLabel"),
-  timelineList: document.getElementById("timelineList"),
-  timelinePrev: document.getElementById("timelinePrev"),
-  timelineNext: document.getElementById("timelineNext"),
-  timelinePageInfo: document.getElementById("timelinePageInfo"),
-  cloud2Table: document.getElementById("cloud2Table"),
-  toastRegion: document.getElementById("toastRegion"),
-  sessionAction: document.getElementById("sessionAction"),
-  sessionSelectWrap: document.getElementById("sessionSelectWrap"),
-  sessionSelect: document.getElementById("sessionSelect"),
-  sessionApply: document.getElementById("sessionApply"),
-  purgeDatabase: document.getElementById("purgeDatabase"),
-  sessionHint: document.getElementById("sessionHint"),
-};
+const HAS_DOM = typeof document !== "undefined";
+
+const ui = HAS_DOM
+  ? {
+      updatedAt: document.getElementById("updatedAt"),
+      countsMeta: document.getElementById("countsMeta"),
+      searchInput: document.getElementById("searchInput"),
+      sortSelect: document.getElementById("sortSelect"),
+      statusFilters: document.getElementById("statusFilters"),
+      statusSummary: document.getElementById("statusSummary"),
+      pendingPanel: document.getElementById("pendingPanel"),
+      pendingList: document.getElementById("pendingList"),
+      cardsGrid: document.getElementById("cardsGrid"),
+      cardsPrev: document.getElementById("cardsPrev"),
+      cardsNext: document.getElementById("cardsNext"),
+      cardsPageInfo: document.getElementById("cardsPageInfo"),
+      pivotView: document.getElementById("pivotView"),
+      closePivot: document.getElementById("closePivot"),
+      pivotTitle: document.getElementById("pivotTitle"),
+      pivotStatus: document.getElementById("pivotStatus"),
+      pivotQuality: document.getElementById("pivotQuality"),
+      pivotMetrics: document.getElementById("pivotMetrics"),
+      connPreset: document.getElementById("connPreset"),
+      connFromWrap: document.getElementById("connFromWrap"),
+      connToWrap: document.getElementById("connToWrap"),
+      connFrom: document.getElementById("connFrom"),
+      connTo: document.getElementById("connTo"),
+      connApply: document.getElementById("connApply"),
+      connSummary: document.getElementById("connSummary"),
+      connTrack: document.getElementById("connTrack"),
+      connSegmentCard: document.getElementById("connSegmentCard"),
+      connStartLabel: document.getElementById("connStartLabel"),
+      connEndLabel: document.getElementById("connEndLabel"),
+      probeEnabled: document.getElementById("probeEnabled"),
+      probeInterval: document.getElementById("probeInterval"),
+      saveProbe: document.getElementById("saveProbe"),
+      probeHint: document.getElementById("probeHint"),
+      probeStatLastSent: document.getElementById("probeStatLastSent"),
+      probeStatLastResponse: document.getElementById("probeStatLastResponse"),
+      probeStatTimeoutStreak: document.getElementById("probeStatTimeoutStreak"),
+      probeStatResponseRatio: document.getElementById("probeStatResponseRatio"),
+      probeStatDelayLast: document.getElementById("probeStatDelayLast"),
+      probeStatDelayAvg: document.getElementById("probeStatDelayAvg"),
+      probeDelayPreset: document.getElementById("probeDelayPreset"),
+      probeDelayRange: document.getElementById("probeDelayRange"),
+      probeDelayFromWrap: document.getElementById("probeDelayFromWrap"),
+      probeDelayToWrap: document.getElementById("probeDelayToWrap"),
+      probeDelayFrom: document.getElementById("probeDelayFrom"),
+      probeDelayTo: document.getElementById("probeDelayTo"),
+      probeDelayApply: document.getElementById("probeDelayApply"),
+      probeDelayHint: document.getElementById("probeDelayHint"),
+      probeDelayChart: document.getElementById("probeDelayChart"),
+      probeDelayStartLabel: document.getElementById("probeDelayStartLabel"),
+      probeDelayEndLabel: document.getElementById("probeDelayEndLabel"),
+      timelineList: document.getElementById("timelineList"),
+      timelinePrev: document.getElementById("timelinePrev"),
+      timelineNext: document.getElementById("timelineNext"),
+      timelinePageInfo: document.getElementById("timelinePageInfo"),
+      cloud2Table: document.getElementById("cloud2Table"),
+      toastRegion: document.getElementById("toastRegion"),
+      sessionAction: document.getElementById("sessionAction"),
+      sessionSelectWrap: document.getElementById("sessionSelectWrap"),
+      sessionSelect: document.getElementById("sessionSelect"),
+      sessionApply: document.getElementById("sessionApply"),
+      purgeDatabase: document.getElementById("purgeDatabase"),
+      sessionHint: document.getElementById("sessionHint"),
+    }
+  : {};
 
 const state = {
   rawState: null,
@@ -804,12 +808,12 @@ function renderCards() {
   }
 }
 
-function renderPivotMetrics(pivot, qualityView = null, connectivityView = null) {
+function renderPivotMetrics(pivot, statusView = null, qualityView = null, connectivityView = null) {
   const summary = pivot.summary || {};
   const metrics = pivot.metrics || {};
-  const status = summary.status || {};
+  const status = statusView || summary.status || {};
   const statusCode = text(status.code, "gray");
-  const statusLabel = (STATUS_META[statusCode] || STATUS_META.gray).label;
+  const statusLabel = text(status.label, (STATUS_META[statusCode] || STATUS_META.gray).label);
   const safeStatusReason = sanitizeUserText(status.reason) || statusReasonByCode(statusCode);
   const quality = qualityView || summary.quality || {};
   const qualityCode = text(quality.code, "green");
@@ -1021,30 +1025,43 @@ function buildProbeDelaySeries(pivot, startTs, endTs) {
   };
 }
 
-function buildConnectivitySegments(pivot, startTs, endTs) {
-  const summary = pivot.summary || {};
-  const settings = (state.rawState || {}).settings || {};
-  const tolerance = Number(settings.tolerance_factor || 1.25) || 1.25;
+function resolveDisconnectThresholdSec(summary, settings) {
+  const safeSummary = summary || {};
+  const safeSettings = settings || {};
+  const tolerance = Number(safeSettings.tolerance_factor || 1.25) || 1.25;
   const monitoredTopics = ["cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network"];
-  const expectedByTopic = summary.expected_by_topic_sec || {};
+  const expectedByTopic = safeSummary.expected_by_topic_sec || {};
 
   const candidates = [];
   for (const topic of monitoredTopics) {
     const value = Number(expectedByTopic[topic]);
     if (Number.isFinite(value) && value > 0) candidates.push(value);
   }
-  const maxExpectedFromSummary = Number(summary.max_expected_interval_sec || 0);
+
+  const maxExpectedFromSummary = Number(safeSummary.max_expected_interval_sec || 0);
   const maxExpectedIntervalSec =
     Number.isFinite(maxExpectedFromSummary) && maxExpectedFromSummary > 0
       ? maxExpectedFromSummary
       : candidates.length
       ? Math.max(...candidates)
-      : Number(settings.ping_expected_sec || 180);
-  const thresholdFromSummary = Number(summary.disconnect_threshold_sec || 0);
+      : Number(safeSettings.ping_expected_sec || 180);
+
+  const thresholdFromSummary = Number(safeSummary.disconnect_threshold_sec || 0);
   const disconnectThresholdSec =
     Number.isFinite(thresholdFromSummary) && thresholdFromSummary > 0
       ? thresholdFromSummary
       : Math.max(30, maxExpectedIntervalSec * tolerance);
+
+  return {
+    disconnectThresholdSec,
+    maxExpectedIntervalSec,
+  };
+}
+
+function buildConnectivitySegments(pivot, startTs, endTs, settings = null) {
+  const summary = (pivot || {}).summary || {};
+  const monitoredTopics = ["cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network"];
+  const { disconnectThresholdSec, maxExpectedIntervalSec } = resolveDisconnectThresholdSec(summary, settings);
 
   const events = (pivot.timeline || [])
     .filter((event) => monitoredTopics.includes(String(event.topic || "")))
@@ -1062,72 +1079,106 @@ function buildConnectivitySegments(pivot, startTs, endTs) {
     }
   }
 
-  let lastMessageTs = null;
-  let idx = 0;
-
-  while (idx < events.length && events[idx].ts <= startTs) {
-    lastMessageTs = events[idx].ts;
-    idx += 1;
-  }
-
-  const totalRange = endTs - startTs;
-  let stepSec = 60;
-  if (totalRange > 7 * 86400) stepSec = 300;
-  if (totalRange > 20 * 86400) stepSec = 900;
-
   const segments = [];
-  let currentStart = startTs;
-  let currentState = null;
+  const safeStartTs = Number(startTs || 0);
+  const safeEndTs = Number(endTs || 0);
+  const durationRange = Math.max(1, safeEndTs - safeStartTs);
+  const safeThreshold = Number(disconnectThresholdSec);
 
-  const flushSegment = (segmentEnd, stateName) => {
-    if (currentState === null) return;
-    if (segmentEnd <= currentStart) return;
-    segments.push({
-      state: stateName,
-      start: currentStart,
-      end: segmentEnd,
-      duration: segmentEnd - currentStart,
-    });
-  };
+  const messageTs = events.map((event) => event.ts);
+  const lastMessageTs = messageTs.length ? messageTs[messageTs.length - 1] : null;
 
-  for (let cursor = startTs; cursor <= endTs; cursor += stepSec) {
-    while (idx < events.length && events[idx].ts <= cursor) {
-      lastMessageTs = events[idx].ts;
-      idx += 1;
-    }
-
-    const connected = lastMessageTs !== null && cursor - lastMessageTs <= disconnectThresholdSec;
-    const nextState = connected ? "connected" : "disconnected";
-
-    if (currentState === null) {
-      currentState = nextState;
-      currentStart = cursor;
-      continue;
-    }
-    if (nextState !== currentState) {
-      flushSegment(cursor, currentState);
-      currentState = nextState;
-      currentStart = cursor;
-    }
-  }
-
-  flushSegment(endTs, currentState || "disconnected");
-
-  if (!segments.length) {
+  if (!Number.isFinite(safeThreshold) || safeThreshold <= 0 || !messageTs.length) {
     segments.push({
       state: "disconnected",
-      start: startTs,
-      end: endTs,
-      duration: Math.max(1, endTs - startTs),
+      start: safeStartTs,
+      end: safeEndTs,
+      duration: Math.max(1, safeEndTs - safeStartTs),
+    });
+    return {
+      segments,
+      disconnectThresholdSec: safeThreshold,
+      maxExpectedIntervalSec,
+      lastMessageTs,
+      hasPrincipalPayloadInWindow,
+      hasAuxPayloadInWindow,
+      durationRange,
+    };
+  }
+
+  const intervals = messageTs
+    .map((ts) => ({ start: ts, end: ts + safeThreshold }))
+    .sort((a, b) => a.start - b.start);
+
+  const merged = [];
+  for (const interval of intervals) {
+    if (!merged.length) {
+      merged.push({ start: interval.start, end: interval.end });
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (interval.start <= last.end) {
+      if (interval.end > last.end) last.end = interval.end;
+      continue;
+    }
+    merged.push({ start: interval.start, end: interval.end });
+  }
+
+  let cursor = safeStartTs;
+  for (const interval of merged) {
+    if (interval.end <= safeStartTs) continue;
+    if (interval.start >= safeEndTs) break;
+
+    const segStart = Math.max(cursor, Math.max(safeStartTs, interval.start));
+    const segEnd = Math.min(safeEndTs, interval.end);
+    if (segEnd <= segStart) continue;
+
+    if (segStart > cursor) {
+      segments.push({
+        state: "disconnected",
+        start: cursor,
+        end: segStart,
+        duration: segStart - cursor,
+      });
+    }
+
+    segments.push({
+      state: "connected",
+      start: segStart,
+      end: segEnd,
+      duration: segEnd - segStart,
+    });
+    cursor = segEnd;
+    if (cursor >= safeEndTs) break;
+  }
+
+  if (cursor < safeEndTs) {
+    segments.push({
+      state: "disconnected",
+      start: cursor,
+      end: safeEndTs,
+      duration: safeEndTs - cursor,
+    });
+  }
+
+  const compacted = segments.filter((segment) => Number(segment.duration || 0) > 0);
+  if (!compacted.length) {
+    compacted.push({
+      state: "disconnected",
+      start: safeStartTs,
+      end: safeEndTs,
+      duration: Math.max(1, safeEndTs - safeStartTs),
     });
   }
 
   return {
-    segments,
-    disconnectThresholdSec,
+    segments: compacted,
+    disconnectThresholdSec: safeThreshold,
     maxExpectedIntervalSec,
+    lastMessageTs,
     hasPrincipalPayloadInWindow,
     hasAuxPayloadInWindow,
+    durationRange,
   };
 }
 
@@ -1166,22 +1217,60 @@ function buildConnectivityQualityInput(connData, durationSec) {
   };
 }
 
-function computeConnectivityView(pivot) {
-  const range = normalizeRange(pivot);
-  const startTs = range.startTs;
-  const endTs = range.endTs;
-  const durationSec = Math.max(1, endTs - startTs);
-  const connData = buildConnectivitySegments(pivot, startTs, endTs);
-  const connectivityQualityInput = buildConnectivityQualityInput(connData, durationSec);
+function buildConnectivityStatus(connData, referenceTs) {
+  const lastSeenAtTs = connData ? connData.lastMessageTs : null;
+  const thresholdSec = Number((connData || {}).disconnectThresholdSec);
+  const ref = Number(referenceTs || 0);
+
+  const connected = lastSeenAtTs !== null && Number.isFinite(ref) && ref - lastSeenAtTs <= thresholdSec;
+  const code = connected ? "green" : "red";
+  const meta = STATUS_META[code] || STATUS_META.gray;
 
   return {
-    range,
-    startTs,
-    endTs,
+    code,
+    label: meta.label,
+    reason: statusReasonByCode(code),
+    rank: Number(meta.rank ?? 99),
+    state: connected ? "connected" : "disconnected",
+    referenceTs: ref,
+    lastSeenAtTs,
+    disconnectThresholdSec: thresholdSec,
+  };
+}
+
+function computeConnectivityFromRange(pivot, startTs, endTs, settings = null) {
+  const safeStart = Number(startTs || 0);
+  const safeEnd = Number(endTs || 0);
+  const durationSec = Math.max(1, safeEnd - safeStart);
+  const connData = buildConnectivitySegments(pivot, safeStart, safeEnd, settings);
+  const connectivityQualityInput = buildConnectivityQualityInput(connData, durationSec);
+  const status = buildConnectivityStatus(connData, safeEnd);
+
+  return {
+    startTs: safeStart,
+    endTs: safeEnd,
     durationSec,
     connData,
     segments: connData.segments,
     connectivityQualityInput,
+    status,
+  };
+}
+
+function computeConnectivityView(pivot) {
+  const range = normalizeRange(pivot);
+  const settings = ((state.rawState || {}).settings) || {};
+  const view = computeConnectivityFromRange(pivot, range.startTs, range.endTs, settings);
+
+  return {
+    range,
+    startTs: view.startTs,
+    endTs: view.endTs,
+    durationSec: view.durationSec,
+    connData: view.connData,
+    segments: view.segments,
+    connectivityQualityInput: view.connectivityQualityInput,
+    status: view.status,
   };
 }
 
@@ -1365,7 +1454,7 @@ function renderConnectivityTimeline(pivot) {
   ui.connFrom.value = state.connCustomFrom;
   ui.connTo.value = state.connCustomTo;
   restoreConnectivitySegmentSelection();
-  return connectivitySummary;
+  return view;
 }
 
 function renderProbeDelayChart(pivot) {
@@ -1543,25 +1632,25 @@ function renderPivotView() {
 
   ui.pivotView.hidden = false;
   const summary = pivot.summary || {};
-  const status = summary.status || {};
   const probe = summary.probe || {};
-  const connectivitySummary = renderConnectivityTimeline(pivot);
+  const connectivityView = renderConnectivityTimeline(pivot);
+  const connectivitySummary = connectivityView.connectivityQualityInput;
   const quality = buildQualityFromConnectivity(pivot, connectivitySummary);
-  const displayStatus = getDisplayStatus({ pivot_id: pivot.pivot_id, status });
+  const displayStatus = connectivityView.status;
   const pivotId = text(pivot.pivot_id, "").trim();
   if (pivotId) {
     state.qualityOverridesByPivotId[pivotId] = quality;
     state.statusOverridesByPivotId[pivotId] = {
-      code: text(status.code, "gray"),
+      code: text(displayStatus.code, "gray"),
       label: text(displayStatus.label, "Inicial"),
       reason: text(displayStatus.reason, ""),
-      rank: Number(status.rank ?? 99),
+      rank: Number(displayStatus.rank ?? 99),
     };
   }
 
   ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivô");
   ui.pivotStatus.textContent = `Status: ${text(displayStatus.label, "Inicial")}`;
-  ui.pivotStatus.className = `badge ${text(status.code, "gray")}`;
+  ui.pivotStatus.className = `badge ${text(displayStatus.code, "gray")}`;
   if (ui.pivotQuality) {
     ui.pivotQuality.textContent = `Conectividade: ${text(quality.label, "Estável")}`;
     ui.pivotQuality.className = `badge ${text(quality.code, "green")}`;
@@ -1585,7 +1674,7 @@ function renderPivotView() {
 
   renderStatusSummary();
   renderCards();
-  renderPivotMetrics(pivot, quality, connectivitySummary);
+  renderPivotMetrics(pivot, displayStatus, quality, connectivitySummary);
   renderProbeDelayChart(pivot);
   renderTimeline(pivot);
   renderCloud2Table(pivot);
@@ -1948,4 +2037,20 @@ async function boot() {
   setInterval(refreshAll, state.refreshMs);
 }
 
-boot();
+if (HAS_DOM) {
+  boot();
+}
+
+// Exports for Node-based regression tests (no DOM execution).
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    _test: {
+      resolveDisconnectThresholdSec,
+      buildConnectivitySegments,
+      summarizeConnectivitySegments,
+      buildConnectivityQualityInput,
+      buildConnectivityStatus,
+      computeConnectivityFromRange,
+    },
+  };
+}
