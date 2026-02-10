@@ -1,0 +1,187 @@
+:root {
+  --bg: #eef5f0;
+  --card: #ffffff;
+  --line: #d5e4da;
+  --text: #143424;
+  --muted: #4f6b5a;
+  --accent: #1d6a43;
+  --accent-hover: #155638;
+  --danger: #b03a2e;
+  --danger-hover: #8f2d23;
+  --warning: #8a6b17;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", "Trebuchet MS", "Verdana", sans-serif;
+  color: var(--text);
+  background: linear-gradient(155deg, #eff7f1 0%, #dbece0 100%);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+main {
+  width: min(100%, 460px);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: 0 14px 28px rgba(19, 56, 37, 0.14);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 1.35rem;
+}
+
+p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.92rem;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c9dccf;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
+input:focus {
+  outline: 2px solid rgba(28, 104, 67, 0.28);
+  outline-offset: 1px;
+}
+
+button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+  color: #fff;
+  background: var(--accent);
+}
+
+button:hover {
+  background: var(--accent-hover);
+}
+
+button.secondary {
+  background: #eef4ef;
+  border-color: #c6dbcd;
+  color: #1a4932;
+}
+
+button.secondary:hover {
+  background: #e2ece4;
+}
+
+button.danger {
+  background: var(--danger);
+}
+
+button.danger:hover {
+  background: var(--danger-hover);
+}
+
+.checkbox-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.9rem;
+  color: #2f5742;
+}
+
+.checkbox-row input {
+  margin-top: 3px;
+}
+
+.status {
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid #cfe0d5;
+  padding: 10px;
+  font-size: 0.92rem;
+  background: #f6fbf8;
+  color: #244d37;
+  min-height: 42px;
+}
+
+.status.error {
+  border-color: #efc3bf;
+  background: #fdf4f3;
+  color: #7d241b;
+}
+
+.status.warn {
+  border-color: #ead9a8;
+  background: #fdf8ea;
+  color: #70540a;
+}
+
+.status.success {
+  border-color: #b9dcc7;
+  background: #edf8f1;
+  color: #1f5e3e;
+}
+
+.links {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.9rem;
+}
+
+.links a {
+  color: #1e6140;
+  text-decoration: none;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.muted-small {
+  margin-top: 12px;
+  font-size: 0.8rem;
+  color: #5f7b6a;
+}
+
+.account-actions {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
