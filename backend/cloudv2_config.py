@@ -183,9 +183,14 @@ def _normalize_probe_settings(values, default_interval, minimum_interval):
 
 
 def _apply_env_overrides(config):
+    render_value = str(os.environ.get("RENDER", "")).strip().lower()
+    running_on_render = render_value in ("1", "true", "yes", "on") or bool(
+        os.environ.get("RENDER_SERVICE_ID")
+    )
+
     overrides = {
         "BROKER": "broker",
-        "PORT": "port",
+        "MQTT_PORT": "port",
         "MIN_MINUTES": "min_minutes",
         "MAX_MINUTES": "max_minutes",
         "SCHEDULE_MODE": "schedule_mode",
@@ -218,6 +223,18 @@ def _apply_env_overrides(config):
         env_value = os.environ.get(env_name)
         if env_value is not None and env_value != "":
             config[config_key] = env_value
+
+    legacy_port_env = os.environ.get("PORT")
+    mqtt_port_env = os.environ.get("MQTT_PORT")
+    dashboard_port_env = os.environ.get("DASHBOARD_PORT")
+
+    # Compatibilidade legada: fora do Render, PORT ainda pode definir a porta MQTT.
+    if legacy_port_env and not mqtt_port_env and not running_on_render:
+        config["port"] = legacy_port_env
+
+    # No Render, PORT e a porta HTTP de entrada publicada pela plataforma.
+    if running_on_render and legacy_port_env and not dashboard_port_env:
+        config["dashboard_port"] = legacy_port_env
 
     cmd_topics_env = os.environ.get("CMD_TOPICS")
     if cmd_topics_env:

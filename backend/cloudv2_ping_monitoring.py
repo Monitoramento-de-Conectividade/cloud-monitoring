@@ -22,14 +22,20 @@ CLIENT_CERT = "device.pem.crt"
 CLIENT_KEY = "private.pem.key"
 
 
+def _is_render_environment():
+    render_value = str(os.environ.get("RENDER", "")).strip().lower()
+    return render_value in ("1", "true", "yes", "on") or bool(os.environ.get("RENDER_SERVICE_ID"))
+
+
 runtime_config = load_runtime_config()
 
 BROKER = runtime_config["broker"]
-PORT = runtime_config["port"]
+MQTT_PORT = runtime_config["port"]
 MONITOR_TOPICS = tuple(runtime_config.get("monitor_topics") or FIXED_MONITOR_TOPICS)
 DASHBOARD_ENABLED = runtime_config["dashboard_enabled"]
 DASHBOARD_PORT = runtime_config["dashboard_port"]
 DASHBOARD_REFRESH_SEC = runtime_config["dashboard_refresh_sec"]
+DASHBOARD_HOST = str(os.environ.get("DASHBOARD_HOST", "127.0.0.1")).strip() or "127.0.0.1"
 DEV_HOT_RELOAD = str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "1")).strip().lower() in (
     "1",
     "true",
@@ -37,6 +43,8 @@ DEV_HOT_RELOAD = str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "1")).strip().lowe
     "on",
 )
 DEV_HOT_RELOAD_POLL_SEC = 1.0
+if _is_render_environment() and "DASHBOARD_HOST" not in os.environ:
+    DASHBOARD_HOST = "0.0.0.0"
 
 # Forca os topicos monitorados fixos e sem wildcard.
 if tuple(MONITOR_TOPICS) != tuple(FIXED_MONITOR_TOPICS):
@@ -52,6 +60,16 @@ restart_requested = threading.Event()
 restart_reason = None
 dev_reload_token = str(int(time.time() * 1000))
 hot_reload_watcher = None
+
+
+def _dashboard_log_url():
+    external_url = str(os.environ.get("RENDER_EXTERNAL_URL", "")).strip()
+    if external_url:
+        return f"{external_url.rstrip('/')}/index.html"
+
+    if DASHBOARD_HOST == "0.0.0.0":
+        return f"http://localhost:{DASHBOARD_PORT}/index.html"
+    return f"http://{DASHBOARD_HOST}:{DASHBOARD_PORT}/index.html"
 
 
 def _configure_logging():
@@ -308,8 +326,9 @@ def main():
             DASHBOARD_PORT,
             telemetry,
             reload_token_getter=lambda: dev_reload_token,
+            host=DASHBOARD_HOST,
         )
-        logger.info("Dashboard ativo em http://localhost:%s/index.html", DASHBOARD_PORT)
+        logger.info("Dashboard ativo em %s", _dashboard_log_url())
         if DEV_HOT_RELOAD:
             logger.info("Hot reload DEV ativo (poll %.1fs).", DEV_HOT_RELOAD_POLL_SEC)
 
@@ -325,8 +344,8 @@ def main():
         tls_version=ssl.PROTOCOL_TLSv1_2,
     )
 
-    logger.info("Conectando ao broker %s:%s ...", BROKER, PORT)
-    mqtt_client.connect(BROKER, PORT)
+    logger.info("Conectando ao broker %s:%s ...", BROKER, MQTT_PORT)
+    mqtt_client.connect(BROKER, MQTT_PORT)
 
     if DEV_HOT_RELOAD:
         hot_reload_watcher = threading.Thread(target=_hot_reload_loop, name="cloudv2-hot-reload", daemon=True)

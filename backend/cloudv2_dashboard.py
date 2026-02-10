@@ -365,10 +365,10 @@ def _build_handler(telemetry_store, reload_token_getter=None):
     return DashboardHandler
 
 
-def start_dashboard_server(port, telemetry_store, reload_token_getter=None):
+def start_dashboard_server(port, telemetry_store, reload_token_getter=None, host="127.0.0.1"):
     ensure_dirs()
     handler = _build_handler(telemetry_store, reload_token_getter=reload_token_getter)
-    server = ThreadingHTTPServer(("127.0.0.1", int(port)), handler)
+    server = ThreadingHTTPServer((str(host), int(port)), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
