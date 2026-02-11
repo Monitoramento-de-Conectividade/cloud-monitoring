@@ -615,11 +615,11 @@ function renderHeader() {
     const usingHistoricalRun = !!text(state.selectedRunId, "").trim();
     if (usingHistoricalRun) {
       ui.sessionHint.textContent = startedAt
-        ? `Monitoramento contínuo 24/7 ativo. Exibindo sessão restaurada automaticamente (${startedAt}).`
-        : "Monitoramento contínuo 24/7 ativo. Exibindo sessão restaurada automaticamente.";
+        ? `Exibindo sessão restaurada automaticamente (${startedAt}).`
+        : "Exibindo sessão restaurada automaticamente.";
     } else {
       ui.sessionHint.textContent =
-        "Monitoramento contínuo 24/7 ativo no backend. Este painel exibe automaticamente os dados mais recentes.";
+        "Este painel exibe automaticamente os dados mais recentes.";
     }
   }
 }
