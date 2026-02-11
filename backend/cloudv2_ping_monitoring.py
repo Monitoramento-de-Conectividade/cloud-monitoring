@@ -17,9 +17,9 @@ from backend.cloudv2_telemetry import TelemetryStore
 PID_FILE = ".cloudv2-monitor.pid"
 LOG_DIR = "logs_mqtt"
 
-CA_CERT = "amazon_ca.pem"
-CLIENT_CERT = "device.pem.crt"
-CLIENT_KEY = "private.pem.key"
+CA_CERT = str(os.environ.get("CA_CERT_PATH", "amazon_ca.pem")).strip() or "amazon_ca.pem"
+CLIENT_CERT = str(os.environ.get("CLIENT_CERT_PATH", "device.pem.crt")).strip() or "device.pem.crt"
+CLIENT_KEY = str(os.environ.get("CLIENT_KEY_PATH", "private.pem.key")).strip() or "private.pem.key"
 
 
 def _is_render_environment():
@@ -144,15 +144,34 @@ def preparar_certificados():
     key_env = os.environ.get("CLIENT_KEY_CONTENT")
 
     if ca_env and cert_env and key_env:
+        ca_dir = os.path.dirname(CA_CERT)
+        cert_dir = os.path.dirname(CLIENT_CERT)
+        key_dir = os.path.dirname(CLIENT_KEY)
+        if ca_dir:
+            os.makedirs(ca_dir, exist_ok=True)
+        if cert_dir:
+            os.makedirs(cert_dir, exist_ok=True)
+        if key_dir:
+            os.makedirs(key_dir, exist_ok=True)
         with open(CA_CERT, "w", encoding="utf-8") as file:
             file.write(ca_env)
         with open(CLIENT_CERT, "w", encoding="utf-8") as file:
             file.write(cert_env)
         with open(CLIENT_KEY, "w", encoding="utf-8") as file:
             file.write(key_env)
-        logger.info("Certificados carregados por variaveis de ambiente.")
+        logger.info(
+            "Certificados carregados por variaveis de ambiente (ca=%s cert=%s key=%s).",
+            CA_CERT,
+            CLIENT_CERT,
+            CLIENT_KEY,
+        )
     else:
-        logger.info("Usando certificados locais (.pem).")
+        logger.info(
+            "Usando certificados locais (ca=%s cert=%s key=%s).",
+            CA_CERT,
+            CLIENT_CERT,
+            CLIENT_KEY,
+        )
 
 
 def _publish_probe_to_dynamic_topic(pivot_topic, payload):

@@ -248,3 +248,64 @@ window.CLOUDV2_API_BASE_URL = "https://api.seudominio.com";
   - frontend envia `credentials: include`;
   - backend responde com CORS restrito e cookie `SameSite=None; Secure`.
 - Se quiser manter tudo em mesma origem (sem CORS/cookie cross-site), use proxy reverso para servir frontend e API no mesmo dominio.
+
+## Deploy mais simples na AWS com Docker (recomendado)
+
+### 1) Setup inicial na EC2 (uma vez)
+
+```bash
+git clone https://github.com/Monitoramento-de-Conectividade/cloud-monitoring.git
+cd cloud-monitoring
+bash scripts/ec2-install-docker.sh
+cp .env.backend.example .env.backend
+mkdir -p certs logs_mqtt
+```
+
+Copie os certificados para `certs/`:
+- `certs/amazon_ca.pem`
+- `certs/device.pem.crt`
+- `certs/private.pem.key`
+
+Edite `.env.backend` com seus dados reais.
+
+### 2) Subir backend 24/7
+
+```bash
+docker compose up -d --build backend
+docker compose ps
+```
+
+O container usa `restart: unless-stopped`, então volta sozinho após reboot da VM (com serviço Docker ativo).
+
+### 3) Atualizar backend após novos commits
+
+```bash
+BRANCH=main APP_DIR=$HOME/cloud-monitoring bash scripts/ec2-deploy-backend.sh
+```
+
+### 4) Variáveis essenciais para frontend no Render
+
+- `CORS_ALLOWED_ORIGINS=https://SEU_FRONTEND.onrender.com`
+- `AUTH_COOKIE_SAMESITE=None`
+- `AUTH_COOKIE_SECURE=1`
+- `AUTH_BASE_URL=https://SEU_BACKEND_API`
+
+E no frontend (`frontend/runtime-config.js`):
+
+```js
+window.CLOUDV2_API_BASE_URL = "https://SEU_BACKEND_API";
+```
+
+Importante: para cookie cross-site funcionar no login, a API da AWS deve estar em HTTPS.
+
+## Deploy automático por commit (opcional)
+
+Workflow incluído: `.github/workflows/deploy-aws-backend.yml`.
+
+Secrets necessários no GitHub:
+- `AWS_EC2_HOST`
+- `AWS_EC2_USER`
+- `AWS_EC2_SSH_KEY`
+- opcional: `AWS_EC2_PORT` (default `22`)
+- opcional: `AWS_EC2_APP_DIR` (default `$HOME/cloud-monitoring`)
+- opcional: `AWS_REPO_URL`

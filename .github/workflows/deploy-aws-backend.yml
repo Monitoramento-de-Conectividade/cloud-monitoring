@@ -1,0 +1,74 @@
+name: Deploy AWS Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".env.backend.example"
+      - "cloudv2-config.json"
+      - "requirements.txt"
+      - "scripts/ec2-deploy-backend.sh"
+      - ".github/workflows/deploy-aws-backend.yml"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch para deploy"
+        required: true
+        default: "main"
+
+jobs:
+  deploy:
+    if: ${{ secrets.AWS_EC2_HOST != '' && secrets.AWS_EC2_USER != '' && secrets.AWS_EC2_SSH_KEY != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve branch
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "branch=${{ github.event.inputs.branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.AWS_EC2_HOST }}
+          username: ${{ secrets.AWS_EC2_USER }}
+          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          port: ${{ secrets.AWS_EC2_PORT || '22' }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.AWS_EC2_APP_DIR }}"
+            REPO_URL="${{ secrets.AWS_REPO_URL }}"
+            BRANCH="${{ steps.vars.outputs.branch }}"
+
+            if [ -z "${APP_DIR}" ]; then
+              APP_DIR="$HOME/cloud-monitoring"
+            fi
+            if [ -z "${REPO_URL}" ]; then
+              REPO_URL="https://github.com/Monitoramento-de-Conectividade/cloud-monitoring.git"
+            fi
+
+            if [ ! -d "${APP_DIR}/.git" ]; then
+              mkdir -p "${APP_DIR}"
+              git clone "${REPO_URL}" "${APP_DIR}"
+            fi
+
+            cd "${APP_DIR}"
+            git fetch origin
+            if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
+              git checkout "${BRANCH}"
+            else
+              git checkout -b "${BRANCH}" "origin/${BRANCH}"
+            fi
+            git pull --ff-only origin "${BRANCH}"
+
+            chmod +x scripts/ec2-deploy-backend.sh
+            APP_DIR="${APP_DIR}" BRANCH="${BRANCH}" REPO_URL="${REPO_URL}" ./scripts/ec2-deploy-backend.sh
