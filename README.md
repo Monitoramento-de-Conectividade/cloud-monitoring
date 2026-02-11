@@ -268,6 +268,26 @@ Copie os certificados para `certs/`:
 
 Edite `.env.backend` com seus dados reais.
 
+### Setup em 1 comando (sem nano)
+
+Se quiser evitar edicao manual de `.env.backend`, use:
+
+```bash
+FRONTEND_URL=https://cloud-monitoring.onrender.com \
+BACKEND_URL=https://SEU_BACKEND_API \
+ADMIN_EMAIL=eduardocostar03@gmail.com \
+ADMIN_PASSWORD='SUA_SENHA_FORTE' \
+bash scripts/ec2-one-command.sh
+```
+
+O script:
+- faz pull da branch;
+- cria `.env.backend`;
+- sobe `docker compose up -d --build backend`.
+
+Observacao:
+- antes disso, coloque os certificados em `certs/amazon_ca.pem`, `certs/device.pem.crt`, `certs/private.pem.key`.
+
 ### 2) Subir backend 24/7
 
 ```bash
