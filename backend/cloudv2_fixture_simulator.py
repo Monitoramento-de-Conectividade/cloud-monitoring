@@ -226,13 +226,13 @@ def run_fixture():
     check(295.0 <= median_tol_value <= 310.0, "mediana cloudv2 fica proxima de 300s com variacao leve")
     check(median_tol_samples >= 4, "variacoes 300/310/295/305 contam como amostras validas")
 
-    emit(360, "cloudv2", "#01-MedianTolPivot_1-outlier360$")
+    emit(390, "cloudv2", "#01-MedianTolPivot_1-outlier390$")
     outlier_snapshot = telemetry.get_pivot_snapshot("MedianTolPivot_1", now)
     outlier_summary = (outlier_snapshot or {}).get("summary") or {}
     outlier_median = float(outlier_summary.get("median_cloudv2_interval_sec") or 0.0)
     outlier_samples = int(outlier_summary.get("median_sample_count") or 0)
-    check(295.0 <= outlier_median <= 310.0, "intervalo 360s nao derruba candidato de ~300s")
-    check(outlier_samples == median_tol_samples, "intervalo 360s nao entra como equivalente ao bucket de ~300s")
+    check(295.0 <= outlier_median <= 310.0, "intervalo 390s nao derruba candidato de ~300s")
+    check(outlier_samples == median_tol_samples, "intervalo 390s nao entra como equivalente ao bucket de ~300s")
 
     emit(600, "cloudv2", "#01-MedianTolPivot_1-switchA$")
     emit(610, "cloudv2", "#01-MedianTolPivot_1-switchB$")

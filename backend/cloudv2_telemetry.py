@@ -47,7 +47,7 @@ QUALITY_RANK = {
 }
 
 # Tolerancia percentual para considerar intervalos cloudv2 equivalentes.
-CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.10
+CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.25
 
 
 def _ts_to_str(ts):
