@@ -87,6 +87,7 @@ const ui = HAS_DOM
       timelinePageInfo: document.getElementById("timelinePageInfo"),
       cloud2Table: document.getElementById("cloud2Table"),
       toastRegion: document.getElementById("toastRegion"),
+      sessionHint: document.getElementById("sessionHint"),
     }
   : {};
 
@@ -117,6 +118,8 @@ const state = {
   statusOverridesByPivotId: {},
   qualityRefreshSeq: 0,
   selectedRunId: null,
+  lastRunResolveAttemptMs: 0,
+  runAutoDetected: false,
   panelSessionMeta: null,
   panelRunMeta: null,
 };
@@ -440,6 +443,69 @@ function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
   return query ? `${base}?${query}` : base;
 }
 
+function normalizeRunId(value) {
+  return String(value || "").trim();
+}
+
+function pickBestRunIdFromRuns(runs) {
+  const list = Array.isArray(runs) ? runs : [];
+  if (!list.length) return null;
+
+  const normalized = list
+    .map((item) => {
+      const runId = normalizeRunId(item?.run_id);
+      if (!runId) return null;
+      return {
+        runId,
+        isActive: !!item?.is_active,
+        pivotCount: Number(item?.pivot_count || 0),
+      };
+    })
+    .filter(Boolean);
+
+  if (!normalized.length) return null;
+
+  const activeWithData = normalized.find((item) => item.isActive && item.pivotCount > 0);
+  if (activeWithData) return activeWithData.runId;
+
+  const latestWithData = normalized.find((item) => item.pivotCount > 0);
+  if (latestWithData) return latestWithData.runId;
+
+  const activeAny = normalized.find((item) => item.isActive);
+  if (activeAny) return activeAny.runId;
+
+  return normalized[0].runId;
+}
+
+async function autoResolveRunIdFromBackend({ force = false, allowOverride = false } = {}) {
+  const currentRunId = normalizeRunId(state.selectedRunId);
+  if (currentRunId && !allowOverride) return false;
+
+  const nowMs = Date.now();
+  if (!force && nowMs - Number(state.lastRunResolveAttemptMs || 0) < 30000) {
+    return false;
+  }
+  state.lastRunResolveAttemptMs = nowMs;
+
+  let payload = null;
+  try {
+    payload = await getJson("/api/monitoring/runs?limit=200");
+  } catch (err) {
+    return false;
+  }
+
+  const resolvedRunId = pickBestRunIdFromRuns(payload?.runs);
+  if (!resolvedRunId) return false;
+  if (currentRunId && resolvedRunId === currentRunId) return false;
+
+  state.selectedRunId = resolvedRunId;
+  if (!state.runAutoDetected) {
+    showToast("Sessão de monitoramento restaurada automaticamente.", "success", 3200);
+    state.runAutoDetected = true;
+  }
+  return true;
+}
+
 function renderSessionControls() {
   return;
 }
@@ -543,6 +609,19 @@ function renderHeader() {
   const counts = raw.counts || {};
   ui.updatedAt.textContent = `Última atualização: ${updatedAt}`;
   ui.countsMeta.textContent = `${counts.pivots || 0} pivôs • ${counts.duplicate_drops || 0} duplicidades`;
+  if (ui.sessionHint) {
+    const runMeta = raw.run || state.panelRunMeta || null;
+    const startedAt = text((runMeta || {}).started_at, "").trim();
+    const usingHistoricalRun = !!text(state.selectedRunId, "").trim();
+    if (usingHistoricalRun) {
+      ui.sessionHint.textContent = startedAt
+        ? `Monitoramento contínuo 24/7 ativo. Exibindo sessão restaurada automaticamente (${startedAt}).`
+        : "Monitoramento contínuo 24/7 ativo. Exibindo sessão restaurada automaticamente.";
+    } else {
+      ui.sessionHint.textContent =
+        "Monitoramento contínuo 24/7 ativo no backend. Este painel exibe automaticamente os dados mais recentes.";
+    }
+  }
 }
 
 function renderStatusSummary() {
@@ -1548,10 +1627,17 @@ async function loadUiConfig() {
 }
 
 async function refreshState() {
-  const data = await getJson(buildStateUrl(state.selectedRunId));
+  const requestedRunId = normalizeRunId(state.selectedRunId) || null;
+  const data = await getJson(buildStateUrl(requestedRunId));
   state.rawState = data;
   state.pivots = data.pivots || [];
   state.panelRunMeta = data.run || null;
+  let selectedRunChanged = false;
+  const payloadRunId = normalizeRunId(data?.run_id);
+  if (!requestedRunId && payloadRunId) {
+    state.selectedRunId = payloadRunId;
+    selectedRunChanged = true;
+  }
   const currentPivotIds = new Set(state.pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean));
   for (const pivotId of Object.keys(state.qualityOverridesByPivotId)) {
     if (!currentPivotIds.has(pivotId)) {
@@ -1570,6 +1656,7 @@ async function refreshState() {
   renderStatusSummary();
   renderPending();
   renderCards();
+  return { selectedRunChanged };
 }
 
 async function refreshPivot() {
@@ -1655,7 +1742,16 @@ async function refreshQualityOverrides() {
 
 async function refreshAll() {
   try {
-    await refreshState();
+    const stateResult = await refreshState();
+    if (stateResult?.selectedRunChanged) {
+      await refreshState();
+    }
+    if (!state.pivots.length) {
+      const resolved = await autoResolveRunIdFromBackend({ allowOverride: true });
+      if (resolved) {
+        await refreshState();
+      }
+    }
     await refreshQualityOverrides();
     await refreshPivot();
     state.lastRefreshToastAtMs = 0;
