@@ -176,7 +176,7 @@ class TelemetryStore:
         )
         self.attention_disconnected_window_sec = self.attention_disconnected_window_hours * 3600
         self.cloudv2_window = max(3, int(config.get("cloudv2_median_window", 20)))
-        self.cloudv2_min_samples = max(2, int(config.get("cloudv2_min_samples", 3)))
+        self.cloudv2_min_samples = max(2, int(config.get("cloudv2_min_samples", 5)))
         if self.cloudv2_min_samples > self.cloudv2_window:
             self.cloudv2_min_samples = self.cloudv2_window
         self.cloudv2_median_tolerance_pct = CLOUDV2_MEDIAN_TOLERANCE_PCT

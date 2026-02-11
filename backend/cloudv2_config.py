@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     "critical_disconnected_pct_threshold": 50.0,
     "attention_disconnected_window_hours": 24,
     "cloudv2_median_window": 20,
-    "cloudv2_min_samples": 3,
+    "cloudv2_min_samples": 5,
     "dedupe_window_sec": 8,
     "show_pending_ping_pivots": False,
     "probe_default_interval_sec": 300,

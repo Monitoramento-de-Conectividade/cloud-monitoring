@@ -172,7 +172,7 @@ Campos importantes em `cloudv2-config.json`:
 - `tolerance_factor` (padrão `1.25`).
 - `attention_disconnected_pct_threshold` (padrão `20.0` para status de atenção).
 - `critical_disconnected_pct_threshold` (padrão `50.0` para status crítico).
-- `cloudv2_median_window` e `cloudv2_min_samples`.
+- `cloudv2_median_window` e `cloudv2_min_samples` (padrao: `5`).
 - `probe_default_interval_sec`, `probe_min_interval_sec`, `probe_timeout_factor`.
 - `history_retention_hours` (mínimo 24h).
 - `dedupe_window_sec`.

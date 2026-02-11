@@ -23,7 +23,7 @@ def run_fixture():
             "history_retention_hours": 24,
             "require_apply_to_start": False,
             "cloudv2_median_window": 10,
-            "cloudv2_min_samples": 3,
+            "cloudv2_min_samples": 5,
             "enable_background_worker": False,
             "sqlite_db_path": fixture_db_path,
             "dedupe_window_sec": 8,
@@ -140,7 +140,7 @@ def run_fixture():
         bool(yellow_summary.get("ping_ok")) and not bool(yellow_summary.get("cloudv2_ok")),
         "regra ping ok + sem cloudv2 detectada",
     )
-    check(yellow_state == "green", "estado permanece online quando ainda ha atividade recente")
+    check(yellow_state == "gray", "estado permanece em inicial ate completar amostras minimas da mediana")
     check(yellow_quality in ("yellow", "critical"), "qualidade fica em atencao/critico com percentual alto")
 
     disconnect_threshold = int(float(yellow_summary.get("disconnect_threshold_sec") or 0))
