@@ -292,6 +292,27 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             self.end_headers()
             self.wfile.write(body)
 
+        def _write_html_headers(self, filename):
+            path = os.path.join(DASHBOARD_DIR, str(filename or "").strip())
+            if not os.path.isfile(path):
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            content_type, _ = mimetypes.guess_type(path)
+            if not content_type:
+                content_type = "text/html"
+            if content_type.startswith("text/"):
+                content_type = f"{content_type}; charset=utf-8"
+
+            self.send_response(200)
+            self._write_cors_headers()
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(int(os.path.getsize(path))))
+            self.end_headers()
+
         def _read_json_body(self):
             content_length = int(self.headers.get("Content-Length", "0"))
             if content_length <= 0:
@@ -684,6 +705,18 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             self.send_header("Access-Control-Max-Age", "600")
             self.send_header("Content-Length", "0")
             self.end_headers()
+
+        def do_HEAD(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path in ("/login", "/register", "/verify-email", "/forgot-password", "/reset-password", "/privacy-policy"):
+                alias_file = page_aliases.get(path)
+                if alias_file:
+                    self._write_html_headers(alias_file)
+                    return
+
+            super().do_HEAD()
 
         def do_GET(self):
             parsed = urlparse(self.path)
