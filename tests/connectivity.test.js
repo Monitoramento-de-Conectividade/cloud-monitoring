@@ -95,3 +95,41 @@ test("display: status keeps timeline-derived value when connectivity is not em a
   const status = _test.getDisplayStatus(item);
   assert.equal(status.code, "red");
 });
+
+test("display: quality stays em analise when median samples are not ready, even with high disconnected pct", () => {
+  const pivot = {
+    summary: {
+      status: { code: "red", reason: "Sem comunicaÃ§Ã£o recente." },
+      median_ready: false,
+      median_sample_count: 0,
+    },
+  };
+  const connectivitySummary = {
+    disconnectedPct: 100,
+    hasPrincipalPayloadInWindow: false,
+    hasAuxPayloadInWindow: false,
+  };
+
+  const quality = _test.buildQualityFromConnectivity(pivot, connectivitySummary);
+  assert.equal(quality.code, "calculating");
+});
+
+test("display: quality can be critical after median is ready", () => {
+  const pivot = {
+    summary: {
+      status: { code: "red", reason: "Sem comunicaÃ§Ã£o recente." },
+      median_ready: true,
+      median_sample_count: 5,
+      attention_disconnected_pct_threshold: 20,
+      critical_disconnected_pct_threshold: 50,
+    },
+  };
+  const connectivitySummary = {
+    disconnectedPct: 80,
+    hasPrincipalPayloadInWindow: true,
+    hasAuxPayloadInWindow: true,
+  };
+
+  const quality = _test.buildQualityFromConnectivity(pivot, connectivitySummary);
+  assert.equal(quality.code, "critical");
+});

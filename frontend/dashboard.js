@@ -1384,9 +1384,23 @@ function computeConnectivityView(pivot) {
 function buildQualityFromConnectivity(pivot, connectivitySummary) {
   const summary = pivot.summary || {};
   const fallbackQuality = summary.quality || {};
+  const settings = (state.rawState || {}).settings || {};
+  const minSamplesRaw = Number(settings.cloudv2_min_samples ?? 5);
+  const minSamples = Number.isFinite(minSamplesRaw) && minSamplesRaw >= 1 ? Math.round(minSamplesRaw) : 5;
+  const sampleCount = Math.max(0, Number(summary.median_sample_count || 0));
+  const medianReady = !!summary.median_ready && sampleCount >= minSamples;
   const status = summary.status || {};
   const statusCode = text(status.code, "gray");
   const statusReason = text(status.reason, "");
+
+  if (!medianReady) {
+    return {
+      code: "calculating",
+      label: QUALITY_META.calculating.label,
+      reason: `Aguardando amostras de cloudv2 para estimar mediana (${sampleCount}/${minSamples}).`,
+      rank: QUALITY_META.calculating.rank,
+    };
+  }
 
   if (statusCode === "gray") {
     return {
@@ -1407,7 +1421,6 @@ function buildQualityFromConnectivity(pivot, connectivitySummary) {
     };
   }
 
-  const settings = (state.rawState || {}).settings || {};
   const attentionThresholdRaw = Number(
     summary.attention_disconnected_pct_threshold ?? settings.attention_disconnected_pct_threshold ?? 20
   );
@@ -2175,6 +2188,7 @@ if (typeof module !== "undefined" && module.exports) {
     _test: {
       getDisplayStatus,
       getDisplayQuality,
+      buildQualityFromConnectivity,
       resolveTimelineReferenceNowTs,
       resolveDisconnectThresholdSec,
       buildConnectivitySegments,
