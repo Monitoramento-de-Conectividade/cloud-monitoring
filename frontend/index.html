@@ -49,6 +49,7 @@
           <span>Ordenar por</span>
           <select id="sortSelect">
             <option value="critical">Prioridade (Status + Conectividade)</option>
+            <option value="samples_desc">Amostras (maior primeiro)</option>
             <option value="activity_desc">Última atualização (mais recente)</option>
             <option value="activity_asc">Última atualização (mais antiga)</option>
             <option value="pivot_asc">Pivô (A-Z)</option>
@@ -80,6 +81,10 @@
         <button data-status="critical" class="filter critical">Crítico</button>
         <button data-status="red" class="filter red">Desconectado</button>
         <button data-status="gray" class="filter gray">Inicial</button>
+      </div>
+
+      <div class="control-actions">
+        <button id="clearFilters" class="ghost" type="button">Limpar todos os filtros</button>
       </div>
 
       <div class="status-summary" id="statusSummary"></div>

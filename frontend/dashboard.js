@@ -35,6 +35,7 @@ const ui = HAS_DOM
       countsMeta: document.getElementById("countsMeta"),
       searchInput: document.getElementById("searchInput"),
       sortSelect: document.getElementById("sortSelect"),
+      clearFilters: document.getElementById("clearFilters"),
       technologyFilter: document.getElementById("technologyFilter"),
       firmwareFilter: document.getElementById("firmwareFilter"),
       statusFilters: document.getElementById("statusFilters"),
@@ -711,6 +712,7 @@ function applyFilterSort() {
 
     const aActivity = Number(a.last_activity_ts || 0);
     const bActivity = Number(b.last_activity_ts || 0);
+    if (state.sort === "samples_desc") return compareBySamplesDesc(a, b, ap, bp, aActivity, bActivity);
 
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
     if (state.sort === "activity_asc") return aActivity - bActivity || ap.localeCompare(bp);
@@ -732,6 +734,53 @@ function applyFilterSort() {
   });
 
   return filtered;
+}
+
+function pivotSampleCount(item) {
+  const fromSummary = Number((item || {}).median_sample_count);
+  if (Number.isFinite(fromSummary) && fromSummary >= 0) return Math.floor(fromSummary);
+  const nested = Number((((item || {}).summary || {}).median_sample_count));
+  if (Number.isFinite(nested) && nested >= 0) return Math.floor(nested);
+  return 0;
+}
+
+function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(b?.pivot_id || ""), aActivity = null, bActivity = null) {
+  const aSamples = pivotSampleCount(a);
+  const bSamples = pivotSampleCount(b);
+  if (aSamples !== bSamples) return bSamples - aSamples;
+
+  const aAct = Number.isFinite(Number(aActivity)) ? Number(aActivity) : Number(a?.last_activity_ts || 0);
+  const bAct = Number.isFinite(Number(bActivity)) ? Number(bActivity) : Number(b?.last_activity_ts || 0);
+  if (aAct !== bAct) return bAct - aAct;
+
+  return ap.localeCompare(bp);
+}
+
+function setStatusFilterSelection(nextStatusCode) {
+  const normalized = String(nextStatusCode || "all").trim() || "all";
+  state.statusFilter = normalized;
+  if (!ui.statusFilters) return;
+  for (const item of ui.statusFilters.querySelectorAll("button[data-status]")) {
+    const itemCode = String(item.dataset.status || "all");
+    if (itemCode === normalized) item.classList.add("active");
+    else item.classList.remove("active");
+  }
+}
+
+function resetAllFilters() {
+  state.search = "";
+  state.sort = "critical";
+  state.technologyFilter = "all";
+  state.firmwareFilter = "all";
+  state.cardsPage = 1;
+  setStatusFilterSelection("all");
+
+  if (ui.searchInput) ui.searchInput.value = "";
+  if (ui.sortSelect) ui.sortSelect.value = "critical";
+  if (ui.technologyFilter) ui.technologyFilter.value = "all";
+  if (ui.firmwareFilter) ui.firmwareFilter.value = "all";
+
+  renderCards();
 }
 
 function renderHeader() {
@@ -2038,15 +2087,16 @@ function wireEvents() {
   ui.statusFilters.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-status]");
     if (!btn) return;
-
-    for (const item of ui.statusFilters.querySelectorAll("button[data-status]")) {
-      item.classList.remove("active");
-    }
-    btn.classList.add("active");
-    state.statusFilter = btn.dataset.status || "all";
+    setStatusFilterSelection(btn.dataset.status || "all");
     state.cardsPage = 1;
     renderCards();
   });
+
+  if (ui.clearFilters) {
+    ui.clearFilters.addEventListener("click", () => {
+      resetAllFilters();
+    });
+  }
 
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
@@ -2186,6 +2236,8 @@ if (HAS_DOM) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     _test: {
+      pivotSampleCount,
+      compareBySamplesDesc,
       getDisplayStatus,
       getDisplayQuality,
       buildQualityFromConnectivity,

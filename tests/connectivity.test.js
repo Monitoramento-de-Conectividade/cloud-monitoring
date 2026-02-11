@@ -133,3 +133,15 @@ test("display: quality can be critical after median is ready", () => {
   const quality = _test.buildQualityFromConnectivity(pivot, connectivitySummary);
   assert.equal(quality.code, "critical");
 });
+
+test("sorting: pivots with more samples come first", () => {
+  const a = { pivot_id: "A", median_sample_count: 2, last_activity_ts: 100 };
+  const b = { pivot_id: "B", median_sample_count: 9, last_activity_ts: 90 };
+  const compare = _test.compareBySamplesDesc(a, b);
+  assert.ok(compare > 0);
+});
+
+test("sorting: sample count fallback reads nested summary", () => {
+  const value = _test.pivotSampleCount({ summary: { median_sample_count: 7 } });
+  assert.equal(value, 7);
+});
