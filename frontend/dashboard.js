@@ -35,6 +35,8 @@ const ui = HAS_DOM
       countsMeta: document.getElementById("countsMeta"),
       searchInput: document.getElementById("searchInput"),
       sortSelect: document.getElementById("sortSelect"),
+      technologyFilter: document.getElementById("technologyFilter"),
+      firmwareFilter: document.getElementById("firmwareFilter"),
       statusFilters: document.getElementById("statusFilters"),
       statusSummary: document.getElementById("statusSummary"),
       pendingPanel: document.getElementById("pendingPanel"),
@@ -97,6 +99,10 @@ const state = {
   statusFilter: "all",
   search: "",
   sort: "critical",
+  technologyFilter: "all",
+  firmwareFilter: "all",
+  technologyOptions: [],
+  firmwareOptions: [],
   cardsPage: 1,
   cardsPageSize: 18,
   selectedPivot: null,
@@ -192,6 +198,103 @@ function setHashPivot(pivotId) {
 function text(value, fallback = "-") {
   if (value === null || value === undefined || value === "") return fallback;
   return String(value);
+}
+
+function normalizeFilterText(value) {
+  return String(value || "").trim();
+}
+
+function normalizeFilterKey(value) {
+  const normalized = normalizeFilterText(value);
+  return normalized ? normalized.toLowerCase() : "";
+}
+
+function buildFilterOptionItems(values) {
+  const byKey = new Map();
+  for (const rawValue of values || []) {
+    const label = normalizeFilterText(rawValue);
+    if (!label) continue;
+    const key = normalizeFilterKey(label);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, label);
+  }
+
+  return [...byKey.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1], "pt-BR", { sensitivity: "base" }))
+    .map(([key, label]) => ({ key, label }));
+}
+
+function pivotTechnologyValue(item) {
+  const cloud2 = (item || {}).last_cloud2 || {};
+  return normalizeFilterText(cloud2.technology);
+}
+
+function pivotFirmwareValue(item) {
+  const cloud2 = (item || {}).last_cloud2 || {};
+  return normalizeFilterText(cloud2.firmware);
+}
+
+function fallbackCloud2FilterOptionsFromPivots(pivots) {
+  const technologies = [];
+  const firmwares = [];
+  for (const pivot of pivots || []) {
+    const technology = pivotTechnologyValue(pivot);
+    const firmware = pivotFirmwareValue(pivot);
+    if (technology) technologies.push(technology);
+    if (firmware) firmwares.push(firmware);
+  }
+  return { technologies, firmwares };
+}
+
+function renderDynamicSelectOptions(selectEl, defaultLabel, options, selectedKey) {
+  if (!selectEl) return "all";
+
+  const currentKey = normalizeFilterKey(selectedKey);
+  const normalizedCurrent = currentKey || "all";
+  const available = new Set(options.map((item) => item.key));
+  const safeSelected = normalizedCurrent !== "all" && available.has(normalizedCurrent) ? normalizedCurrent : "all";
+
+  const html = [`<option value="all">${escapeHtml(defaultLabel)}</option>`];
+  for (const option of options) {
+    const selected = option.key === safeSelected ? " selected" : "";
+    html.push(`<option value="${escapeHtml(option.key)}"${selected}>${escapeHtml(option.label)}</option>`);
+  }
+  selectEl.innerHTML = html.join("");
+  selectEl.value = safeSelected;
+  return safeSelected;
+}
+
+function syncCloud2FilterOptions(rawState) {
+  const raw = rawState || {};
+  const fromState = raw.cloud2_filter_options && typeof raw.cloud2_filter_options === "object"
+    ? raw.cloud2_filter_options
+    : {};
+  const fallback = fallbackCloud2FilterOptionsFromPivots(state.pivots);
+
+  const technologiesSource = Array.isArray(fromState.technologies) && fromState.technologies.length
+    ? fromState.technologies
+    : fallback.technologies;
+  const firmwaresSource = Array.isArray(fromState.firmwares) && fromState.firmwares.length
+    ? fromState.firmwares
+    : fallback.firmwares;
+
+  const technologyOptions = buildFilterOptionItems(technologiesSource);
+  const firmwareOptions = buildFilterOptionItems(firmwaresSource);
+  state.technologyOptions = technologyOptions;
+  state.firmwareOptions = firmwareOptions;
+
+  state.technologyFilter = renderDynamicSelectOptions(
+    ui.technologyFilter,
+    "Todas tecnologias",
+    technologyOptions,
+    state.technologyFilter
+  );
+  state.firmwareFilter = renderDynamicSelectOptions(
+    ui.firmwareFilter,
+    "Todos firmwares",
+    firmwareOptions,
+    state.firmwareFilter
+  );
 }
 
 function fmtDuration(seconds) {
@@ -548,6 +651,8 @@ function startDevAutoReload() {
 function applyFilterSort() {
   const list = [...state.pivots];
   const needle = state.search.trim().toLowerCase();
+  const selectedTechnology = normalizeFilterKey(state.technologyFilter) || "all";
+  const selectedFirmware = normalizeFilterKey(state.firmwareFilter) || "all";
 
   let filtered = list.filter((item) => {
     const quality = getDisplayQuality(item);
@@ -569,6 +674,14 @@ function applyFilterSort() {
     if (needle) {
       const pivotId = String(item.pivot_id || "").toLowerCase();
       if (!pivotId.includes(needle)) return false;
+    }
+    if (selectedTechnology !== "all") {
+      const pivotTechnology = normalizeFilterKey(pivotTechnologyValue(item));
+      if (pivotTechnology !== selectedTechnology) return false;
+    }
+    if (selectedFirmware !== "all") {
+      const pivotFirmware = normalizeFilterKey(pivotFirmwareValue(item));
+      if (pivotFirmware !== selectedFirmware) return false;
     }
     return true;
   });
@@ -1673,6 +1786,7 @@ async function refreshState() {
   const data = await getJson(buildStateUrl(requestedRunId));
   state.rawState = data;
   state.pivots = data.pivots || [];
+  syncCloud2FilterOptions(data);
   state.panelRunMeta = data.run || null;
   let selectedRunChanged = false;
   const payloadRunId = normalizeRunId(data?.run_id);
@@ -1873,6 +1987,22 @@ function wireEvents() {
     state.cardsPage = 1;
     renderCards();
   });
+
+  if (ui.technologyFilter) {
+    ui.technologyFilter.addEventListener("change", () => {
+      state.technologyFilter = normalizeFilterKey(ui.technologyFilter.value) || "all";
+      state.cardsPage = 1;
+      renderCards();
+    });
+  }
+
+  if (ui.firmwareFilter) {
+    ui.firmwareFilter.addEventListener("change", () => {
+      state.firmwareFilter = normalizeFilterKey(ui.firmwareFilter.value) || "all";
+      state.cardsPage = 1;
+      renderCards();
+    });
+  }
 
   ui.statusFilters.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-status]");

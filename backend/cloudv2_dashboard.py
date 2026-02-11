@@ -747,6 +747,16 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 if isinstance(run_id, str):
                     run_id = run_id.strip() or None
                 payload = telemetry_store.get_state_snapshot(run_id=run_id)
+                selected_run_id = None
+                if isinstance(payload, dict):
+                    selected_run_id = str(payload.get("run_id") or "").strip() or run_id
+                filter_options = telemetry_store.get_cloud2_filter_options(run_id=selected_run_id)
+                if isinstance(payload, dict):
+                    payload["cloud2_filter_options"] = {
+                        "run_id": str(filter_options.get("run_id") or "").strip() or None,
+                        "technologies": list(filter_options.get("technologies") or []),
+                        "firmwares": list(filter_options.get("firmwares") or []),
+                    }
                 self._write_json(200, payload)
                 return
 

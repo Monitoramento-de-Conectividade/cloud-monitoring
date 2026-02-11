@@ -590,6 +590,42 @@ class TelemetryStore:
         except RuntimeError:
             return []
 
+    def get_cloud2_filter_options(self, run_id=None):
+        normalized_run = str(run_id or "").strip() or None
+        try:
+            payload = self.persistence.get_cloud2_filter_options(run_id=normalized_run)
+            return {
+                "run_id": str(payload.get("run_id") or "").strip() or None,
+                "technologies": list(payload.get("technologies") or []),
+                "firmwares": list(payload.get("firmwares") or []),
+            }
+        except RuntimeError:
+            pass
+
+        with self._lock:
+            by_technology = {}
+            by_firmware = {}
+            for pivot in self.pivots.values():
+                cloud2 = pivot.get("last_cloud2") if isinstance(pivot.get("last_cloud2"), dict) else {}
+                technology = str(cloud2.get("technology") or "").strip()
+                firmware = str(cloud2.get("firmware") or "").strip()
+                if technology:
+                    key = technology.lower()
+                    if key not in by_technology:
+                        by_technology[key] = technology
+                if firmware:
+                    key = firmware.lower()
+                    if key not in by_firmware:
+                        by_firmware[key] = firmware
+
+            technologies = sorted(by_technology.values(), key=lambda value: value.lower())
+            firmwares = sorted(by_firmware.values(), key=lambda value: value.lower())
+            return {
+                "run_id": normalized_run,
+                "technologies": technologies,
+                "firmwares": firmwares,
+            }
+
     def purge_database_records(self, password, now=None, source="ui"):
         expected_password = get_db_purge_password()
         if not expected_password:

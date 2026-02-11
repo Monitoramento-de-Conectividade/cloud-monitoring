@@ -535,6 +535,79 @@ class TelemetryPersistence:
                 items.append(item)
             return items
 
+    def _resolve_effective_run_id_locked(self, conn, run_id=None):
+        normalized_run = str(run_id or "").strip()
+        if normalized_run:
+            return normalized_run
+        run_row = self._query_run_row_locked(conn, run_id=None)
+        if run_row is None:
+            return None
+        resolved = str(run_row["run_id"] or "").strip()
+        return resolved or None
+
+    def _list_distinct_cloud2_column_locked(self, conn, column_name, run_id=None, limit=500):
+        if column_name not in ("technology", "firmware"):
+            return []
+
+        safe_limit = max(1, min(2000, int(limit or 500)))
+        normalized_run = str(run_id or "").strip()
+        if normalized_run:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT TRIM(cloud2.{column_name}) AS value
+                FROM cloud2_events AS cloud2
+                INNER JOIN monitoring_sessions AS sessions
+                    ON sessions.session_id = cloud2.session_id
+                WHERE sessions.run_id = ?
+                    AND cloud2.{column_name} IS NOT NULL
+                    AND TRIM(cloud2.{column_name}) <> ''
+                ORDER BY value COLLATE NOCASE ASC
+                LIMIT ?
+                """,
+                (normalized_run, safe_limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT TRIM({column_name}) AS value
+                FROM cloud2_events
+                WHERE {column_name} IS NOT NULL
+                    AND TRIM({column_name}) <> ''
+                ORDER BY value COLLATE NOCASE ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+
+        values = []
+        for row in rows:
+            value = str(row["value"] or "").strip()
+            if value:
+                values.append(value)
+        return values
+
+    def get_cloud2_filter_options(self, run_id=None, limit=500):
+        with self._lock:
+            conn = self._require_conn_locked()
+            effective_run = self._resolve_effective_run_id_locked(conn, run_id=run_id)
+            technologies = self._list_distinct_cloud2_column_locked(
+                conn,
+                "technology",
+                run_id=effective_run,
+                limit=limit,
+            )
+            firmwares = self._list_distinct_cloud2_column_locked(
+                conn,
+                "firmware",
+                run_id=effective_run,
+                limit=limit,
+            )
+            return {
+                "run_id": effective_run,
+                "technologies": technologies,
+                "firmwares": firmwares,
+            }
+
     def _query_session_row_locked(self, conn, pivot_id, session_id=None, run_id=None):
         normalized_id = str(pivot_id or "").strip()
         if not normalized_id:
