@@ -1,14 +1,17 @@
-name: Deploy AWS Backend
+name: Deploy AWS Backend + Render Frontend
 
 on:
   push:
     branches:
       - main
+      - feat/aws-server
     paths:
       - "backend/**"
       - "frontend/**"
       - "Dockerfile"
       - "docker-compose.yml"
+      - "docker-compose.caddy.yml"
+      - "Caddyfile"
       - ".env.backend.example"
       - "cloudv2-config.json"
       - "requirements.txt"
@@ -19,11 +22,14 @@ on:
       branch:
         description: "Branch para deploy"
         required: true
-        default: "main"
+        default: "feat/aws-server"
+
+concurrency:
+  group: deploy-cloud-monitoring-${{ github.ref_name || github.event.inputs.branch || 'manual' }}
+  cancel-in-progress: true
 
 jobs:
-  deploy:
-    if: ${{ secrets.AWS_EC2_HOST != '' && secrets.AWS_EC2_USER != '' && secrets.AWS_EC2_SSH_KEY != '' }}
+  deploy_backend_aws:
     runs-on: ubuntu-latest
     steps:
       - name: Resolve branch
@@ -34,6 +40,20 @@ jobs:
           else
             echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate AWS secrets
+        env:
+          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
+          AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          for name in AWS_EC2_HOST AWS_EC2_USER AWS_EC2_SSH_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret obrigatorio ausente: ${name}"
+              exit 1
+            fi
+          done
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.2
@@ -72,3 +92,25 @@ jobs:
 
             chmod +x scripts/ec2-deploy-backend.sh
             APP_DIR="${APP_DIR}" BRANCH="${BRANCH}" REPO_URL="${REPO_URL}" ./scripts/ec2-deploy-backend.sh
+
+  deploy_frontend_render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Render deploy hook secret
+        env:
+          RENDER_FRONTEND_DEPLOY_HOOK_URL: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_FRONTEND_DEPLOY_HOOK_URL:-}" ]; then
+            echo "::error::Secret obrigatorio ausente: RENDER_FRONTEND_DEPLOY_HOOK_URL"
+            exit 1
+          fi
+
+      - name: Trigger Render deploy
+        env:
+          RENDER_FRONTEND_DEPLOY_HOOK_URL: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          response="$(curl -fsS -X POST "${RENDER_FRONTEND_DEPLOY_HOOK_URL}")"
+          echo "Render deploy disparado."
+          echo "${response}"
