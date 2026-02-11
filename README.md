@@ -328,3 +328,11 @@ Secrets opcionais no GitHub:
 - opcional: `AWS_EC2_PORT` (default `22`)
 - opcional: `AWS_EC2_APP_DIR` (default `$HOME/cloud-monitoring`)
 - opcional: `AWS_REPO_URL`
+
+### Troubleshooting rapido
+
+- Erro no workflow `Secret obrigatorio ausente: AWS_EC2_HOST`:
+  - confirme os secrets no mesmo repositorio onde o GitHub Action esta rodando.
+  - preencha `AWS_EC2_HOST`, `AWS_EC2_USER` e `AWS_EC2_SSH_KEY`.
+- Frontend abre mas API falha por CORS:
+  - em `.env.backend`, use `CORS_ALLOWED_ORIGINS` com o dominio final do Vercel (ex.: `https://cloud-monitoring.vercel.app`).
