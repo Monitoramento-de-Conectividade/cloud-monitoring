@@ -293,12 +293,6 @@ class AuthService:
         issues = []
         if len(text) < PASSWORD_MIN_LENGTH:
             issues.append(f"A senha deve ter no minimo {PASSWORD_MIN_LENGTH} caracteres.")
-        if not re.search(r"[a-z]", text):
-            issues.append("A senha deve conter ao menos uma letra minuscula.")
-        if not re.search(r"[A-Z]", text):
-            issues.append("A senha deve conter ao menos uma letra maiuscula.")
-        if not re.search(r"\d", text):
-            issues.append("A senha deve conter ao menos um numero.")
         return issues
 
     def _hash_password(self, password):
