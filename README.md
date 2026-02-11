@@ -211,6 +211,12 @@ Campos importantes em `cloudv2-config.json`:
 window.CLOUDV2_API_BASE_URL = "https://SEU_BACKEND_API";
 ```
 
+Observacao:
+- o painel web nao exige mais acao manual de "iniciar novo monitoramento/carregar historico";
+- no deploy Docker, o backend sobe em modo continuo com:
+  - `REQUIRE_APPLY_TO_START=0`
+  - `HISTORY_MODE=merge`
+
 ## Split deploy: backend AWS + frontend Vercel
 
 Sim, a estrutura atual permite separar:

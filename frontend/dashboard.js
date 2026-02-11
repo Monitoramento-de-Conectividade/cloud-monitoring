@@ -87,12 +87,6 @@ const ui = HAS_DOM
       timelinePageInfo: document.getElementById("timelinePageInfo"),
       cloud2Table: document.getElementById("cloud2Table"),
       toastRegion: document.getElementById("toastRegion"),
-      sessionAction: document.getElementById("sessionAction"),
-      sessionSelectWrap: document.getElementById("sessionSelectWrap"),
-      sessionSelect: document.getElementById("sessionSelect"),
-      sessionApply: document.getElementById("sessionApply"),
-      purgeDatabase: document.getElementById("purgeDatabase"),
-      sessionHint: document.getElementById("sessionHint"),
     }
   : {};
 
@@ -122,10 +116,7 @@ const state = {
   qualityOverridesByPivotId: {},
   statusOverridesByPivotId: {},
   qualityRefreshSeq: 0,
-  sessionAction: "new",
-  availableRuns: [],
   selectedRunId: null,
-  selectedHistoryRunId: null,
   panelSessionMeta: null,
   panelRunMeta: null,
 };
@@ -449,177 +440,8 @@ function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
   return query ? `${base}?${query}` : base;
 }
 
-function formatRunOption(run) {
-  const item = run || {};
-  const startedAt = text(item.started_at, "-");
-  const duration = fmtDuration(item.duration_sec);
-  const activeTag = item.is_active ? "Tempo real" : "Histórico";
-  const pivots = Number(item.pivot_count || 0);
-  return `${activeTag} | ${startedAt} | ${duration} | ${pivots} pivôs`;
-}
-
 function renderSessionControls() {
-  const isHistory = state.sessionAction === "history";
-  const runs = Array.isArray(state.availableRuns) ? state.availableRuns : [];
-  const currentRun = state.rawState?.run || state.panelRunMeta || null;
-  const sessionHintBase =
-    'Escolha "Iniciar novo monitoramento" para começar do zero, ou selecione "Carregar histórico" para retomar o monitoramento a partir de uma sessão salva.';
-  const currentRunLabel = currentRun
-    ? `Sessão atual: ${text(currentRun.started_at)} (${currentRun.is_active ? "tempo real" : "histórico"})`
-    : "";
-
-  ui.sessionAction.value = state.sessionAction;
-  ui.sessionSelectWrap.hidden = !isHistory;
-
-  if (isHistory) {
-    const selectedRunId = String(state.selectedHistoryRunId || state.selectedRunId || "").trim();
-
-    if (!runs.length) {
-      ui.sessionSelect.innerHTML = `<option value="">Nenhum histórico salvo</option>`;
-      ui.sessionSelect.disabled = true;
-      ui.sessionApply.disabled = true;
-      ui.sessionHint.textContent = sessionHintBase + (currentRunLabel ? ` ${currentRunLabel}` : "");
-      return;
-    }
-
-    ui.sessionSelect.innerHTML = runs
-      .map((run) => {
-        const runId = text(run.run_id, "");
-        const selected = selectedRunId && selectedRunId === runId ? " selected" : "";
-        return `<option value="${escapeHtml(runId)}"${selected}>${escapeHtml(formatRunOption(run))}</option>`;
-      })
-      .join("");
-    ui.sessionSelect.disabled = false;
-    if (!ui.sessionSelect.value && runs.length) {
-      ui.sessionSelect.value = text(runs[0].run_id, "");
-    }
-    ui.sessionApply.disabled = !ui.sessionSelect.value;
-    ui.sessionHint.textContent =
-      sessionHintBase +
-      (currentRunLabel ? ` ${currentRunLabel}` : "");
-    return;
-  }
-
-  ui.sessionSelect.innerHTML = "";
-  ui.sessionSelect.disabled = true;
-  ui.sessionApply.disabled = false;
-  ui.sessionHint.textContent =
-    sessionHintBase +
-    (currentRunLabel ? ` ${currentRunLabel}` : "");
-}
-
-async function loadMonitoringRuns() {
-  try {
-    const payload = await getJson("/api/monitoring/runs");
-    state.availableRuns = Array.isArray(payload.runs) ? payload.runs : [];
-  } catch (err) {
-    state.availableRuns = [];
-  }
-  renderSessionControls();
-}
-
-async function applyMonitoringSessionAction() {
-  if (state.sessionAction === "new") {
-    ui.sessionApply.disabled = true;
-    try {
-      const response = await fetch(buildApiUrl("/api/monitoring/runs"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ source: "ui_header_global" }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-      const created = data.created || {};
-      const runId = text(created.run_id, "").trim();
-      state.selectedRunId = null;
-      state.selectedHistoryRunId = runId || null;
-      await loadMonitoringRuns();
-      await refreshAll();
-      showToast("Novo monitoramento iniciado.", "success", 3200);
-    } catch (err) {
-      ui.sessionHint.textContent = "Não foi possível iniciar um novo monitoramento. Tente novamente.";
-      showToast("Não foi possível iniciar um novo monitoramento. Tente novamente.", "error", 4000);
-    } finally {
-      renderSessionControls();
-    }
-    return;
-  }
-
-  const selectedRunId = text(ui.sessionSelect.value, "").trim();
-  if (!selectedRunId) {
-    ui.sessionHint.textContent = "Selecione uma sessão de histórico para retomar o monitoramento.";
-    return;
-  }
-  ui.sessionApply.disabled = true;
-  try {
-    const response = await fetch(buildApiUrl("/api/monitoring/history"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ run_id: selectedRunId, source: "ui_header_global" }),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-    state.selectedHistoryRunId = selectedRunId;
-    state.selectedRunId = selectedRunId;
-    await refreshAll();
-    showToast("Histórico carregado. Monitoramento retomado.", "success", 3200);
-  } catch (err) {
-    ui.sessionHint.textContent = "Falha ao carregar histórico. Verifique a conexão e tente novamente.";
-    showToast("Falha ao carregar histórico. Verifique a conexão e tente novamente.", "error", 3800);
-  } finally {
-    renderSessionControls();
-  }
-}
-
-async function purgeDatabaseRecords() {
-  const confirmed = window.confirm(
-    "Tem certeza que deseja excluir o histórico? Esta ação não pode ser desfeita."
-  );
-  if (!confirmed) return;
-
-  const password = window.prompt("Digite a senha para excluir o histórico:");
-  if (password === null) return;
-  const normalizedPassword = String(password);
-  if (!normalizedPassword.trim()) {
-    showToast("Senha obrigatória para excluir o histórico.", "warn", 3200);
-    return;
-  }
-
-  ui.purgeDatabase.disabled = true;
-  try {
-    const response = await fetch(buildApiUrl("/api/admin/purge-database"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        password: normalizedPassword,
-        source: "ui_header_global",
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-
-    state.availableRuns = [];
-    state.selectedRunId = null;
-    state.selectedHistoryRunId = null;
-    closePivot();
-    await loadMonitoringRuns();
-    await refreshAll();
-    showToast("Histórico excluído com sucesso.", "success", 3600);
-  } catch (err) {
-    showToast("Não foi possível excluir o histórico. Tente novamente.", "error", 4200);
-  } finally {
-    ui.purgeDatabase.disabled = false;
-    renderSessionControls();
-  }
+  return;
 }
 
 function isLocalhostRuntime() {
@@ -1941,16 +1763,6 @@ function wireEvents() {
 
   ui.closePivot.addEventListener("click", closePivot);
   ui.saveProbe.addEventListener("click", saveProbeSetting);
-  ui.sessionAction.addEventListener("change", async () => {
-    state.sessionAction = ui.sessionAction.value || "new";
-    if (state.sessionAction === "history") {
-      await loadMonitoringRuns();
-      return;
-    }
-    renderSessionControls();
-  });
-  ui.sessionApply.addEventListener("click", applyMonitoringSessionAction);
-  ui.purgeDatabase.addEventListener("click", purgeDatabaseRecords);
 
   ui.connPreset.addEventListener("change", () => {
     state.connPreset = ui.connPreset.value || "30d";
@@ -2060,13 +1872,10 @@ async function boot() {
   ui.probeDelayRange.hidden = true;
   ui.probeDelayFromWrap.hidden = true;
   ui.probeDelayToWrap.hidden = true;
-  ui.sessionAction.value = state.sessionAction;
   const hashPivot = parseHashPivot();
   if (hashPivot) {
     state.selectedPivot = hashPivot;
   }
-  await loadMonitoringRuns();
-  renderSessionControls();
   await refreshAll();
   setInterval(refreshAll, state.refreshMs);
 }
