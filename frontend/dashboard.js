@@ -825,9 +825,51 @@ function connectivityRangeSeconds(presetValue) {
   return null;
 }
 
+function maxEventTs(events) {
+  if (!Array.isArray(events)) return null;
+  let maxTs = null;
+  for (const event of events) {
+    const ts = Number((event || {}).ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    if (maxTs === null || ts > maxTs) maxTs = ts;
+  }
+  return maxTs;
+}
+
+function resolveTimelineReferenceNowTs(pivot) {
+  const wallClockNowTs = Math.floor(Date.now() / 1000);
+  const safePivot = pivot || {};
+  const payloadUpdatedTs = Number(safePivot.updated_at_ts || 0);
+  const timelineLastTs = maxEventTs(safePivot.timeline);
+  const probeLastTs = maxEventTs(safePivot.probe_events);
+  const cloud2LastTs = maxEventTs(safePivot.cloud2_events);
+
+  let persistedLatestTs = 0;
+  for (const candidate of [payloadUpdatedTs, timelineLastTs, probeLastTs, cloud2LastTs]) {
+    const ts = Number(candidate || 0);
+    if (Number.isFinite(ts) && ts > persistedLatestTs) persistedLatestTs = ts;
+  }
+
+  const pivotRun = safePivot.run && typeof safePivot.run === "object" ? safePivot.run : null;
+  const stateRun = (state.rawState || {}).run;
+  const runMeta = pivotRun || state.panelRunMeta || stateRun || null;
+  const isRunActive =
+    runMeta && Object.prototype.hasOwnProperty.call(runMeta, "is_active")
+      ? !!runMeta.is_active
+      : String((state.rawState || {}).mode || "").toLowerCase() === "live";
+
+  if (isRunActive) {
+    return Math.max(wallClockNowTs, persistedLatestTs || 0);
+  }
+  if (persistedLatestTs > 0) {
+    return persistedLatestTs;
+  }
+  return wallClockNowTs;
+}
+
 function normalizeRange(pivot) {
-  const nowTs = Number(pivot.updated_at_ts || Math.floor(Date.now() / 1000));
-  const timeline = pivot.timeline || [];
+  const nowTs = resolveTimelineReferenceNowTs(pivot);
+  const timeline = Array.isArray((pivot || {}).timeline) ? pivot.timeline : [];
   let minTs = nowTs;
   for (const event of timeline) {
     const ts = Number(event.ts || 0);
@@ -860,8 +902,8 @@ function normalizeRange(pivot) {
 }
 
 function normalizeProbeDelayRange(pivot) {
-  const nowTs = Number(pivot.updated_at_ts || Math.floor(Date.now() / 1000));
-  const probeEvents = pivot.probe_events || [];
+  const nowTs = resolveTimelineReferenceNowTs(pivot);
+  const probeEvents = Array.isArray((pivot || {}).probe_events) ? pivot.probe_events : [];
   let minTs = nowTs;
 
   for (const event of probeEvents) {
@@ -1717,8 +1759,7 @@ async function refreshQualityOverrides() {
         const view = computeConnectivityView(pivotData);
         const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
         nextOverrides[pivotId] = quality;
-        const summary = (pivotData || {}).summary || {};
-        const detailStatus = summary.status || {};
+        const detailStatus = view.status || {};
         nextStatusOverrides[pivotId] = {
           code: text(detailStatus.code, "gray"),
           label: text(detailStatus.label, "Inicial"),
@@ -1984,6 +2025,7 @@ if (HAS_DOM) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     _test: {
+      resolveTimelineReferenceNowTs,
       resolveDisconnectThresholdSec,
       buildConnectivitySegments,
       summarizeConnectivitySegments,

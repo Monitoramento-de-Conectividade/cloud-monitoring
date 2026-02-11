@@ -43,3 +43,32 @@ test("connectivity: status is derived from the same timeline rule (ignores backe
   assert.equal(view.connectivityQualityInput.connectedPct, 100);
 });
 
+test("connectivity: active run uses wall-clock time as the current reference", () => {
+  const originalNow = Date.now;
+  Date.now = () => 2_000_000;
+  try {
+    const referenceTs = _test.resolveTimelineReferenceNowTs({
+      updated_at_ts: 1200,
+      timeline: [{ topic: "cloudv2", ts: 1200 }],
+      run: { is_active: true },
+    });
+    assert.equal(referenceTs, 2000);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("connectivity: historical run keeps persisted timestamp as the current reference", () => {
+  const originalNow = Date.now;
+  Date.now = () => 5_000_000;
+  try {
+    const referenceTs = _test.resolveTimelineReferenceNowTs({
+      updated_at_ts: 1200,
+      timeline: [{ topic: "cloudv2", ts: 1300 }],
+      run: { is_active: false },
+    });
+    assert.equal(referenceTs, 1300);
+  } finally {
+    Date.now = originalNow;
+  }
+});
