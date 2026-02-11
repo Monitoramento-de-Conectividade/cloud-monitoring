@@ -28,6 +28,29 @@ def _safe_float(value, default=None):
         return default
 
 
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_bool(value, default=None):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "sim"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "nao", "não"}:
+            return False
+    return default
+
+
 class TelemetryPersistence:
     def __init__(self, db_path=None, migrations_dir=None, max_events_per_pivot=5000, log=None):
         self.db_path = str(db_path or DEFAULT_DB_PATH)
@@ -987,6 +1010,13 @@ class TelemetryPersistence:
         quality_code = str(quality.get("code") or "")
         last_activity_ts = _safe_float(summary.get("last_activity_ts"), None)
         last_seen_ts = _safe_float(summary.get("last_monitored_message_ts"), None)
+        median_ready_value = _safe_bool(summary.get("median_ready"), None)
+        median_ready = None if median_ready_value is None else int(median_ready_value)
+        median_sample_count = _safe_int(summary.get("median_sample_count"), None)
+        if median_sample_count is not None and median_sample_count < 0:
+            median_sample_count = 0
+        median_cloudv2_interval_sec = _safe_float(summary.get("median_cloudv2_interval_sec"), None)
+        disconnect_threshold_sec = _safe_float(summary.get("disconnect_threshold_sec"), None)
         ts_value = _safe_float(updated_at_ts, None)
         if ts_value is None:
             ts_value = _safe_float(snapshot.get("updated_at_ts"), None)
@@ -1006,14 +1036,22 @@ class TelemetryPersistence:
                         quality_code,
                         last_activity_ts,
                         last_seen_ts,
+                        median_ready,
+                        median_sample_count,
+                        median_cloudv2_interval_sec,
+                        disconnect_threshold_sec,
                         snapshot_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(pivot_id, session_id) DO UPDATE SET
                         updated_at_ts = excluded.updated_at_ts,
                         status_code = excluded.status_code,
                         quality_code = excluded.quality_code,
                         last_activity_ts = excluded.last_activity_ts,
                         last_seen_ts = excluded.last_seen_ts,
+                        median_ready = COALESCE(excluded.median_ready, pivot_snapshots.median_ready),
+                        median_sample_count = COALESCE(excluded.median_sample_count, pivot_snapshots.median_sample_count),
+                        median_cloudv2_interval_sec = COALESCE(excluded.median_cloudv2_interval_sec, pivot_snapshots.median_cloudv2_interval_sec),
+                        disconnect_threshold_sec = COALESCE(excluded.disconnect_threshold_sec, pivot_snapshots.disconnect_threshold_sec),
                         snapshot_json = excluded.snapshot_json
                     """,
                     (
@@ -1024,6 +1062,10 @@ class TelemetryPersistence:
                         quality_code,
                         last_activity_ts,
                         last_seen_ts,
+                        median_ready,
+                        median_sample_count,
+                        median_cloudv2_interval_sec,
+                        disconnect_threshold_sec,
                         self._json_dumps(snapshot),
                     ),
                 )
@@ -1641,19 +1683,64 @@ class TelemetryPersistence:
 
         pivot_slug = str(snapshot_payload.get("pivot_slug") or slugify(pivot_id))
         summary = snapshot_payload.get("summary")
-        if not isinstance(summary, dict):
-            return self._fallback_state_pivot_summary(
+        if isinstance(summary, dict):
+            item = dict(summary)
+        else:
+            item = self._fallback_state_pivot_summary(
                 pivot_id=pivot_id,
                 pivot_slug=pivot_slug,
                 session_id=session_id,
                 run_id=run_id,
             )
-
-        item = dict(summary)
         item["pivot_id"] = str(item.get("pivot_id") or pivot_id)
         item["pivot_slug"] = str(item.get("pivot_slug") or pivot_slug)
         item["session_id"] = str(item.get("session_id") or session_id)
         item["run_id"] = str(item.get("run_id") or run_id or "")
+
+        parsed = _safe_bool(item.get("median_ready"), None)
+        if parsed is None:
+            item.pop("median_ready", None)
+        else:
+            item["median_ready"] = parsed
+        parsed = _safe_int(item.get("median_sample_count"), None)
+        if parsed is None:
+            item.pop("median_sample_count", None)
+        else:
+            item["median_sample_count"] = max(0, parsed)
+        parsed = _safe_float(item.get("median_cloudv2_interval_sec"), None)
+        if parsed is None:
+            item.pop("median_cloudv2_interval_sec", None)
+        else:
+            item["median_cloudv2_interval_sec"] = parsed
+        parsed = _safe_float(item.get("disconnect_threshold_sec"), None)
+        if parsed is None:
+            item.pop("disconnect_threshold_sec", None)
+        else:
+            item["disconnect_threshold_sec"] = parsed
+
+        row_keys = set(row.keys()) if hasattr(row, "keys") else set()
+        if "snapshot_median_ready" in row_keys:
+            parsed = _safe_bool(row["snapshot_median_ready"], None)
+            if parsed is not None:
+                item["median_ready"] = parsed
+        if "snapshot_median_sample_count" in row_keys:
+            parsed = _safe_int(row["snapshot_median_sample_count"], None)
+            if parsed is not None:
+                item["median_sample_count"] = max(0, parsed)
+        if "snapshot_median_cloudv2_interval_sec" in row_keys:
+            parsed = _safe_float(row["snapshot_median_cloudv2_interval_sec"], None)
+            if parsed is not None:
+                item["median_cloudv2_interval_sec"] = parsed
+        if "snapshot_disconnect_threshold_sec" in row_keys:
+            parsed = _safe_float(row["snapshot_disconnect_threshold_sec"], None)
+            if parsed is not None:
+                item["disconnect_threshold_sec"] = parsed
+
+        if "median_ready" not in item:
+            item["median_ready"] = False
+        if "median_sample_count" not in item:
+            item["median_sample_count"] = 0
+
         if not isinstance(item.get("status"), dict):
             item["status"] = {
                 "code": "gray",
@@ -1697,6 +1784,10 @@ class TelemetryPersistence:
                     sessions.session_id,
                     sessions.updated_at_ts AS session_updated_at_ts,
                     snapshots.snapshot_json,
+                    snapshots.median_ready AS snapshot_median_ready,
+                    snapshots.median_sample_count AS snapshot_median_sample_count,
+                    snapshots.median_cloudv2_interval_sec AS snapshot_median_cloudv2_interval_sec,
+                    snapshots.disconnect_threshold_sec AS snapshot_disconnect_threshold_sec,
                     snapshots.updated_at_ts AS snapshot_updated_at_ts
                 FROM monitoring_sessions AS sessions
                 LEFT JOIN pivot_snapshots AS snapshots
