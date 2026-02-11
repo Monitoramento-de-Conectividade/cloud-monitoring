@@ -23,6 +23,29 @@ DASHBOARD_DIR = resolve_web_dir()
 DATA_DIR = resolve_data_dir(DASHBOARD_DIR)
 
 
+def _parse_csv_env(value):
+    items = []
+    raw_text = str(value or "")
+    for chunk in raw_text.replace("\n", ",").split(","):
+        normalized = str(chunk or "").strip()
+        if not normalized:
+            continue
+        if normalized not in items:
+            items.append(normalized)
+    return items
+
+
+def _normalize_cookie_samesite(value, fallback="Lax"):
+    normalized = str(value or "").strip().lower()
+    if normalized == "strict":
+        return "Strict"
+    if normalized == "none":
+        return "None"
+    if normalized == "lax":
+        return "Lax"
+    return str(fallback or "Lax")
+
+
 def _data_dir_has_files(path):
     if not os.path.isdir(path):
         return False
@@ -198,6 +221,13 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         "/auth/resend-verification": (5, 600),
         "/auth/forgot-password": (5, 600),
     }
+    cookie_samesite = _normalize_cookie_samesite(
+        os.environ.get("AUTH_COOKIE_SAMESITE", "Lax"),
+        fallback="Lax",
+    )
+    cors_origins = _parse_csv_env(os.environ.get("CORS_ALLOWED_ORIGINS", ""))
+    cors_allow_any_origin = "*" in cors_origins
+    cors_allowed_origins = {origin for origin in cors_origins if origin != "*"}
 
     class DashboardHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -206,6 +236,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         def _write_json(self, status_code, payload, extra_headers=None, cookies=None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status_code)
+            self._write_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             if extra_headers:
@@ -221,6 +252,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         def _write_text(self, status_code, content_type, body_text):
             body = str(body_text or "").encode("utf-8")
             self.send_response(status_code)
+            self._write_cors_headers()
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
@@ -229,6 +261,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
         def _redirect(self, location, cookies=None):
             self.send_response(302)
+            self._write_cors_headers()
             self.send_header("Location", str(location))
             self.send_header("Cache-Control", "no-store")
             if cookies:
@@ -252,6 +285,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 content_type = f"{content_type}; charset=utf-8"
 
             self.send_response(200)
+            self._write_cors_headers()
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
@@ -289,6 +323,24 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return safe_path in unverified_allowed_post
             return False
 
+        def _resolve_cors_origin(self):
+            origin = str(self.headers.get("Origin", "")).strip()
+            if not origin:
+                return ""
+            if cors_allow_any_origin:
+                return origin
+            if origin in cors_allowed_origins:
+                return origin
+            return ""
+
+        def _write_cors_headers(self, resolved_origin=None):
+            origin = str(resolved_origin or self._resolve_cors_origin() or "").strip()
+            if not origin:
+                return
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
+
         def _get_raw_session_token(self):
             raw_cookie = str(self.headers.get("Cookie", "") or "")
             if not raw_cookie.strip():
@@ -322,26 +374,28 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
         def _build_session_cookie(self, session_token, max_age=None):
             ttl = int(max_age or SESSION_TTL_SEC)
+            secure_cookie = self._request_is_secure() or (cookie_samesite == "None")
             parts = [
                 f"{SESSION_COOKIE_NAME}={str(session_token or '').strip()}",
                 "Path=/",
                 "HttpOnly",
-                "SameSite=Lax",
+                f"SameSite={cookie_samesite}",
                 f"Max-Age={max(0, ttl)}",
             ]
-            if self._request_is_secure():
+            if secure_cookie:
                 parts.append("Secure")
             return "; ".join(parts)
 
         def _build_clear_session_cookie(self):
+            secure_cookie = self._request_is_secure() or (cookie_samesite == "None")
             parts = [
                 f"{SESSION_COOKIE_NAME}=",
                 "Path=/",
                 "HttpOnly",
-                "SameSite=Lax",
+                f"SameSite={cookie_samesite}",
                 "Max-Age=0",
             ]
-            if self._request_is_secure():
+            if secure_cookie:
                 parts.append("Secure")
             return "; ".join(parts)
 
@@ -593,6 +647,43 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return True
 
             return False
+
+        def do_OPTIONS(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            allows_cors = (
+                self._is_api_path(path)
+                or self._is_public_path(path, "GET")
+                or self._is_public_path(path, "POST")
+                or self._is_allowed_for_unverified(path, "GET")
+                or self._is_allowed_for_unverified(path, "POST")
+            )
+            if not allows_cors:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            origin = self._resolve_cors_origin()
+            if not origin:
+                self.send_response(403)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+
+            self.send_response(204)
+            self._write_cors_headers(origin)
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            requested_headers = str(self.headers.get("Access-Control-Request-Headers", "")).strip()
+            if requested_headers:
+                self.send_header("Access-Control-Allow-Headers", requested_headers)
+                self.send_header("Vary", "Access-Control-Request-Headers")
+            else:
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_GET(self):
             parsed = urlparse(self.path)

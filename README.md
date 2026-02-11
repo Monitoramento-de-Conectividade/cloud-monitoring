@@ -215,3 +215,36 @@ Campos importantes em `cloudv2-config.json`:
 Notas:
 - Em Render, `PORT` e reservado para HTTP do dashboard.
 - Para mudar a porta MQTT por variavel de ambiente, use `MQTT_PORT`.
+
+## Split deploy: backend AWS + frontend Render
+
+Sim, a estrutura atual permite separar:
+- backend (MQTT + SQLite + API/auth) rodando 24/7 em VM AWS;
+- frontend estatico no Render consumindo API do backend.
+
+### 1) Backend na AWS (VM)
+
+- Rode o monitor como servico (ex.: systemd) com `python backend/run_monitor.py`.
+- Publique o HTTP com HTTPS (Nginx/Caddy + dominio), por exemplo `https://api.seudominio.com`.
+- Configure variaveis importantes:
+  - `CORS_ALLOWED_ORIGINS=https://seu-frontend.onrender.com`
+  - `AUTH_COOKIE_SAMESITE=None`
+  - `AUTH_COOKIE_SECURE=1`
+  - `AUTH_BASE_URL=https://api.seudominio.com`
+  - `CLOUDV2_DEV_HOT_RELOAD=0`
+
+### 2) Frontend no Render
+
+- Publique apenas a pasta `frontend/` como site estatico.
+- Configure `frontend/runtime-config.js`:
+
+```js
+window.CLOUDV2_API_BASE_URL = "https://api.seudominio.com";
+```
+
+### 3) Observacoes de autenticacao
+
+- Em split de dominio (Render <> AWS), login usa cookie cross-site:
+  - frontend envia `credentials: include`;
+  - backend responde com CORS restrito e cookie `SameSite=None; Secure`.
+- Se quiser manter tudo em mesma origem (sem CORS/cookie cross-site), use proxy reverso para servir frontend e API no mesmo dominio.

@@ -1,4 +1,33 @@
 const HAS_DOM = typeof document !== "undefined";
+const HAS_WINDOW = typeof window !== "undefined";
+
+function resolveApiBaseUrl() {
+  if (!HAS_WINDOW) return "";
+  const fromGlobal = String(window.CLOUDV2_API_BASE_URL || "").trim();
+  if (fromGlobal) {
+    return fromGlobal.replace(/\/+$/, "");
+  }
+  if (!HAS_DOM) return "";
+  const meta = document.querySelector('meta[name="cloudv2-api-base-url"]');
+  if (!meta) return "";
+  const fromMeta = String(meta.getAttribute("content") || "").trim();
+  return fromMeta.replace(/\/+$/, "");
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
+
+function buildApiUrl(url) {
+  const normalized = String(url || "").trim();
+  if (!normalized) return normalized;
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (!normalized.startsWith("/")) return normalized;
+  const isApiPath =
+    normalized.startsWith("/api/")
+    || normalized.startsWith("/auth/")
+    || normalized.startsWith("/account/");
+  if (!isApiPath || !API_BASE_URL) return normalized;
+  return `${API_BASE_URL}${normalized}`;
+}
 
 const ui = HAS_DOM
   ? {
@@ -376,8 +405,9 @@ function showToast(message, level = "success", ttlMs = 3200) {
 }
 
 async function getJson(url) {
-  const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, {
-    credentials: "same-origin",
+  const targetUrl = buildApiUrl(url);
+  const response = await fetch(`${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+    credentials: "include",
   });
   let payload = {};
   try {
@@ -492,9 +522,10 @@ async function applyMonitoringSessionAction() {
   if (state.sessionAction === "new") {
     ui.sessionApply.disabled = true;
     try {
-      const response = await fetch("/api/monitoring/runs", {
+      const response = await fetch(buildApiUrl("/api/monitoring/runs"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ source: "ui_header_global" }),
       });
       const data = await response.json();
@@ -524,9 +555,10 @@ async function applyMonitoringSessionAction() {
   }
   ui.sessionApply.disabled = true;
   try {
-    const response = await fetch("/api/monitoring/history", {
+    const response = await fetch(buildApiUrl("/api/monitoring/history"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ run_id: selectedRunId, source: "ui_header_global" }),
     });
     const data = await response.json();
@@ -561,9 +593,10 @@ async function purgeDatabaseRecords() {
 
   ui.purgeDatabase.disabled = true;
   try {
-    const response = await fetch("/api/admin/purge-database", {
+    const response = await fetch(buildApiUrl("/api/admin/purge-database"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({
         password: normalizedPassword,
         source: "ui_header_global",
@@ -1848,9 +1881,10 @@ async function saveProbeSetting() {
 
   ui.saveProbe.disabled = true;
   try {
-    const response = await fetch("/api/probe-config", {
+    const response = await fetch(buildApiUrl("/api/probe-config"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(payload),
     });
     const data = await response.json();

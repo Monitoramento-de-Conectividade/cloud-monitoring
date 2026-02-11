@@ -1,6 +1,36 @@
 (function () {
   const page = String(document.body.dataset.authPage || "").trim();
   const statusEl = document.getElementById("statusMessage");
+  const HAS_DOM = typeof document !== "undefined";
+  const HAS_WINDOW = typeof window !== "undefined";
+
+  function resolveApiBaseUrl() {
+    if (!HAS_WINDOW) return "";
+    const fromGlobal = String(window.CLOUDV2_API_BASE_URL || "").trim();
+    if (fromGlobal) {
+      return fromGlobal.replace(/\/+$/, "");
+    }
+    if (!HAS_DOM) return "";
+    const meta = document.querySelector('meta[name="cloudv2-api-base-url"]');
+    if (!meta) return "";
+    const fromMeta = String(meta.getAttribute("content") || "").trim();
+    return fromMeta.replace(/\/+$/, "");
+  }
+
+  const API_BASE_URL = resolveApiBaseUrl();
+
+  function buildApiUrl(url) {
+    const normalized = String(url || "").trim();
+    if (!normalized) return normalized;
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    if (!normalized.startsWith("/")) return normalized;
+    const isApiPath =
+      normalized.startsWith("/api/")
+      || normalized.startsWith("/auth/")
+      || normalized.startsWith("/account/");
+    if (!isApiPath || !API_BASE_URL) return normalized;
+    return `${API_BASE_URL}${normalized}`;
+  }
 
   function setStatus(message, tone) {
     if (!statusEl) return;
@@ -43,10 +73,10 @@
   }
 
   async function postJson(url, payload) {
-    const response = await fetch(url, {
+    const response = await fetch(buildApiUrl(url), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
+      credentials: "include",
       body: JSON.stringify(payload || {}),
     });
     const data = await safeJson(response);
@@ -54,9 +84,9 @@
   }
 
   async function getJson(url) {
-    const response = await fetch(url, {
+    const response = await fetch(buildApiUrl(url), {
       method: "GET",
-      credentials: "same-origin",
+      credentials: "include",
     });
     const data = await safeJson(response);
     return { response, data };
