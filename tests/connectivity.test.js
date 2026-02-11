@@ -72,3 +72,26 @@ test("connectivity: historical run keeps persisted timestamp as the current refe
     Date.now = originalNow;
   }
 });
+
+test("display: status is forced to inicial when connectivity is em analise", () => {
+  const item = {
+    pivot_id: "PivotA",
+    status: { code: "green", reason: "Conectividade dentro do esperado." },
+    quality: { code: "calculating", reason: "Coletando dados para avaliar a conectividade." },
+  };
+
+  const status = _test.getDisplayStatus(item);
+  assert.equal(status.code, "gray");
+  assert.equal(status.label, "Inicial");
+});
+
+test("display: status keeps timeline-derived value when connectivity is not em analise", () => {
+  const item = {
+    pivot_id: "PivotB",
+    status: { code: "red", reason: "Sem comunicaÃ§Ã£o recente." },
+    quality: { code: "yellow", reason: "Conectividade instÃ¡vel no perÃ­odo selecionado." },
+  };
+
+  const status = _test.getDisplayStatus(item);
+  assert.equal(status.code, "red");
+});

@@ -431,9 +431,10 @@ function buildEventDetailsText(event) {
 }
 
 function getDisplayQuality(item) {
+  const baseQuality = resolveQualityBase(item);
   const pivotId = text((item || {}).pivot_id, "").trim();
   const override = pivotId ? state.qualityOverridesByPivotId[pivotId] : null;
-  const base = override || ((item || {}).quality || {});
+  const base = override || baseQuality;
   const displayStatus = getDisplayStatus(item);
   const statusCode = text(displayStatus.code, "gray");
   const statusReason = sanitizeUserText(displayStatus.reason);
@@ -458,7 +459,24 @@ function getDisplayQuality(item) {
   };
 }
 
+function resolveQualityBase(item) {
+  const pivotId = text((item || {}).pivot_id, "").trim();
+  const override = pivotId ? state.qualityOverridesByPivotId[pivotId] : null;
+  return override || ((item || {}).quality || {});
+}
+
 function getDisplayStatus(item) {
+  const qualityBase = resolveQualityBase(item);
+  const qualityCode = text((qualityBase || {}).code, "").trim().toLowerCase();
+  if (qualityCode === "calculating") {
+    return {
+      code: "gray",
+      label: STATUS_META.gray.label,
+      reason: "Conectividade em análise.",
+      rank: Number(STATUS_META.gray.rank ?? 99),
+    };
+  }
+
   const pivotId = text((item || {}).pivot_id, "").trim();
   const override = pivotId ? state.statusOverridesByPivotId[pivotId] : null;
   const base = override || ((item || {}).status || {});
@@ -2155,6 +2173,8 @@ if (HAS_DOM) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     _test: {
+      getDisplayStatus,
+      getDisplayQuality,
       resolveTimelineReferenceNowTs,
       resolveDisconnectThresholdSec,
       buildConnectivitySegments,
