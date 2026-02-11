@@ -196,46 +196,42 @@ Campos importantes em `cloudv2-config.json`:
 - Variável opcional:
   - `CLOUDV2_WEB_DIR` para forçar o diretório do frontend servido pelo backend.
 
-## Deploy no Render (quick start)
+## Deploy no Vercel (quick start)
 
-1. Configure o servico `Web Service` com:
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `python backend/run_monitor.py`
-   - Health check path: `/login`
-2. Configure os secrets:
-   - `CA_CERT_CONTENT`
-   - `CLIENT_CERT_CONTENT`
-   - `CLIENT_KEY_CONTENT`
-3. Configure variaveis de runtime (opcionais):
-   - `BROKER` (default ja vem no `cloudv2-config.json`)
-   - `MQTT_PORT` (porta MQTT, default `8883`)
-   - `DASHBOARD_PORT` (se quiser forcar; no Render usa `PORT` automaticamente)
-   - `CLOUDV2_DEV_HOT_RELOAD=0` (recomendado em producao)
+1. Crie um projeto no Vercel com:
+   - Framework preset: `Other`
+   - Root Directory: `frontend`
+   - Build Command: vazio
+   - Output Directory: `.`
+2. Versione `frontend/vercel.json` para rewrites das rotas:
+   - `/login`, `/register`, `/verify-email`, `/forgot-password`, `/reset-password`, `/privacy-policy`
+3. Configure `frontend/runtime-config.js`:
 
-Notas:
-- Em Render, `PORT` e reservado para HTTP do dashboard.
-- Para mudar a porta MQTT por variavel de ambiente, use `MQTT_PORT`.
+```js
+window.CLOUDV2_API_BASE_URL = "https://SEU_BACKEND_API";
+```
 
-## Split deploy: backend AWS + frontend Render
+## Split deploy: backend AWS + frontend Vercel
 
 Sim, a estrutura atual permite separar:
 - backend (MQTT + SQLite + API/auth) rodando 24/7 em VM AWS;
-- frontend estatico no Render consumindo API do backend.
+- frontend estatico no Vercel consumindo API do backend.
 
 ### 1) Backend na AWS (VM)
 
 - Rode o monitor como servico (ex.: systemd) com `python backend/run_monitor.py`.
 - Publique o HTTP com HTTPS (Nginx/Caddy + dominio), por exemplo `https://api.seudominio.com`.
 - Configure variaveis importantes:
-  - `CORS_ALLOWED_ORIGINS=https://seu-frontend.onrender.com`
+  - `CORS_ALLOWED_ORIGINS=https://seu-frontend.vercel.app`
   - `AUTH_COOKIE_SAMESITE=None`
   - `AUTH_COOKIE_SECURE=1`
   - `AUTH_BASE_URL=https://api.seudominio.com`
   - `CLOUDV2_DEV_HOT_RELOAD=0`
 
-### 2) Frontend no Render
+### 2) Frontend no Vercel
 
-- Publique apenas a pasta `frontend/` como site estatico.
+- Publique apenas a pasta `frontend/` no projeto Vercel.
+- Use `frontend/vercel.json` para rotas amigaveis.
 - Configure `frontend/runtime-config.js`:
 
 ```js
@@ -244,7 +240,7 @@ window.CLOUDV2_API_BASE_URL = "https://api.seudominio.com";
 
 ### 3) Observacoes de autenticacao
 
-- Em split de dominio (Render <> AWS), login usa cookie cross-site:
+- Em split de dominio (Vercel <> AWS), login usa cookie cross-site:
   - frontend envia `credentials: include`;
   - backend responde com CORS restrito e cookie `SameSite=None; Secure`.
 - Se quiser manter tudo em mesma origem (sem CORS/cookie cross-site), use proxy reverso para servir frontend e API no mesmo dominio.
@@ -273,7 +269,7 @@ Edite `.env.backend` com seus dados reais.
 Se quiser evitar edicao manual de `.env.backend`, use:
 
 ```bash
-FRONTEND_URL=https://cloud-monitoring.onrender.com \
+FRONTEND_URL=https://SEU_FRONTEND.vercel.app \
 BACKEND_URL=https://SEU_BACKEND_API \
 ADMIN_EMAIL=eduardocostar03@gmail.com \
 ADMIN_PASSWORD='SUA_SENHA_FORTE' \
@@ -303,9 +299,9 @@ O container usa `restart: unless-stopped`, então volta sozinho após reboot da 
 BRANCH=main APP_DIR=$HOME/cloud-monitoring bash scripts/ec2-deploy-backend.sh
 ```
 
-### 4) Variáveis essenciais para frontend no Render
+### 4) Variáveis essenciais para frontend no Vercel
 
-- `CORS_ALLOWED_ORIGINS=https://SEU_FRONTEND.onrender.com`
+- `CORS_ALLOWED_ORIGINS=https://SEU_FRONTEND.vercel.app`
 - `AUTH_COOKIE_SAMESITE=None`
 - `AUTH_COOKIE_SECURE=1`
 - `AUTH_BASE_URL=https://SEU_BACKEND_API`
@@ -322,10 +318,13 @@ Importante: para cookie cross-site funcionar no login, a API da AWS deve estar e
 
 Workflow incluído: `.github/workflows/deploy-aws-backend.yml`.
 
-Secrets necessários no GitHub:
+Secrets obrigatórios no GitHub:
 - `AWS_EC2_HOST`
 - `AWS_EC2_USER`
 - `AWS_EC2_SSH_KEY`
+- `VERCEL_FRONTEND_DEPLOY_HOOK_URL`
+
+Secrets opcionais no GitHub:
 - opcional: `AWS_EC2_PORT` (default `22`)
 - opcional: `AWS_EC2_APP_DIR` (default `$HOME/cloud-monitoring`)
 - opcional: `AWS_REPO_URL`

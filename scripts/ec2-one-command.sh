@@ -9,7 +9,7 @@ BACKEND_PUBLIC_PORT="${BACKEND_PUBLIC_PORT:-8008}"
 BROKER="${BROKER:-a19mijesri84u2-ats.iot.us-east-1.amazonaws.com}"
 MQTT_PORT="${MQTT_PORT:-8883}"
 
-FRONTEND_URL="${FRONTEND_URL:-https://cloud-monitoring.onrender.com}"
+FRONTEND_URL="${FRONTEND_URL:-https://SEU_FRONTEND.vercel.app}"
 BACKEND_URL="${BACKEND_URL:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
