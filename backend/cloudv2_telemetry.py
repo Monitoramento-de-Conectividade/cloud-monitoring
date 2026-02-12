@@ -284,8 +284,17 @@ class TelemetryStore:
                     pivot["session_id"] = session_id
                     pivot["run_id"] = self._active_run_id
                     self._backfill_pivot_session_locked(pivot)
+                    # Em restart, evita sobrescrever snapshot valido ja persistido
+                    # com estado parcial carregado do runtime_store.
+                    has_persisted_snapshot = False
+                    if self.history_mode == "merge":
+                        try:
+                            has_persisted_snapshot = self.persistence.has_snapshot(pivot_id, session_id)
+                        except RuntimeError:
+                            has_persisted_snapshot = False
                     self._refresh_status_locked(pivot, now)
-                    self._persist_pivot_snapshot_locked(pivot, now)
+                    if not has_persisted_snapshot:
+                        self._persist_pivot_snapshot_locked(pivot, now)
 
                 self._dirty = True
             self.write()
