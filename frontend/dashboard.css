@@ -1146,6 +1146,30 @@ a:focus {
   overflow-x: auto;
 }
 
+.admin-users-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-users-table td:last-child {
+  width: 110px;
+}
+
+.danger-inline {
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid #d9a5a0;
+  background: #fff3f1;
+  color: #a43b2d;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.danger-inline:hover:not(:disabled) {
+  background: #ffe5e1;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

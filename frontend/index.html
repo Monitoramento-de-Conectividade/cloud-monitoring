@@ -41,6 +41,32 @@
       </div>
     </header>
 
+    <section id="adminUsersPanel" class="panel admin-users-panel" hidden>
+      <div class="panel-head block">
+        <div>
+          <h2>Gerenciar contas</h2>
+          <p class="section-copy">Somente o administrador pode listar e deletar contas de usuario.</p>
+        </div>
+        <button id="adminUsersRefresh" class="ghost" type="button">Atualizar lista</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-users-table">
+          <thead>
+            <tr>
+              <th>E-mail</th>
+              <th>Nome</th>
+              <th>Perfil</th>
+              <th>Status</th>
+              <th>Ultimo login</th>
+              <th>Acao</th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersTable"></tbody>
+        </table>
+      </div>
+      <p id="adminUsersEmpty" class="hint" hidden>Nenhuma conta de usuario encontrada.</p>
+    </section>
+
     <section id="overviewSection" class="panel controls">
       <div class="panel-head block">
         <div>

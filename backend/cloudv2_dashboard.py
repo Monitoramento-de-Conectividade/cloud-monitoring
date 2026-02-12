@@ -324,7 +324,11 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
         def _is_api_path(self, path):
             normalized = str(path or "").strip()
-            return normalized.startswith("/api/") or normalized in ("/auth/me", "/account/export", "/account/delete")
+            return (
+                normalized.startswith("/api/")
+                or normalized.startswith("/admin/")
+                or normalized in ("/auth/me", "/account/export", "/account/delete")
+            )
 
         def _is_public_path(self, path, method):
             safe_method = str(method or "").upper()
@@ -511,6 +515,22 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 )
                 return True
 
+            if path == "/admin/users":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."})
+                    return True
+
+                current_user = (auth_context or {}).get("user") or {}
+                current_role = str(current_user.get("role") or "user").strip().lower()
+                if current_role != "admin":
+                    self._write_json(403, {"ok": False, "code": "admin_required", "message": "Acesso restrito ao administrador."})
+                    return True
+
+                result = auth_service.list_users_for_admin((auth_context or {}).get("session_user_id"))
+                status_code = 200 if result.get("ok") else 403
+                self._write_json(status_code, result)
+                return True
+
             if path == "/account/export":
                 if not auth_context:
                     self._write_json(401, {"ok": False, "code": "auth_required", "redirect": "/login"})
@@ -652,6 +672,14 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 if not auth_context:
                     self._write_json(401, {"ok": False, "code": "auth_required", "redirect": "/login"})
                     return True
+                current_user = (auth_context or {}).get("user") or {}
+                current_role = str(current_user.get("role") or "user").strip().lower()
+                if current_role == "admin":
+                    self._write_json(
+                        403,
+                        {"ok": False, "code": "admin_protected", "message": "Conta de administrador nao pode ser excluida."},
+                    )
+                    return True
                 deleted = auth_service.delete_account((auth_context or {}).get("session_user_id"))
                 auth_service.logout_session(self._get_raw_session_token())
                 if not deleted:
@@ -666,6 +694,35 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                     {"ok": True, "message": "Conta excluida com sucesso."},
                     cookies=[self._build_clear_session_cookie()],
                 )
+                return True
+
+            if path == "/admin/users/delete":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."})
+                    return True
+
+                current_user = (auth_context or {}).get("user") or {}
+                current_role = str(current_user.get("role") or "user").strip().lower()
+                if current_role != "admin":
+                    self._write_json(403, {"ok": False, "code": "admin_required", "message": "Acesso restrito ao administrador."})
+                    return True
+
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return True
+
+                result = auth_service.admin_delete_user(
+                    admin_user_id=(auth_context or {}).get("session_user_id"),
+                    target_user_id=body.get("user_id"),
+                )
+                status_code = 200 if result.get("ok") else 400
+                if result.get("code") == "admin_required":
+                    status_code = 403
+                if result.get("code") == "not_found":
+                    status_code = 404
+                self._write_json(status_code, result)
                 return True
 
             return False

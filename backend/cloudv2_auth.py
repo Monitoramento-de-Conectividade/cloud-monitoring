@@ -1199,6 +1199,127 @@ class AuthService:
             },
         }
 
+    def _is_active_admin_row(self, row):
+        if row is None:
+            return False
+        if row["deleted_at"] is not None:
+            return False
+        if str(row["status"] or "active") != "active":
+            return False
+        role = str(row["role"] or "user").strip().lower()
+        return role == "admin"
+
+    def list_users_for_admin(self, admin_user_id, limit=200):
+        normalized_admin_id = str(admin_user_id or "").strip()
+        if not normalized_admin_id:
+            return {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."}
+
+        try:
+            safe_limit = int(limit or 200)
+        except (TypeError, ValueError):
+            safe_limit = 200
+        safe_limit = max(1, min(500, safe_limit))
+
+        with self._connect() as conn:
+            admin_row = conn.execute(
+                """
+                SELECT id, email, role, status, deleted_at
+                FROM users
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (normalized_admin_id,),
+            ).fetchone()
+            if not self._is_active_admin_row(admin_row):
+                return {"ok": False, "code": "admin_required", "message": "Acesso restrito ao administrador."}
+
+            user_rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    email,
+                    name,
+                    role,
+                    status,
+                    created_at,
+                    updated_at,
+                    last_login_at
+                FROM users
+                WHERE deleted_at IS NULL
+                    AND LOWER(COALESCE(role, 'user')) <> 'admin'
+                    AND LOWER(email) <> ?
+                ORDER BY COALESCE(updated_at, created_at) DESC
+                LIMIT ?
+                """,
+                (FIXED_ADMIN_EMAIL, safe_limit),
+            ).fetchall()
+
+        users = []
+        for row in user_rows:
+            users.append(
+                {
+                    "id": str(row["id"]),
+                    "email": str(row["email"] or "").strip().lower(),
+                    "name": str(row["name"] or "").strip(),
+                    "role": str(row["role"] or "user").strip().lower() or "user",
+                    "status": str(row["status"] or "active").strip().lower() or "active",
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "last_login_at": row["last_login_at"],
+                }
+            )
+
+        return {"ok": True, "code": "ok", "users": users}
+
+    def admin_delete_user(self, admin_user_id, target_user_id):
+        normalized_admin_id = str(admin_user_id or "").strip()
+        normalized_target_id = str(target_user_id or "").strip()
+        if not normalized_admin_id:
+            return {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."}
+        if not normalized_target_id:
+            return {"ok": False, "code": "invalid_target", "message": "Conta alvo invalida."}
+
+        with self._connect() as conn:
+            admin_row = conn.execute(
+                """
+                SELECT id, email, role, status, deleted_at
+                FROM users
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (normalized_admin_id,),
+            ).fetchone()
+            if not self._is_active_admin_row(admin_row):
+                return {"ok": False, "code": "admin_required", "message": "Acesso restrito ao administrador."}
+
+            target_row = conn.execute(
+                """
+                SELECT id, email, role, status, deleted_at
+                FROM users
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (normalized_target_id,),
+            ).fetchone()
+
+        if target_row is None or target_row["deleted_at"] is not None:
+            return {"ok": False, "code": "not_found", "message": "Conta nao encontrada."}
+
+        target_role = str(target_row["role"] or "user").strip().lower()
+        target_email = str(target_row["email"] or "").strip().lower()
+        if (
+            normalized_target_id == normalized_admin_id
+            or target_role == "admin"
+            or target_email == FIXED_ADMIN_EMAIL
+        ):
+            return {"ok": False, "code": "admin_protected", "message": "Conta de administrador nao pode ser excluida."}
+
+        deleted = self.delete_account(normalized_target_id)
+        if not deleted:
+            return {"ok": False, "code": "not_found", "message": "Conta nao encontrada."}
+
+        return {"ok": True, "code": "deleted", "message": "Conta excluida com sucesso."}
+
     def delete_account(self, user_id):
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
@@ -1208,7 +1329,7 @@ class AuthService:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id
+                SELECT id, email, role
                 FROM users
                 WHERE id = ?
                 LIMIT 1
@@ -1216,6 +1337,10 @@ class AuthService:
                 (normalized_user_id,),
             ).fetchone()
             if row is None:
+                return False
+            row_role = str(row["role"] or "user").strip().lower()
+            row_email = str(row["email"] or "").strip().lower()
+            if row_role == "admin" or row_email == FIXED_ADMIN_EMAIL:
                 return False
 
             anonymized_email = f"deleted-{normalized_user_id[:8]}-{int(now_ts)}-{uuid.uuid4().hex[:8]}@anon.invalid"

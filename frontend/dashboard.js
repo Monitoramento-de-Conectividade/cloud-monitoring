@@ -24,7 +24,8 @@ function buildApiUrl(url) {
   const isApiPath =
     normalized.startsWith("/api/")
     || normalized.startsWith("/auth/")
-    || normalized.startsWith("/account/");
+    || normalized.startsWith("/account/")
+    || normalized.startsWith("/admin/");
   if (!isApiPath || !API_BASE_URL) return normalized;
   return `${API_BASE_URL}${normalized}`;
 }
@@ -35,6 +36,10 @@ const ui = HAS_DOM
       countsMeta: document.getElementById("countsMeta"),
       logoutBtn: document.getElementById("logoutBtn"),
       adminCreateAccountLink: document.getElementById("adminCreateAccountLink"),
+      adminUsersPanel: document.getElementById("adminUsersPanel"),
+      adminUsersRefresh: document.getElementById("adminUsersRefresh"),
+      adminUsersTable: document.getElementById("adminUsersTable"),
+      adminUsersEmpty: document.getElementById("adminUsersEmpty"),
       searchInput: document.getElementById("searchInput"),
       sortSelect: document.getElementById("sortSelect"),
       clearFilters: document.getElementById("clearFilters"),
@@ -136,6 +141,7 @@ const state = {
   panelRunMeta: null,
   refreshInFlight: false,
   authUserRole: "user",
+  adminUsers: [],
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
@@ -2066,8 +2072,116 @@ async function deleteSelectedPivot() {
 
 function syncAdminControls() {
   const role = String(state.authUserRole || "user").trim().toLowerCase();
+  const isAdmin = role === "admin";
   if (ui.adminCreateAccountLink) {
-    ui.adminCreateAccountLink.hidden = role !== "admin";
+    ui.adminCreateAccountLink.hidden = !isAdmin;
+  }
+  if (ui.adminUsersPanel) {
+    ui.adminUsersPanel.hidden = !isAdmin;
+  }
+  if (!isAdmin) {
+    state.adminUsers = [];
+    renderAdminUsers();
+  }
+}
+
+function renderAdminUsers() {
+  if (!ui.adminUsersTable || !ui.adminUsersEmpty) return;
+
+  const role = String(state.authUserRole || "user").trim().toLowerCase();
+  if (role !== "admin") {
+    ui.adminUsersTable.innerHTML = "";
+    ui.adminUsersEmpty.hidden = true;
+    return;
+  }
+
+  const users = Array.isArray(state.adminUsers) ? state.adminUsers : [];
+  if (!users.length) {
+    ui.adminUsersTable.innerHTML = "";
+    ui.adminUsersEmpty.hidden = false;
+    return;
+  }
+  ui.adminUsersEmpty.hidden = true;
+
+  ui.adminUsersTable.innerHTML = users
+    .map((user) => {
+      const userId = String(user.id || "").trim();
+      const email = text(user.email, "-");
+      const name = text(user.name, "-");
+      const status = text(user.status, "-");
+      const roleText = text(user.role, "user");
+      const lastLogin = text(user.last_login_at, "-");
+      return `
+        <tr>
+          <td>${escapeHtml(email)}</td>
+          <td>${escapeHtml(name)}</td>
+          <td>${escapeHtml(roleText)}</td>
+          <td>${escapeHtml(status)}</td>
+          <td>${escapeHtml(lastLogin)}</td>
+          <td>
+            <button
+              type="button"
+              class="danger-inline"
+              data-admin-delete-user-id="${escapeHtml(userId)}"
+              data-admin-delete-user-email="${escapeHtml(email)}"
+            >
+              Deletar
+            </button>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+async function refreshAdminUsers() {
+  const role = String(state.authUserRole || "user").trim().toLowerCase();
+  if (role !== "admin") return;
+
+  if (ui.adminUsersRefresh) ui.adminUsersRefresh.disabled = true;
+  try {
+    const response = await fetch(buildApiUrl("/admin/users"), {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    state.adminUsers = Array.isArray(data.users) ? data.users : [];
+    renderAdminUsers();
+  } catch (err) {
+    showToast("Nao foi possivel carregar as contas de usuario.", "error", 4200);
+  } finally {
+    if (ui.adminUsersRefresh) ui.adminUsersRefresh.disabled = false;
+  }
+}
+
+async function deleteManagedUser(targetUserId, targetUserEmail) {
+  const userId = String(targetUserId || "").trim();
+  const email = String(targetUserEmail || "").trim();
+  if (!userId) return;
+  const confirmed = window.confirm(`Tem certeza que deseja deletar a conta ${email || userId}?`);
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch(buildApiUrl("/admin/users/delete"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+    }
+    showToast("Conta deletada com sucesso.", "success", 3200);
+    await refreshAdminUsers();
+  } catch (err) {
+    const message = String((err && err.message) || "").trim();
+    showToast(message || "Nao foi possivel deletar a conta.", "error", 4200);
   }
 }
 
@@ -2197,6 +2311,22 @@ function wireEvents() {
     ui.logoutBtn.addEventListener("click", logoutDashboard);
   }
 
+  if (ui.adminUsersRefresh) {
+    ui.adminUsersRefresh.addEventListener("click", refreshAdminUsers);
+  }
+
+  if (ui.adminUsersTable) {
+    ui.adminUsersTable.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest("button[data-admin-delete-user-id]");
+      if (!button) return;
+      const userId = String(button.getAttribute("data-admin-delete-user-id") || "").trim();
+      const userEmail = String(button.getAttribute("data-admin-delete-user-email") || "").trim();
+      deleteManagedUser(userId, userEmail);
+    });
+  }
+
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
     renderCards();
@@ -2315,6 +2445,9 @@ async function boot() {
   const authorized = await resolveViewerRole();
   if (!authorized) return;
   wireEvents();
+  if (String(state.authUserRole || "").trim().toLowerCase() === "admin") {
+    await refreshAdminUsers();
+  }
   startDevAutoReload();
   await loadUiConfig();
   ui.connPreset.value = state.connPreset;
