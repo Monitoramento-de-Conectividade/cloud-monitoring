@@ -145,6 +145,8 @@ const state = {
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
+const TIMELINE_MAX_PAGES = 3;
+const TIMELINE_MAX_EVENTS = state.timelinePageSize * TIMELINE_MAX_PAGES;
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -1155,9 +1157,15 @@ function resolveTimelineReferenceNowTs(pivot) {
   return wallClockNowTs;
 }
 
+function getTimelineEventsCapped(pivot) {
+  const events = Array.isArray((pivot || {}).timeline) ? pivot.timeline : [];
+  if (events.length <= TIMELINE_MAX_EVENTS) return events;
+  return events.slice(events.length - TIMELINE_MAX_EVENTS);
+}
+
 function normalizeRange(pivot) {
   const nowTs = resolveTimelineReferenceNowTs(pivot);
-  const timeline = Array.isArray((pivot || {}).timeline) ? pivot.timeline : [];
+  const timeline = getTimelineEventsCapped(pivot);
   let minTs = nowTs;
   for (const event of timeline) {
     const ts = Number(event.ts || 0);
@@ -1327,7 +1335,7 @@ function buildConnectivitySegments(pivot, startTs, endTs, settings = null) {
   const monitoredTopics = ["cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network"];
   const { disconnectThresholdSec, maxExpectedIntervalSec } = resolveDisconnectThresholdSec(summary, settings);
 
-  const events = (pivot.timeline || [])
+  const events = getTimelineEventsCapped(pivot)
     .filter((event) => monitoredTopics.includes(String(event.topic || "")))
     .map((event) => ({ topic: String(event.topic || ""), ts: Number(event.ts || 0) }))
     .filter((event) => Number.isFinite(event.ts) && event.ts > 0 && event.ts <= endTs)
@@ -1839,7 +1847,7 @@ function renderProbeDelayChart(pivot) {
 }
 
 function renderTimeline(pivot) {
-  const allEvents = pivot.timeline || [];
+  const allEvents = getTimelineEventsCapped(pivot);
   const totalPages = Math.max(1, Math.ceil(allEvents.length / state.timelinePageSize));
   if (state.timelinePage > totalPages) state.timelinePage = totalPages;
   const start = (state.timelinePage - 1) * state.timelinePageSize;
@@ -2510,7 +2518,10 @@ function wireEvents() {
     renderPivotView();
   });
   ui.timelineNext.addEventListener("click", () => {
-    const total = Math.max(1, Math.ceil(((state.pivotData || {}).timeline || []).length / state.timelinePageSize));
+    const total = Math.max(
+      1,
+      Math.ceil(getTimelineEventsCapped(state.pivotData || {}).length / state.timelinePageSize)
+    );
     state.timelinePage = Math.min(total, state.timelinePage + 1);
     renderPivotView();
   });

@@ -52,14 +52,45 @@ def _safe_bool(value, default=None):
 
 
 class TelemetryPersistence:
-    def __init__(self, db_path=None, migrations_dir=None, max_events_per_pivot=5000, log=None):
+    def __init__(self, db_path=None, migrations_dir=None, max_events_per_pivot=75, log=None):
         self.db_path = str(db_path or DEFAULT_DB_PATH)
         self.migrations_dir = str(migrations_dir or DEFAULT_MIGRATIONS_DIR)
-        self.max_events_per_pivot = max(100, int(max_events_per_pivot or 5000))
+        self.max_events_per_pivot = max(25, int(max_events_per_pivot or 75))
         self.log = log
 
         self._lock = threading.RLock()
         self._conn = None
+
+    def _trim_events_table_locked(self, conn, table_name, pivot_id, session_id):
+        allowed_tables = {
+            "connectivity_events",
+            "probe_events",
+            "cloud2_events",
+            "drop_events",
+        }
+        if table_name not in allowed_tables:
+            return
+
+        normalized_pivot = str(pivot_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        if not normalized_pivot or not normalized_session:
+            return
+
+        safe_limit = max(1, int(self.max_events_per_pivot))
+        conn.execute(
+            f"""
+            DELETE FROM {table_name}
+            WHERE id IN (
+                SELECT id
+                FROM {table_name}
+                WHERE pivot_id = ?
+                    AND session_id = ?
+                ORDER BY ts DESC, id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (normalized_pivot, normalized_session, safe_limit),
+        )
 
     def start(self):
         with self._lock:
@@ -1261,6 +1292,12 @@ class TelemetryPersistence:
                         time.time(),
                     ),
                 )
+                self._trim_events_table_locked(
+                    conn,
+                    "connectivity_events",
+                    normalized_id,
+                    normalized_session,
+                )
 
     def insert_probe_event(self, pivot_id, session_id, event):
         normalized_id = str(pivot_id or "").strip()
@@ -1307,6 +1344,12 @@ class TelemetryPersistence:
                         self._json_dumps(event_payload),
                         time.time(),
                     ),
+                )
+                self._trim_events_table_locked(
+                    conn,
+                    "probe_events",
+                    normalized_id,
+                    normalized_session,
                 )
 
     def insert_probe_delay_point(
@@ -1406,6 +1449,12 @@ class TelemetryPersistence:
                         time.time(),
                     ),
                 )
+                self._trim_events_table_locked(
+                    conn,
+                    "cloud2_events",
+                    normalized_id,
+                    normalized_session,
+                )
 
     def insert_drop_event(self, pivot_id, session_id, event):
         normalized_id = str(pivot_id or "").strip()
@@ -1445,6 +1494,12 @@ class TelemetryPersistence:
                         self._json_dumps(event_payload),
                         time.time(),
                     ),
+                )
+                self._trim_events_table_locked(
+                    conn,
+                    "drop_events",
+                    normalized_id,
+                    normalized_session,
                 )
 
     def upsert_probe_setting(self, pivot_id, enabled, interval_sec):

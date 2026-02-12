@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "probe_min_interval_sec": 60,
     "probe_timeout_factor": 1.25,
     "probe_timeout_streak_alert": 2,
-    "max_events_per_pivot": 5000,
+    "max_events_per_pivot": 75,
     "probe_settings": {},
     "sqlite_db_path": os.path.join(resolve_data_dir(), "telemetry.sqlite3"),
 }
@@ -381,7 +381,7 @@ def normalize_config(raw_config):
     base["max_events_per_pivot"] = _to_int(
         base.get("max_events_per_pivot"),
         DEFAULT_CONFIG["max_events_per_pivot"],
-        minimum=100,
+        minimum=25,
     )
     base["sqlite_db_path"] = (
         str(base.get("sqlite_db_path", DEFAULT_CONFIG["sqlite_db_path"])).strip()
