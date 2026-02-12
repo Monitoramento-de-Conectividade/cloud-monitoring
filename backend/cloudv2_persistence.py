@@ -984,6 +984,28 @@ class TelemetryPersistence:
                     """
                 )
 
+    def delete_pivot(self, pivot_id):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return False
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            with conn:
+                row = conn.execute(
+                    "SELECT 1 FROM pivots WHERE pivot_id = ? LIMIT 1",
+                    (normalized_id,),
+                ).fetchone()
+                conn.execute(
+                    "DELETE FROM probe_settings WHERE pivot_id = ?",
+                    (normalized_id,),
+                )
+                conn.execute(
+                    "DELETE FROM pivots WHERE pivot_id = ?",
+                    (normalized_id,),
+                )
+            return row is not None
+
     def _json_dumps(self, value):
         return json.dumps(value, ensure_ascii=False)
 

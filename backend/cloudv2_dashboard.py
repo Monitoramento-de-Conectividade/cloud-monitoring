@@ -937,6 +937,24 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"ok": True, "created": created})
                 return
 
+            if path.startswith("/api/pivot/") and path.endswith("/delete"):
+                pivot_id = unquote(path[len("/api/pivot/") : -len("/delete")]).strip("/").strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    body = {}
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    deleted = telemetry_store.delete_pivot(pivot_id, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+                self._write_json(200, {"ok": True, "deleted": deleted})
+                return
+
             if path != "/api/probe-config":
                 self._write_json(404, {"error": "rota nao encontrada"})
                 return

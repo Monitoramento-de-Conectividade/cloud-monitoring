@@ -572,6 +572,16 @@ a:focus {
   background: #0f5637;
 }
 
+.danger {
+  border-color: #8f2c2c;
+  background: #a63b3b;
+  color: #fff4f4;
+}
+
+.danger:hover:not(:disabled) {
+  background: #8f2c2c;
+}
+
 .pager {
   display: flex;
   gap: 8px;
@@ -585,6 +595,18 @@ a:focus {
 .pivot-view {
   display: grid;
   gap: var(--space-2);
+}
+
+.pivot-danger {
+  display: grid;
+  gap: 10px;
+  align-items: end;
+  grid-template-columns: minmax(240px, 1fr) auto;
+}
+
+.pivot-danger .hint {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .pivot-title-wrap {
@@ -1259,6 +1281,10 @@ th {
   .pager {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .pivot-danger {
+    grid-template-columns: 1fr;
   }
 }
 

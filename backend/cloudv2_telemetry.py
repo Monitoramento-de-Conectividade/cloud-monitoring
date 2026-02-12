@@ -113,6 +113,38 @@ def _parse_duration_seconds(value):
     return None
 
 
+def validate_pivot_id(pivot_id):
+    value = str(pivot_id or "")
+    first_underscore_index = value.find("_")
+    if first_underscore_index == -1:
+        return False
+
+    if "__" in value:
+        return False
+
+    first_part = value[:first_underscore_index]
+    for char in first_part:
+        if not char.isalpha():
+            return False
+
+    after_first_underscore = value[first_underscore_index + 1 :]
+
+    second_underscore_index = after_first_underscore.find("_")
+    if second_underscore_index == -1:
+        number_part = after_first_underscore
+    else:
+        number_part = after_first_underscore[second_underscore_index + 1 :]
+
+    if len(number_part) == 0:
+        return False
+
+    for char in number_part:
+        if not char.isdigit():
+            return False
+
+    return True
+
+
 def parse_device_payload(payload):
     text = str(payload or "").strip()
     if not text:
@@ -136,6 +168,8 @@ def parse_device_payload(payload):
         return None, "campo IDP vazio"
     if not pivot_id:
         return None, "campo pivot_id vazio"
+    if not validate_pivot_id(pivot_id):
+        return None, "pivot_id invalido"
 
     parsed = {
         "raw": text,
@@ -680,6 +714,41 @@ class TelemetryStore:
         self.write()
         return result
 
+    def delete_pivot(self, pivot_id, now=None, source="ui"):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            raise ValueError("pivot_id obrigatorio")
+
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            removed_runtime = False
+            if normalized in self.pivots:
+                del self.pivots[normalized]
+                removed_runtime = True
+            if normalized in self._active_session_by_pivot:
+                del self._active_session_by_pivot[normalized]
+            if normalized in self.pending_ping_unknown:
+                del self.pending_ping_unknown[normalized]
+            if normalized in self._probe_settings:
+                del self._probe_settings[normalized]
+
+            removed_db = self.persistence.delete_pivot(normalized)
+            self._dirty = True
+
+            result = {
+                "ok": True,
+                "pivot_id": normalized,
+                "removed_runtime": removed_runtime,
+                "removed_db": bool(removed_db),
+                "mode": self._monitoring_mode,
+                "source": str(source or "ui"),
+                "deleted_at_ts": current_ts,
+                "deleted_at": _ts_to_str(current_ts),
+            }
+
+        self.write()
+        return result
+
     def _build_drop_events_from_cloud2_locked(self, cloud2_events):
         drops = []
         for event in cloud2_events:
@@ -1051,6 +1120,8 @@ class TelemetryStore:
         normalized = str(pivot_id or "").strip()
         if not normalized:
             raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized):
+            raise ValueError("pivot_id invalido")
 
         current_ts = float(now if now is not None else time.time())
         with self._lock:
@@ -1256,6 +1327,8 @@ class TelemetryStore:
         normalized_pivot = str(pivot_id or "").strip()
         if not normalized_pivot:
             raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized_pivot):
+            raise ValueError("pivot_id invalido")
 
         normalized_enabled = bool(enabled)
         normalized_interval = _safe_int(interval_sec, self.probe_default_interval_sec)
