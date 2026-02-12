@@ -131,7 +131,10 @@ const state = {
   runAutoDetected: false,
   panelSessionMeta: null,
   panelRunMeta: null,
+  refreshInFlight: false,
 };
+
+const API_REQUEST_TIMEOUT_MS = 12000;
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -524,9 +527,24 @@ function showToast(message, level = "success", ttlMs = 3200) {
 
 async function getJson(url) {
   const targetUrl = buildApiUrl(url);
-  const response = await fetch(`${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}`, {
-    credentials: "include",
-  });
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
+    : null;
+  let response;
+  try {
+    response = await fetch(`${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+      credentials: "include",
+      signal: controller ? controller.signal : undefined,
+    });
+  } catch (err) {
+    if (controller && err && err.name === "AbortError") {
+      throw new Error(`timeout:${API_REQUEST_TIMEOUT_MS}`);
+    }
+    throw err;
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
   let payload = {};
   try {
     payload = await response.json();
@@ -1960,6 +1978,8 @@ async function refreshQualityOverrides() {
 }
 
 async function refreshAll() {
+  if (state.refreshInFlight) return;
+  state.refreshInFlight = true;
   try {
     const stateResult = await refreshState();
     if (stateResult?.selectedRunChanged) {
@@ -1981,6 +2001,8 @@ async function refreshAll() {
       showToast("Não foi possível carregar os dados. Tente novamente.", "error", 3800);
       state.lastRefreshToastAtMs = now;
     }
+  } finally {
+    state.refreshInFlight = false;
   }
 }
 
