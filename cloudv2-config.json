@@ -16,7 +16,7 @@
   "cloudv2_median_window": 20,
   "cloudv2_min_samples": 5,
   "dedupe_window_sec": 8,
-  "history_mode": "fresh",
+  "history_mode": "merge",
   "history_retention_hours": 24,
   "dashboard_enabled": true,
   "dashboard_port": 8008,
