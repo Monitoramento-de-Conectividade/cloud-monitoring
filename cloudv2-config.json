@@ -26,7 +26,7 @@
   "probe_min_interval_sec": 60,
   "probe_timeout_factor": 1.25,
   "probe_timeout_streak_alert": 2,
-  "max_events_per_pivot": 75,
+  "max_events_per_pivot": 5000,
   "probe_settings": {
     "PioneiraLEM_2": {
       "enabled": true,

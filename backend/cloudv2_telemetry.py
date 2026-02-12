@@ -218,7 +218,7 @@ class TelemetryStore:
         self.dedupe_window_sec = max(1, int(config.get("dedupe_window_sec", 8)))
         self.history_retention_hours = max(24, int(config.get("history_retention_hours", 24)))
         self.retention_sec = self.history_retention_hours * 3600
-        self.max_events_per_pivot = max(25, int(config.get("max_events_per_pivot", 75)))
+        self.max_events_per_pivot = max(100, int(config.get("max_events_per_pivot", 5000)))
         self.show_pending_ping_pivots = bool(config.get("show_pending_ping_pivots", False))
 
         self.probe_default_interval_sec = max(10, int(config.get("probe_default_interval_sec", 300)))
