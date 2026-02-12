@@ -1061,7 +1061,8 @@ class TelemetryStore:
             if not run_id:
                 raise ValueError("nao foi possivel criar monitoramento global")
 
-            previous_pivot_ids = sorted(self.pivots.keys(), key=lambda item: item.lower())
+            previous_pivots = dict(self.pivots)
+            previous_pivot_ids = sorted(previous_pivots.keys(), key=lambda item: item.lower())
             self._active_run_id = run_id
             self._monitoring_mode = "live"
             self._active_session_by_pivot = {}
@@ -1078,6 +1079,13 @@ class TelemetryStore:
                     session_id=session_id,
                     run_id=run_id,
                 )
+                previous_pivot = previous_pivots.get(pivot_id)
+                if isinstance(previous_pivot, dict):
+                    baseline_summary = self._build_pivot_summary_locked(previous_pivot, current_ts)
+                else:
+                    baseline_summary = self._load_pivot_baseline_from_persistence_locked(pivot_id)
+                if isinstance(baseline_summary, dict):
+                    self._apply_baseline_snapshot_locked(pivot, baseline_summary, now=current_ts)
                 rebuilt[pivot_id] = pivot
                 self._record_timeline_locked(
                     pivot,
@@ -1148,6 +1156,13 @@ class TelemetryStore:
                 session_id=session_id,
                 run_id=active_run_id,
             )
+            previous_pivot = self.pivots.get(normalized)
+            if isinstance(previous_pivot, dict):
+                baseline_summary = self._build_pivot_summary_locked(previous_pivot, current_ts)
+            else:
+                baseline_summary = self._load_pivot_baseline_from_persistence_locked(normalized)
+            if isinstance(baseline_summary, dict):
+                self._apply_baseline_snapshot_locked(pivot, baseline_summary, now=current_ts)
             self.pivots[normalized] = pivot
 
             self._record_timeline_locked(
@@ -1531,6 +1546,92 @@ class TelemetryStore:
             },
         }
 
+    def _apply_baseline_snapshot_locked(self, pivot, summary, now=None):
+        if not isinstance(pivot, dict) or not isinstance(summary, dict):
+            return False
+
+        changed = False
+
+        baseline_last_ping_ts = _safe_float(summary.get("last_ping_ts"), None)
+        baseline_last_cloudv2_ts = _safe_float(summary.get("last_cloudv2_ts"), None)
+        baseline_last_activity_ts = _safe_float(summary.get("last_activity_ts"), None)
+
+        if baseline_last_ping_ts is not None:
+            pivot["last_ping_ts"] = baseline_last_ping_ts
+            pivot.setdefault("topic_last_ts", {})[TOPIC_PING] = baseline_last_ping_ts
+            changed = True
+
+        if baseline_last_cloudv2_ts is not None:
+            pivot["last_cloudv2_ts"] = baseline_last_cloudv2_ts
+            pivot.setdefault("topic_last_ts", {})[TOPIC_CLOUDV2] = baseline_last_cloudv2_ts
+            changed = True
+
+        if baseline_last_activity_ts is not None:
+            current_last_seen_ts = _safe_float(pivot.get("last_seen_ts"), None)
+            if current_last_seen_ts is None or baseline_last_activity_ts > current_last_seen_ts:
+                pivot["last_seen_ts"] = baseline_last_activity_ts
+                changed = True
+
+        baseline_last_cloud2 = summary.get("last_cloud2")
+        if isinstance(baseline_last_cloud2, dict) and baseline_last_cloud2:
+            pivot["last_cloud2"] = dict(baseline_last_cloud2)
+            baseline_last_cloud2_ts = _safe_float(baseline_last_cloud2.get("ts"), None)
+            if baseline_last_cloud2_ts is not None:
+                pivot["last_cloud2_ts"] = baseline_last_cloud2_ts
+            changed = True
+
+        median_interval = _safe_float(summary.get("median_cloudv2_interval_sec"), None)
+        baseline_sample_count = _safe_int(summary.get("median_sample_count"), None)
+        median_ready = bool(summary.get("median_ready"))
+        if (
+            median_interval is not None
+            and median_interval > 0
+            and baseline_sample_count is not None
+            and baseline_sample_count > 0
+            and median_ready
+        ):
+            seed_size = min(
+                self.cloudv2_window,
+                max(self.cloudv2_min_samples, int(baseline_sample_count)),
+            )
+            seeded = [median_interval for _ in range(seed_size)]
+            topic_intervals = pivot.setdefault("topic_intervals_sec", {})
+            topic_intervals[TOPIC_CLOUDV2] = list(seeded)
+            pivot["cloudv2_intervals_sec"] = list(seeded)
+            changed = True
+
+        status_info = summary.get("status")
+        quality_info = summary.get("quality")
+        if isinstance(status_info, dict) and isinstance(quality_info, dict):
+            status_code = str(status_info.get("code") or "").strip()
+            quality_code = str(quality_info.get("code") or "").strip()
+            if status_code in STATUS_LABELS and quality_code in QUALITY_LABELS:
+                pivot["status_cache"] = {
+                    "code": status_code,
+                    "reason": str(status_info.get("reason") or ""),
+                    "quality_code": quality_code,
+                    "quality_reason": str(quality_info.get("reason") or ""),
+                    "changed_at_ts": float(now if now is not None else time.time()),
+                }
+                changed = True
+
+        return changed
+
+    def _load_pivot_baseline_from_persistence_locked(self, pivot_id):
+        normalized_pivot_id = str(pivot_id or "").strip()
+        if not normalized_pivot_id:
+            return None
+        try:
+            payload = self.persistence.get_panel_payload(normalized_pivot_id)
+        except RuntimeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            return None
+        return summary
+
     def _get_or_create_pivot_locked(self, pivot_id, ts):
         pivot = self.pivots.get(pivot_id)
         if pivot is not None:
@@ -1547,6 +1648,9 @@ class TelemetryStore:
             session_id=session_id,
             run_id=self._active_run_id,
         )
+        baseline_summary = self._load_pivot_baseline_from_persistence_locked(pivot_id)
+        if isinstance(baseline_summary, dict):
+            self._apply_baseline_snapshot_locked(pivot, baseline_summary, now=ts)
         self.pivots[pivot_id] = pivot
         self.persistence.ensure_pivot(pivot_id, pivot_slug=pivot["pivot_slug"], seen_ts=ts)
 
