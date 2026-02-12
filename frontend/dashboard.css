@@ -360,6 +360,11 @@ a:focus {
   gap: 8px;
 }
 
+.filters-stack {
+  display: grid;
+  gap: 8px;
+}
+
 .control-actions {
   display: flex;
   justify-content: flex-end;
