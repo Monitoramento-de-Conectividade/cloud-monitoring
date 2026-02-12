@@ -848,6 +848,18 @@ function renderHeader() {
 function renderStatusSummary() {
   const stateCounts = { all: 0, green: 0, red: 0, gray: 0 };
   const qualityCounts = { green: 0, yellow: 0, critical: 0, calculating: 0 };
+  const settings = (state.rawState || {}).settings || {};
+  const minSamplesRaw = Number(settings.cloudv2_min_samples ?? 5);
+  const minSamples = Number.isFinite(minSamplesRaw) && minSamplesRaw >= 1 ? Math.round(minSamplesRaw) : 5;
+  const attentionThresholdRaw = Number(settings.attention_disconnected_pct_threshold ?? 20);
+  const attentionThreshold = Number.isFinite(attentionThresholdRaw)
+    ? Math.max(0, Math.min(100, attentionThresholdRaw))
+    : 20;
+  const criticalThresholdRaw = Number(settings.critical_disconnected_pct_threshold ?? 50);
+  const criticalThreshold = Number.isFinite(criticalThresholdRaw)
+    ? Math.max(attentionThreshold, Math.min(100, criticalThresholdRaw))
+    : 50;
+
   for (const pivot of state.pivots) {
     stateCounts.all += 1;
     const stateCode = getDisplayStatus(pivot).code;
@@ -857,16 +869,71 @@ function renderStatusSummary() {
     if (qualityCounts[qualityCode] !== undefined) qualityCounts[qualityCode] += 1;
   }
 
-  ui.statusSummary.innerHTML = `
-    <div class="summary-pill"><span>Total</span><strong>${stateCounts.all}</strong></div>
-    <div class="summary-pill"><span>Conectados</span><strong>${stateCounts.green}</strong></div>
-    <div class="summary-pill"><span>Desconectados</span><strong>${stateCounts.red}</strong></div>
-    <div class="summary-pill"><span>Iniciais</span><strong>${stateCounts.gray}</strong></div>
-    <div class="summary-pill"><span>Conectividade estável</span><strong>${qualityCounts.green}</strong></div>
-    <div class="summary-pill"><span>Em análise</span><strong>${qualityCounts.calculating}</strong></div>
-    <div class="summary-pill"><span>Conectividade instável</span><strong>${qualityCounts.yellow}</strong></div>
-    <div class="summary-pill"><span>Conectividade crítica</span><strong>${qualityCounts.critical}</strong></div>
-  `;
+  const summaryItems = [
+    {
+      label: "Total",
+      value: stateCounts.all,
+      tooltip: "Quantidade total de pivos monitorados no painel.",
+    },
+    {
+      label: "Conectados",
+      value: stateCounts.green,
+      tooltip:
+        "Pivos com Status Conectado. O status fica Conectado quando ha comunicacao recente dentro do limite de desconexao do proprio pivo.",
+    },
+    {
+      label: "Desconectados",
+      value: stateCounts.red,
+      tooltip:
+        "Pivos com Status Desconectado. O status vira Desconectado quando o tempo sem comunicacao ultrapassa o limite de desconexao calculado para o pivo.",
+    },
+    {
+      label: "Iniciais",
+      value: stateCounts.gray,
+      tooltip:
+        `Pivos com Status Inicial. Isso ocorre enquanto o sistema ainda esta coletando dados para definir o comportamento normal (minimo de ${minSamples} amostras cloudv2).`,
+    },
+    {
+      label: "Conectividade estavel",
+      value: qualityCounts.green,
+      tooltip:
+        `Conectividade dentro do esperado no periodo selecionado: percentual desconectado ate ${attentionThreshold.toFixed(1)}% e sem sinais de instabilidade.`,
+    },
+    {
+      label: "Em analise",
+      value: qualityCounts.calculating,
+      tooltip:
+        `Conectividade ainda em analise. Ocorre quando o pivo nao atingiu amostras suficientes (minimo ${minSamples}) para calcular a mediana de intervalo.`,
+    },
+    {
+      label: "Conectividade instavel",
+      value: qualityCounts.yellow,
+      tooltip:
+        `Conectividade com alerta. Ocorre quando o percentual desconectado supera ${attentionThreshold.toFixed(1)}% sem passar do limite critico (${criticalThreshold.toFixed(1)}%), ou quando so ha sinais auxiliares no periodo.`,
+    },
+    {
+      label: "Conectividade critica",
+      value: qualityCounts.critical,
+      tooltip:
+        `Conectividade critica no periodo selecionado. Ocorre quando o percentual desconectado fica acima de ${criticalThreshold.toFixed(1)}%.`,
+    },
+  ];
+
+  ui.statusSummary.innerHTML = summaryItems
+    .map(
+      (item) => `
+        <div
+          class="summary-pill"
+          title="${escapeHtml(item.tooltip)}"
+          aria-label="${escapeHtml(item.label + ": " + item.tooltip)}"
+          tabindex="0"
+        >
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${item.value}</strong>
+        </div>
+      `
+    )
+    .join("");
 }
 
 function renderPending() {

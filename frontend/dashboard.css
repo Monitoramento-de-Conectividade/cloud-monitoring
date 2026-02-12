@@ -478,6 +478,7 @@ a:focus {
   background: linear-gradient(160deg, #f9fdfa, #f0f8f3);
   font-size: 12px;
   color: #355c48;
+  cursor: help;
 }
 
 .summary-pill strong {
