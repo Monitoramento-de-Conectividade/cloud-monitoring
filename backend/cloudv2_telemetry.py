@@ -1644,6 +1644,36 @@ class TelemetryStore:
         normalized_pivot_id = str(pivot_id or "").strip()
         if not normalized_pivot_id:
             return None
+
+        try:
+            sessions = self.persistence.list_sessions(normalized_pivot_id, limit=200, run_id=None)
+        except RuntimeError:
+            sessions = []
+
+        for session in sessions:
+            session_id = str((session or {}).get("session_id") or "").strip()
+            if not session_id:
+                continue
+            try:
+                has_snapshot = self.persistence.has_snapshot(normalized_pivot_id, session_id)
+            except RuntimeError:
+                has_snapshot = False
+            if not has_snapshot:
+                continue
+            try:
+                payload = self.persistence.get_panel_payload(
+                    normalized_pivot_id,
+                    session_id=session_id,
+                    run_id=None,
+                )
+            except RuntimeError:
+                payload = None
+            if not isinstance(payload, dict):
+                continue
+            summary = payload.get("summary")
+            if isinstance(summary, dict):
+                return summary
+
         try:
             payload = self.persistence.get_panel_payload(normalized_pivot_id)
         except RuntimeError:
