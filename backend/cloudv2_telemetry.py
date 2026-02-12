@@ -1646,10 +1646,12 @@ class TelemetryStore:
             return None
 
         try:
-            sessions = self.persistence.list_sessions(normalized_pivot_id, limit=200, run_id=None)
+            sessions = self.persistence.list_sessions(normalized_pivot_id, limit=500, run_id=None)
         except RuntimeError:
             sessions = []
 
+        best_summary = None
+        best_rank = None
         for session in sessions:
             session_id = str((session or {}).get("session_id") or "").strip()
             if not session_id:
@@ -1672,7 +1674,26 @@ class TelemetryStore:
                 continue
             summary = payload.get("summary")
             if isinstance(summary, dict):
-                return summary
+                sample_count = _safe_int(summary.get("median_sample_count"), 0)
+                if sample_count is None or sample_count < 0:
+                    sample_count = 0
+                median_ready = bool(summary.get("median_ready"))
+                status_code = str(((summary.get("status") or {}).get("code") or "")).strip().lower()
+                summary_last_activity_ts = _safe_float(summary.get("last_activity_ts"), None)
+                session_updated_ts = _safe_float((session or {}).get("updated_at_ts"), None)
+                rank = (
+                    1 if median_ready else 0,
+                    1 if status_code in ("green", "red") else 0,
+                    int(sample_count),
+                    summary_last_activity_ts if summary_last_activity_ts is not None else -1.0,
+                    session_updated_ts if session_updated_ts is not None else -1.0,
+                )
+                if best_rank is None or rank > best_rank:
+                    best_rank = rank
+                    best_summary = summary
+
+        if isinstance(best_summary, dict):
+            return best_summary
 
         try:
             payload = self.persistence.get_panel_payload(normalized_pivot_id)
