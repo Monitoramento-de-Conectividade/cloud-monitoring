@@ -326,6 +326,9 @@ class TelemetryStore:
                     pivot["session_id"] = session_id
                     pivot["run_id"] = self._active_run_id
                     self._backfill_pivot_session_locked(pivot)
+                    baseline_summary = self._load_pivot_baseline_from_persistence_locked(pivot_id)
+                    if isinstance(baseline_summary, dict):
+                        self._apply_baseline_snapshot_locked(pivot, baseline_summary, now=now)
                     # Em restart, evita sobrescrever snapshot valido ja persistido
                     # com estado parcial carregado do runtime_store.
                     has_persisted_snapshot = False
@@ -1556,12 +1559,14 @@ class TelemetryStore:
         baseline_last_cloudv2_ts = _safe_float(summary.get("last_cloudv2_ts"), None)
         baseline_last_activity_ts = _safe_float(summary.get("last_activity_ts"), None)
 
-        if baseline_last_ping_ts is not None:
+        current_last_ping_ts = _safe_float(pivot.get("last_ping_ts"), None)
+        if baseline_last_ping_ts is not None and current_last_ping_ts is None:
             pivot["last_ping_ts"] = baseline_last_ping_ts
             pivot.setdefault("topic_last_ts", {})[TOPIC_PING] = baseline_last_ping_ts
             changed = True
 
-        if baseline_last_cloudv2_ts is not None:
+        current_last_cloudv2_ts = _safe_float(pivot.get("last_cloudv2_ts"), None)
+        if baseline_last_cloudv2_ts is not None and current_last_cloudv2_ts is None:
             pivot["last_cloudv2_ts"] = baseline_last_cloudv2_ts
             pivot.setdefault("topic_last_ts", {})[TOPIC_CLOUDV2] = baseline_last_cloudv2_ts
             changed = True
@@ -1573,17 +1578,29 @@ class TelemetryStore:
                 changed = True
 
         baseline_last_cloud2 = summary.get("last_cloud2")
-        if isinstance(baseline_last_cloud2, dict) and baseline_last_cloud2:
+        current_last_cloud2 = pivot.get("last_cloud2")
+        if (not isinstance(current_last_cloud2, dict) or not current_last_cloud2) and isinstance(
+            baseline_last_cloud2, dict
+        ) and baseline_last_cloud2:
             pivot["last_cloud2"] = dict(baseline_last_cloud2)
             baseline_last_cloud2_ts = _safe_float(baseline_last_cloud2.get("ts"), None)
             if baseline_last_cloud2_ts is not None:
                 pivot["last_cloud2_ts"] = baseline_last_cloud2_ts
             changed = True
 
+        current_intervals = (
+            pivot.get("topic_intervals_sec", {}).get(TOPIC_CLOUDV2)
+            if isinstance(pivot.get("topic_intervals_sec", {}).get(TOPIC_CLOUDV2), list)
+            else pivot.get("cloudv2_intervals_sec", [])
+        ) or []
+        has_current_intervals = any((_safe_float(item, None) or 0) > 0 for item in current_intervals)
+
         median_interval = _safe_float(summary.get("median_cloudv2_interval_sec"), None)
         baseline_sample_count = _safe_int(summary.get("median_sample_count"), None)
         median_ready = bool(summary.get("median_ready"))
         if (
+            not has_current_intervals
+            and
             median_interval is not None
             and median_interval > 0
             and baseline_sample_count is not None
@@ -1603,9 +1620,15 @@ class TelemetryStore:
         status_info = summary.get("status")
         quality_info = summary.get("quality")
         if isinstance(status_info, dict) and isinstance(quality_info, dict):
+            current_status_cache = pivot.get("status_cache") if isinstance(pivot.get("status_cache"), dict) else {}
+            current_status_code = str(current_status_cache.get("code") or "").strip().lower()
             status_code = str(status_info.get("code") or "").strip()
             quality_code = str(quality_info.get("code") or "").strip()
-            if status_code in STATUS_LABELS and quality_code in QUALITY_LABELS:
+            if (
+                status_code in STATUS_LABELS
+                and quality_code in QUALITY_LABELS
+                and current_status_code in ("", "gray")
+            ):
                 pivot["status_cache"] = {
                     "code": status_code,
                     "reason": str(status_info.get("reason") or ""),
