@@ -38,7 +38,8 @@ const ui = HAS_DOM
       clearFilters: document.getElementById("clearFilters"),
       technologyFilter: document.getElementById("technologyFilter"),
       firmwareFilter: document.getElementById("firmwareFilter"),
-      statusFilters: document.getElementById("statusFilters"),
+      statusFilterSelect: document.getElementById("statusFilterSelect"),
+      connectivityFilterSelect: document.getElementById("connectivityFilterSelect"),
       statusSummary: document.getElementById("statusSummary"),
       pendingPanel: document.getElementById("pendingPanel"),
       pendingList: document.getElementById("pendingList"),
@@ -98,6 +99,7 @@ const state = {
   rawState: null,
   pivots: [],
   statusFilter: "all",
+  connectivityFilter: "all",
   search: "",
   sort: "critical",
   technologyFilter: "all",
@@ -670,26 +672,16 @@ function startDevAutoReload() {
 function applyFilterSort() {
   const list = [...state.pivots];
   const needle = state.search.trim().toLowerCase();
+  const selectedStatus = normalizeFilterKey(state.statusFilter) || "all";
+  const selectedConnectivity = normalizeFilterKey(state.connectivityFilter) || "all";
   const selectedTechnology = normalizeFilterKey(state.technologyFilter) || "all";
   const selectedFirmware = normalizeFilterKey(state.firmwareFilter) || "all";
 
   let filtered = list.filter((item) => {
     const quality = getDisplayQuality(item);
     const status = getDisplayStatus(item);
-    if (state.statusFilter !== "all") {
-      const selectedCode = state.statusFilter;
-      const stateCode = status.code;
-      const qualityCode = quality.code;
-      if (selectedCode === "quality_green") {
-        if (qualityCode !== "green") return false;
-      } else if (selectedCode === "quality_calculating") {
-        if (qualityCode !== "calculating") return false;
-      } else if (selectedCode === "yellow" || selectedCode === "critical") {
-        if (qualityCode !== selectedCode) return false;
-      } else if (stateCode !== selectedCode) {
-        return false;
-      }
-    }
+    if (selectedStatus !== "all" && status.code !== selectedStatus) return false;
+    if (selectedConnectivity !== "all" && quality.code !== selectedConnectivity) return false;
     if (needle) {
       const pivotId = String(item.pivot_id || "").toLowerCase();
       if (!pivotId.includes(needle)) return false;
@@ -756,27 +748,19 @@ function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(
   return ap.localeCompare(bp);
 }
 
-function setStatusFilterSelection(nextStatusCode) {
-  const normalized = String(nextStatusCode || "all").trim() || "all";
-  state.statusFilter = normalized;
-  if (!ui.statusFilters) return;
-  for (const item of ui.statusFilters.querySelectorAll("button[data-status]")) {
-    const itemCode = String(item.dataset.status || "all");
-    if (itemCode === normalized) item.classList.add("active");
-    else item.classList.remove("active");
-  }
-}
-
 function resetAllFilters() {
   state.search = "";
   state.sort = "critical";
+  state.statusFilter = "all";
+  state.connectivityFilter = "all";
   state.technologyFilter = "all";
   state.firmwareFilter = "all";
   state.cardsPage = 1;
-  setStatusFilterSelection("all");
 
   if (ui.searchInput) ui.searchInput.value = "";
   if (ui.sortSelect) ui.sortSelect.value = "critical";
+  if (ui.statusFilterSelect) ui.statusFilterSelect.value = "all";
+  if (ui.connectivityFilterSelect) ui.connectivityFilterSelect.value = "all";
   if (ui.technologyFilter) ui.technologyFilter.value = "all";
   if (ui.firmwareFilter) ui.firmwareFilter.value = "all";
 
@@ -2084,13 +2068,21 @@ function wireEvents() {
     });
   }
 
-  ui.statusFilters.addEventListener("click", (event) => {
-    const btn = event.target.closest("button[data-status]");
-    if (!btn) return;
-    setStatusFilterSelection(btn.dataset.status || "all");
-    state.cardsPage = 1;
-    renderCards();
-  });
+  if (ui.statusFilterSelect) {
+    ui.statusFilterSelect.addEventListener("change", () => {
+      state.statusFilter = normalizeFilterKey(ui.statusFilterSelect.value) || "all";
+      state.cardsPage = 1;
+      renderCards();
+    });
+  }
+
+  if (ui.connectivityFilterSelect) {
+    ui.connectivityFilterSelect.addEventListener("change", () => {
+      state.connectivityFilter = normalizeFilterKey(ui.connectivityFilterSelect.value) || "all";
+      state.cardsPage = 1;
+      renderCards();
+    });
+  }
 
   if (ui.clearFilters) {
     ui.clearFilters.addEventListener("click", () => {
