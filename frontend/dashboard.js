@@ -33,6 +33,7 @@ const ui = HAS_DOM
   ? {
       updatedAt: document.getElementById("updatedAt"),
       countsMeta: document.getElementById("countsMeta"),
+      logoutBtn: document.getElementById("logoutBtn"),
       searchInput: document.getElementById("searchInput"),
       sortSelect: document.getElementById("sortSelect"),
       clearFilters: document.getElementById("clearFilters"),
@@ -2061,6 +2062,22 @@ async function deleteSelectedPivot() {
   }
 }
 
+async function logoutDashboard() {
+  if (ui.logoutBtn) ui.logoutBtn.disabled = true;
+  try {
+    await fetch(buildApiUrl("/auth/logout"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    // no-op
+  } finally {
+    window.location.assign("/login");
+  }
+}
+
 async function saveProbeSetting() {
   if (!state.selectedPivot) return;
 
@@ -2142,6 +2159,10 @@ function wireEvents() {
     ui.clearFilters.addEventListener("click", () => {
       resetAllFilters();
     });
+  }
+
+  if (ui.logoutBtn) {
+    ui.logoutBtn.addEventListener("click", logoutDashboard);
   }
 
   ui.cardsPrev.addEventListener("click", () => {

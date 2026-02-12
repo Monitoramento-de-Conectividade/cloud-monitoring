@@ -254,6 +254,20 @@ table {
   font-size: 12px;
 }
 
+.chip-button {
+  cursor: pointer;
+  border: 1px solid rgba(223, 249, 232, 0.5);
+}
+
+.chip-button:hover:not(:disabled) {
+  background: rgba(223, 249, 232, 0.3);
+}
+
+.chip-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
