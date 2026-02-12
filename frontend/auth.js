@@ -157,7 +157,26 @@
 
     const remembered = getRememberedEmail();
     if (remembered && !emailEl.value) emailEl.value = remembered;
-    setStatus("Cadastre-se para acessar o sistema.", "warn");
+    setStatus("Criacao de conta restrita ao administrador.", "warn");
+
+    try {
+      const { response, data } = await getJson("/auth/me");
+      const isAuthenticated = !!(response.ok && data.ok && data.authenticated);
+      const role = String(((data || {}).user || {}).role || "").trim().toLowerCase();
+      if (!isAuthenticated || role !== "admin") {
+        setStatus("Acesso restrito. Somente o administrador pode criar contas.", "error");
+        window.setTimeout(() => {
+          window.location.assign("/login");
+        }, 900);
+        return;
+      }
+    } catch (err) {
+      setStatus("Nao foi possivel validar permissao. Faca login novamente.", "error");
+      window.setTimeout(() => {
+        window.location.assign("/login");
+      }, 900);
+      return;
+    }
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();

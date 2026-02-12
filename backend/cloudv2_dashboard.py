@@ -530,6 +530,16 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                     return True
 
             if path == "/auth/register":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."})
+                    return True
+
+                current_user = (auth_context or {}).get("user") or {}
+                current_role = str(current_user.get("role") or "user").strip().lower()
+                if current_role != "admin":
+                    self._write_json(403, {"ok": False, "code": "admin_required", "message": "Apenas administradores podem criar contas."})
+                    return True
+
                 try:
                     body = self._read_json_body()
                 except json.JSONDecodeError:
@@ -718,8 +728,18 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             if auth_context is auth_blocked:
                 return
 
-            if path in ("/login", "/register"):
+            if path == "/login":
                 if auth_context:
+                    self._redirect("/index.html")
+                    return
+
+            if path == "/register":
+                if not auth_context:
+                    self._redirect("/login")
+                    return
+                current_user = (auth_context or {}).get("user") or {}
+                current_role = str(current_user.get("role") or "user").strip().lower()
+                if current_role != "admin":
                     self._redirect("/index.html")
                     return
 

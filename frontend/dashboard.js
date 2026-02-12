@@ -34,6 +34,7 @@ const ui = HAS_DOM
       updatedAt: document.getElementById("updatedAt"),
       countsMeta: document.getElementById("countsMeta"),
       logoutBtn: document.getElementById("logoutBtn"),
+      adminCreateAccountLink: document.getElementById("adminCreateAccountLink"),
       searchInput: document.getElementById("searchInput"),
       sortSelect: document.getElementById("sortSelect"),
       clearFilters: document.getElementById("clearFilters"),
@@ -134,6 +135,7 @@ const state = {
   panelSessionMeta: null,
   panelRunMeta: null,
   refreshInFlight: false,
+  authUserRole: "user",
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
@@ -2062,6 +2064,36 @@ async function deleteSelectedPivot() {
   }
 }
 
+function syncAdminControls() {
+  const role = String(state.authUserRole || "user").trim().toLowerCase();
+  if (ui.adminCreateAccountLink) {
+    ui.adminCreateAccountLink.hidden = role !== "admin";
+  }
+}
+
+async function resolveViewerRole() {
+  try {
+    const response = await fetch(buildApiUrl("/auth/me"), {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok || !data.authenticated) {
+      window.location.assign("/login");
+      return false;
+    }
+    const role = String(((data || {}).user || {}).role || "user").trim().toLowerCase();
+    state.authUserRole = role || "user";
+    syncAdminControls();
+    return true;
+  } catch (err) {
+    window.location.assign("/login");
+    return false;
+  }
+}
+
 async function logoutDashboard() {
   if (ui.logoutBtn) ui.logoutBtn.disabled = true;
   try {
@@ -2280,6 +2312,8 @@ function wireEvents() {
 }
 
 async function boot() {
+  const authorized = await resolveViewerRole();
+  if (!authorized) return;
   wireEvents();
   startDevAutoReload();
   await loadUiConfig();
