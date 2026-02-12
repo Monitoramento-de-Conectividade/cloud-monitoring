@@ -153,6 +153,34 @@ table {
   gap: 8px;
 }
 
+.hero-logout {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid rgba(223, 249, 232, 0.5);
+  background: rgba(223, 249, 232, 0.2);
+  color: #f2fff6;
+}
+
+.hero-logout svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.hero-logout:hover:not(:disabled) {
+  background: rgba(223, 249, 232, 0.3);
+}
+
+.hero-logout:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .kicker {
   margin: 0;
   text-transform: uppercase;
@@ -252,20 +280,6 @@ table {
   background: rgba(223, 249, 232, 0.2);
   color: #f2fff6;
   font-size: 12px;
-}
-
-.chip-button {
-  cursor: pointer;
-  border: 1px solid rgba(223, 249, 232, 0.5);
-}
-
-.chip-button:hover:not(:disabled) {
-  background: rgba(223, 249, 232, 0.3);
-}
-
-.chip-button:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
 }
 
 .panel {

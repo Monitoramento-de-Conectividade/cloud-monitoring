@@ -15,6 +15,12 @@
   <main class="layout">
     <header class="hero">
       <div class="hero-main">
+        <button id="logoutBtn" class="hero-logout" type="button" aria-label="Logout" title="Logout">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M14.25 3a.75.75 0 0 0 0 1.5h3a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75h-3a.75.75 0 0 0 0 1.5h3a2.25 2.25 0 0 0 2.25-2.25V5.25A2.25 2.25 0 0 0 17.25 3h-3Z"></path>
+            <path d="M11.03 7.47a.75.75 0 0 1 0 1.06L8.56 11h7.94a.75.75 0 0 1 0 1.5H8.56l2.47 2.47a.75.75 0 1 1-1.06 1.06l-3.75-3.75a.75.75 0 0 1 0-1.06l3.75-3.75a.75.75 0 0 1 1.06 0Z"></path>
+          </svg>
+        </button>
         <p class="kicker">MONITORAMENTO DE CONECTIVIDADE</p>
         <h1>Painel de Conectividade dos Pivôs</h1>
         <p class="subtitle">
@@ -24,7 +30,6 @@
       <div class="hero-meta" role="status" aria-live="polite">
         <span class="chip" id="updatedAt">Última atualização: -</span>
         <span class="chip" id="countsMeta">0 pivôs</span>
-        <button id="logoutBtn" class="chip chip-button" type="button">Logout</button>
       </div>
       <div class="hero-session">
         <p class="hero-session-hint" id="sessionHint">
