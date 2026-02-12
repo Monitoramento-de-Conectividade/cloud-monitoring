@@ -72,15 +72,26 @@
         </label>
       </div>
 
-      <div class="filters" id="statusFilters" role="toolbar" aria-label="Filtro de status">
-        <button data-status="all" class="filter active">Todos</button>
-        <button data-status="green" class="filter green">Conectado</button>
-        <button data-status="quality_green" class="filter green">Estável</button>
-        <button data-status="quality_calculating" class="filter calculating">Em análise</button>
-        <button data-status="yellow" class="filter yellow">Instável</button>
-        <button data-status="critical" class="filter critical">Crítico</button>
-        <button data-status="red" class="filter red">Desconectado</button>
-        <button data-status="gray" class="filter gray">Inicial</button>
+      <div class="control-row">
+        <label class="field">
+          <span>Status</span>
+          <select id="statusFilterSelect">
+            <option value="all">Todos status</option>
+            <option value="green">Conectado</option>
+            <option value="red">Desconectado</option>
+            <option value="gray">Inicial</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Conectividade</span>
+          <select id="connectivityFilterSelect">
+            <option value="all">Todas conectividades</option>
+            <option value="green">Estável</option>
+            <option value="calculating">Em análise</option>
+            <option value="yellow">Instável</option>
+            <option value="critical">Crítico</option>
+          </select>
+        </label>
       </div>
 
       <div class="control-actions">
