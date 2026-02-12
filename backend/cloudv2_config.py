@@ -39,7 +39,7 @@ DEFAULT_CONFIG = {
     "require_apply_to_start": True,
     "history_mode": "merge",
     "history_retention_hours": 24,
-    "tolerance_factor": 1.25,
+    "tolerance_factor": 1.5,
     "attention_disconnected_pct_threshold": 20.0,
     "critical_disconnected_pct_threshold": 50.0,
     "attention_disconnected_window_hours": 24,

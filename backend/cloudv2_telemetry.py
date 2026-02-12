@@ -192,7 +192,7 @@ class TelemetryStore:
         self.history_mode = str(config.get("history_mode", "merge")).strip().lower()
 
         self.ping_expected_sec = max(1, int(config.get("ping_interval_minutes", 3)) * 60)
-        self.tolerance_factor = max(1.0, float(config.get("tolerance_factor", 1.25)))
+        self.tolerance_factor = max(1.0, float(config.get("tolerance_factor", 1.5)))
         self.attention_disconnected_pct_threshold = min(
             100.0,
             max(0.0, float(config.get("attention_disconnected_pct_threshold", 20.0))),

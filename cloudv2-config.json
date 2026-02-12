@@ -9,7 +9,7 @@
     "cloudv2-info"
   ],
   "ping_interval_minutes": 3,
-  "tolerance_factor": 1.25,
+  "tolerance_factor": 1.5,
   "attention_disconnected_pct_threshold": 20.0,
   "critical_disconnected_pct_threshold": 50.0,
   "attention_disconnected_window_hours": 24,
