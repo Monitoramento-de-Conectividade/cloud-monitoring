@@ -461,11 +461,6 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._respond_auth_required(path)
                 return auth_blocked
 
-            user = (context or {}).get("user") or {}
-            if (not bool(user.get("email_verified"))) and (not self._is_allowed_for_unverified(path, method)):
-                self._respond_email_not_verified(path)
-                return auth_blocked
-
             return context
 
         def _check_rate_limit(self, path):
@@ -569,11 +564,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                     user_agent=self.headers.get("User-Agent", ""),
                 )
                 if not result.get("ok"):
-                    status_code = 403 if result.get("code") == "email_not_verified" else 401
-                    payload = dict(result)
-                    if result.get("code") == "email_not_verified":
-                        payload["redirect"] = "/verify-email"
-                    self._write_json(status_code, payload)
+                    self._write_json(401, result)
                     return True
 
                 session_token = result.get("session_token")
@@ -728,11 +719,8 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return
 
             if path in ("/login", "/register"):
-                if auth_context and bool(((auth_context or {}).get("user") or {}).get("email_verified")):
+                if auth_context:
                     self._redirect("/index.html")
-                    return
-                if auth_context and (not bool(((auth_context or {}).get("user") or {}).get("email_verified"))):
-                    self._redirect("/verify-email")
                     return
 
             if self._handle_auth_get(path, query, auth_context):

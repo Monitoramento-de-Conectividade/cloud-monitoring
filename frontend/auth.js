@@ -114,7 +114,9 @@
     const remembered = getRememberedEmail();
     if (remembered && !emailEl.value) emailEl.value = remembered;
 
-    if (queryParam("verified") === "1") {
+    if (queryParam("registered") === "1") {
+      setStatus("Cadastro concluido. Agora faca login.", "success");
+    } else if (queryParam("verified") === "1") {
       setStatus("E-mail verificado. Agora voce pode fazer login.", "success");
     } else if (queryParam("reset") === "1") {
       setStatus("Senha redefinida. Faca login com a nova senha.", "success");
@@ -137,11 +139,6 @@
           window.location.assign(data.redirect || "/index.html");
           return;
         }
-        if (String(data.code || "") === "email_not_verified") {
-          setStatus("Seu e-mail ainda nao foi verificado. Redirecionando...", "warn");
-          window.location.assign(data.redirect || "/verify-email");
-          return;
-        }
         setStatus(data.message || data.error || "Falha no login.", "error");
       } catch (err) {
         setStatus("Falha de conexao. Tente novamente.", "error");
@@ -160,7 +157,7 @@
 
     const remembered = getRememberedEmail();
     if (remembered && !emailEl.value) emailEl.value = remembered;
-    setStatus("Cadastre e confirme seu e-mail para acessar o sistema.", "warn");
+    setStatus("Cadastre-se para acessar o sistema.", "warn");
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -177,27 +174,9 @@
       try {
         const { response, data } = await postJson("/auth/register", payload);
         if (response.ok && data.ok) {
-          const delivery = String(data.email_delivery || "").trim().toLowerCase();
-          if (delivery === "smtp_failed") {
-            const detail = String(data.email_error || "").trim();
-            setStatus(
-              (data.message || "Cadastro concluido, mas houve falha no envio do e-mail.")
-                + (detail ? ` Detalhe: ${detail}` : ""),
-              "error"
-            );
-            return;
-          }
-          if (delivery === "console_link") {
-            setStatus(
-              (data.message || "Cadastro concluido.")
-                + " Abra o console do servidor para copiar o link de verificacao.",
-              "warn"
-            );
-            return;
-          }
           setStatus(data.message || "Cadastro concluido.", "success");
           window.setTimeout(() => {
-            window.location.assign("/verify-email?registered=1");
+            window.location.assign("/login?registered=1");
           }, 600);
           return;
         }

@@ -665,8 +665,6 @@ class AuthService:
 
         now_ts = _now_ts()
         password_hash = self._hash_password(plain_password)
-        verify_token = None
-        target_email = normalized_email
 
         with self._connect() as conn:
             self._cleanup_expired_records(conn, now_ts)
@@ -696,7 +694,7 @@ class AuthService:
                         SET
                             name = ?,
                             password_hash = ?,
-                            email_verified_at = NULL,
+                            email_verified_at = ?,
                             status = 'active',
                             role = 'user',
                             privacy_policy_version = ?,
@@ -709,6 +707,7 @@ class AuthService:
                         (
                             normalized_name,
                             password_hash,
+                            now_ts,
                             PRIVACY_POLICY_VERSION,
                             now_ts,
                             now_ts,
@@ -733,13 +732,14 @@ class AuthService:
                             updated_at,
                             last_login_at,
                             deleted_at
-                        ) VALUES (?, ?, ?, ?, NULL, 'active', 'user', ?, ?, ?, ?, NULL, NULL)
+                        ) VALUES (?, ?, ?, ?, ?, 'active', 'user', ?, ?, ?, ?, NULL, NULL)
                         """,
                         (
                             user_id,
                             normalized_email,
                             normalized_name,
                             password_hash,
+                            now_ts,
                             PRIVACY_POLICY_VERSION,
                             now_ts,
                             now_ts,
@@ -748,37 +748,25 @@ class AuthService:
                     )
 
                 self._invalidate_token_type(conn, user_id, "email_verify", now_ts)
-                verify_token = self._insert_token(conn, user_id, "email_verify", VERIFY_TOKEN_TTL_SEC, now_ts)
-
-        verify_link = self._build_verify_link(request_base_url, verify_token)
-        delivery = self.email_service.send_verification_email(target_email, verify_link) or {}
-        email_sent = bool(delivery.get("sent"))
-        delivery_mode = str(delivery.get("mode") or "unknown").strip().lower()
-        delivery_error = str(delivery.get("error") or "").strip()
-        email_delivery = "smtp_sent" if email_sent else ("console_link" if delivery_mode == "console" else "smtp_failed")
-
-        if email_delivery == "smtp_failed" and (self.logger is not None):
-            self.logger.warning("Cadastro criado, mas envio de verificacao falhou para %s", mask_email(target_email))
+                conn.execute(
+                    """
+                    UPDATE user_tokens
+                    SET used_at = COALESCE(used_at, ?)
+                    WHERE user_id = ?
+                        AND type = 'password_reset'
+                        AND used_at IS NULL
+                    """,
+                    (now_ts, user_id),
+                )
 
         return {
             "ok": True,
             "code": "registered",
-            "message": (
-                "Cadastro concluido. "
-                + (
-                    "Enviamos um link de verificacao para o e-mail informado."
-                    if email_delivery == "smtp_sent"
-                    else (
-                        "Ambiente em modo de desenvolvimento: o link de verificacao foi impresso no console."
-                        if email_delivery == "console_link"
-                        else "Nao foi possivel enviar o e-mail agora; revise a configuracao SMTP e tente reenviar."
-                    )
-                )
-            ),
-            "email_masked": mask_email(target_email),
+            "message": "Cadastro concluido. Agora voce ja pode fazer login.",
+            "email_masked": mask_email(normalized_email),
             "privacy_policy_version": PRIVACY_POLICY_VERSION,
-            "email_delivery": email_delivery,
-            "email_error": delivery_error,
+            "email_delivery": "disabled",
+            "email_error": "",
         }
 
     def login_user(self, email, password, ip_address=None, user_agent=None):
@@ -810,14 +798,6 @@ class AuthService:
             if not self._verify_password(plain_password, user_row["password_hash"]):
                 return {"ok": False, "code": "invalid_credentials", "message": "Credenciais invalidas."}
 
-            if user_row["email_verified_at"] is None:
-                return {
-                    "ok": False,
-                    "code": "email_not_verified",
-                    "message": "E-mail ainda nao verificado.",
-                    "email_masked": mask_email(normalized_email),
-                }
-
             with conn:
                 session_token = self._insert_session(
                     conn,
@@ -830,11 +810,12 @@ class AuthService:
                     """
                     UPDATE users
                     SET
+                        email_verified_at = COALESCE(email_verified_at, ?),
                         last_login_at = ?,
                         updated_at = ?
                     WHERE id = ?
                     """,
-                    (now_ts, now_ts, str(user_row["id"])),
+                    (now_ts, now_ts, now_ts, str(user_row["id"])),
                 )
                 refreshed_row = conn.execute(
                     """
@@ -998,63 +979,11 @@ class AuthService:
         return {"ok": True, "code": "verified", "message": "E-mail verificado com sucesso."}
 
     def resend_verification(self, email=None, user_id=None, request_base_url=""):
-        now_ts = _now_ts()
-        normalized_email = self._normalize_email(email)
-        target_email = None
-        verify_token = None
-        channel_mode = str(getattr(self.email_service, "mode", "console")).strip().lower()
-        email_delivery = "console_link" if channel_mode == "console" else "smtp_attempted"
-
-        with self._connect() as conn:
-            self._cleanup_expired_records(conn, now_ts)
-            if str(user_id or "").strip():
-                row = conn.execute(
-                    """
-                    SELECT *
-                    FROM users
-                    WHERE id = ?
-                    LIMIT 1
-                    """,
-                    (str(user_id),),
-                ).fetchone()
-            elif self._is_valid_email(normalized_email):
-                row = conn.execute(
-                    """
-                    SELECT *
-                    FROM users
-                    WHERE email = ?
-                    LIMIT 1
-                    """,
-                    (normalized_email,),
-                ).fetchone()
-            else:
-                row = None
-
-            if (
-                row is not None
-                and row["deleted_at"] is None
-                and str(row["status"] or "active") == "active"
-                and row["email_verified_at"] is None
-            ):
-                target_email = str(row["email"] or "").strip().lower()
-                with conn:
-                    self._invalidate_token_type(conn, str(row["id"]), "email_verify", now_ts)
-                    verify_token = self._insert_token(conn, str(row["id"]), "email_verify", VERIFY_TOKEN_TTL_SEC, now_ts)
-
-        if target_email and verify_token:
-            verify_link = self._build_verify_link(request_base_url, verify_token)
-            delivery = self.email_service.send_verification_email(target_email, verify_link) or {}
-            if (not bool(delivery.get("sent"))) and (channel_mode == "smtp") and (self.logger is not None):
-                self.logger.warning(
-                    "Falha ao reenviar verificacao para %s",
-                    mask_email(target_email),
-                )
-
         return {
             "ok": True,
-            "code": "accepted",
-            "message": "Se o e-mail existir, enviaremos um link de verificacao.",
-            "email_delivery": email_delivery,
+            "code": "verification_not_required",
+            "message": "Verificacao de conta desabilitada. Voce ja pode fazer login.",
+            "email_delivery": "disabled",
         }
 
     def forgot_password(self, email, request_base_url=""):
