@@ -747,6 +747,40 @@ class TelemetryPersistence:
             if row is not None and bool(int(row["is_active"])):
                 return self._row_to_session_dict_locked(row, now_ts=current_ts)
 
+            # Reaproveita a ultima sessao do pivô no run atual, evitando criar
+            # uma nova sessao em cada restart quando ja existe historico valido.
+            if row is not None:
+                existing_session_id = str(row["session_id"] or "").strip()
+                if existing_session_id:
+                    with conn:
+                        conn.execute(
+                            """
+                            UPDATE monitoring_sessions
+                            SET
+                                is_active = 0,
+                                ended_at_ts = COALESCE(ended_at_ts, ?),
+                                updated_at_ts = ?
+                            WHERE pivot_id = ? AND is_active = 1 AND session_id <> ?
+                            """,
+                            (current_ts, current_ts, normalized_id, existing_session_id),
+                        )
+                        conn.execute(
+                            """
+                            UPDATE monitoring_sessions
+                            SET
+                                is_active = 1,
+                                ended_at_ts = NULL,
+                                updated_at_ts = ?
+                            WHERE session_id = ?
+                            """,
+                            (current_ts, existing_session_id),
+                        )
+                    reused = conn.execute(
+                        "SELECT * FROM monitoring_sessions WHERE session_id = ? LIMIT 1",
+                        (existing_session_id,),
+                    ).fetchone()
+                    return self._row_to_session_dict_locked(reused, now_ts=current_ts)
+
             session_id = str(uuid.uuid4())
             with conn:
                 conn.execute(

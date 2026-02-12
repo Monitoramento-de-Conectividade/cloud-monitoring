@@ -1523,6 +1523,8 @@ class TelemetryStore:
             "last_cloud2_ts": None,
             "topic_counters": {topic: 0 for topic in self.monitor_topics},
             "cloudv2_intervals_sec": [],
+            "median_latched_ready": False,
+            "median_latched_interval_sec": None,
             "topic_last_ts": {topic: None for topic in CONNECTIVITY_TOPICS},
             "topic_intervals_sec": {topic: [] for topic in CONNECTIVITY_TOPICS},
             "last_cloud2": None,
@@ -1615,6 +1617,8 @@ class TelemetryStore:
             topic_intervals = pivot.setdefault("topic_intervals_sec", {})
             topic_intervals[TOPIC_CLOUDV2] = list(seeded)
             pivot["cloudv2_intervals_sec"] = list(seeded)
+            pivot["median_latched_ready"] = True
+            pivot["median_latched_interval_sec"] = median_interval
             changed = True
 
         status_info = summary.get("status")
@@ -2298,8 +2302,23 @@ class TelemetryStore:
             else pivot.get("cloudv2_intervals_sec", [])
         ) or []
         cloudv2_interval_stats = self._compute_cloudv2_interval_stats_locked(cloudv2_intervals)
-        sample_count = cloudv2_interval_stats["sample_count"]
+        sample_count = int(cloudv2_interval_stats["sample_count"] or 0)
         median_interval_sec = cloudv2_interval_stats["median_interval_sec"]
+        latched_ready = bool(pivot.get("median_latched_ready"))
+        latched_interval = _safe_float(pivot.get("median_latched_interval_sec"), None)
+        if median_interval_sec is not None and sample_count >= self.cloudv2_min_samples:
+            pivot["median_latched_ready"] = True
+            pivot["median_latched_interval_sec"] = median_interval_sec
+            latched_ready = True
+            latched_interval = median_interval_sec
+        elif (
+            sample_count < self.cloudv2_min_samples
+            and latched_ready
+            and latched_interval is not None
+            and latched_interval > 0
+        ):
+            median_interval_sec = latched_interval
+            sample_count = self.cloudv2_min_samples
         cloudv2_window = None
         cloudv2_ok = False
         cloudv2_age_sec = None
@@ -2702,7 +2721,7 @@ class TelemetryStore:
             "cloudv2_ok": status["cloudv2_ok"],
             "median_ready": status["median_ready"],
             "median_cloudv2_interval_sec": status["median_interval_sec"],
-            "median_sample_count": status["sample_count"],
+            "median_sample_count": min(max(0, int(status["sample_count"] or 0)), self.cloudv2_min_samples),
             "max_expected_interval_sec": status["max_expected_interval_sec"],
             "disconnect_threshold_sec": status["disconnect_threshold_sec"],
             "disconnected_by_inactivity": status["disconnected_by_inactivity"],
