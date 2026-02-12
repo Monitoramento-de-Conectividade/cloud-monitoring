@@ -598,15 +598,8 @@ a:focus {
 }
 
 .pivot-danger {
-  display: grid;
-  gap: 10px;
-  align-items: end;
-  grid-template-columns: minmax(240px, 1fr) auto;
-}
-
-.pivot-danger .hint {
-  grid-column: 1 / -1;
-  margin: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .pivot-title-wrap {
@@ -1283,9 +1276,6 @@ th {
     justify-content: flex-start;
   }
 
-  .pivot-danger {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 560px) {

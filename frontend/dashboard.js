@@ -52,9 +52,7 @@ const ui = HAS_DOM
       pivotTitle: document.getElementById("pivotTitle"),
       pivotStatus: document.getElementById("pivotStatus"),
       pivotQuality: document.getElementById("pivotQuality"),
-      deletePivotConfirm: document.getElementById("deletePivotConfirm"),
       deletePivotBtn: document.getElementById("deletePivotBtn"),
-      deletePivotHint: document.getElementById("deletePivotHint"),
       pivotMetrics: document.getElementById("pivotMetrics"),
       connPreset: document.getElementById("connPreset"),
       connFromWrap: document.getElementById("connFromWrap"),
@@ -1829,13 +1827,6 @@ function renderPivotView() {
     ui.pivotQuality.textContent = `Conectividade: ${text(quality.label, "Estável")}`;
     ui.pivotQuality.className = `badge ${text(quality.code, "green")}`;
   }
-  if (ui.deletePivotConfirm) {
-    ui.deletePivotConfirm.value = "";
-    ui.deletePivotConfirm.placeholder = `Digite ${text(pivot.pivot_id, "ID")} para confirmar`;
-  }
-  if (ui.deletePivotHint) {
-    ui.deletePivotHint.textContent = "";
-  }
 
   ui.probeEnabled.checked = !!probe.enabled;
   ui.probeInterval.value = Number(probe.interval_sec || 0);
@@ -2034,13 +2025,6 @@ function closePivot() {
   state.pivotData = null;
   state.panelSessionMeta = null;
   state.panelRunMeta = state.rawState?.run || null;
-  if (ui.deletePivotConfirm) {
-    ui.deletePivotConfirm.value = "";
-    ui.deletePivotConfirm.placeholder = "Digite o ID do pivô para confirmar";
-  }
-  if (ui.deletePivotHint) {
-    ui.deletePivotHint.textContent = "";
-  }
   setHashPivot("");
   renderSessionControls();
   renderPivotView();
@@ -2050,15 +2034,8 @@ async function deleteSelectedPivot() {
   const pivotId = String(state.selectedPivot || "").trim();
   if (!pivotId) return;
 
-  const confirmValue = String((ui.deletePivotConfirm && ui.deletePivotConfirm.value) || "").trim();
-  if (!confirmValue) {
-    if (ui.deletePivotHint) ui.deletePivotHint.textContent = "Digite o ID do pivô para confirmar a exclusão.";
-    showToast("Digite o ID do pivô para confirmar a exclusão.", "warn", 3200);
-    return;
-  }
-  if (confirmValue !== pivotId) {
-    if (ui.deletePivotHint) ui.deletePivotHint.textContent = "O ID informado não confere com o pivô aberto.";
-    showToast("O ID informado não confere com o pivô aberto.", "error", 3800);
+  const confirmed = window.confirm(`Tem certeza que deseja deletar o pivô ${pivotId}?`);
+  if (!confirmed) {
     return;
   }
 
@@ -2074,12 +2051,10 @@ async function deleteSelectedPivot() {
     if (!response.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${response.status}`);
     }
-    if (ui.deletePivotHint) ui.deletePivotHint.textContent = "Pivô deletado com sucesso.";
     showToast("Pivô deletado com sucesso.", "success", 3200);
     closePivot();
     await refreshAll();
   } catch (err) {
-    if (ui.deletePivotHint) ui.deletePivotHint.textContent = "Não foi possível deletar o pivô.";
     showToast("Não foi possível deletar o pivô. Tente novamente.", "error", 4200);
   } finally {
     if (ui.deletePivotBtn) ui.deletePivotBtn.disabled = false;
