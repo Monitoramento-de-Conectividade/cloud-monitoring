@@ -153,6 +153,16 @@ table {
   gap: 8px;
 }
 
+.hero-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero-main h1 {
+  margin-top: -4px;
+}
+
 .hero-logout {
   width: 40px;
   min-height: 40px;
