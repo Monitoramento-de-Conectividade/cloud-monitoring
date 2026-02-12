@@ -263,7 +263,15 @@ class TelemetryStore:
                 active_run_id = str((active_run or {}).get("run_id") or "").strip()
                 with self._lock:
                     self._active_run_id = active_run_id or None
-                    self._active_session_by_pivot = self.persistence.get_active_sessions_map(run_id=active_run_id)
+                    active_sessions = self.persistence.get_active_sessions_map(run_id=active_run_id)
+                    if (not active_sessions) and active_run_id:
+                        # Se nenhum registro estiver ativo no run, restaura a ultima
+                        # sessao por pivo antes de processar novas mensagens.
+                        active_sessions = self.persistence.activate_latest_sessions_for_run(
+                            active_run_id,
+                            now_ts=time.time(),
+                        )
+                    self._active_session_by_pivot = active_sessions
             else:
                 with self._lock:
                     self._active_session_by_pivot = {}
