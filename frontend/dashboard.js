@@ -376,6 +376,35 @@ function formatShortDateTime(tsSec) {
   return date.toLocaleString();
 }
 
+function formatDateTimeValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const asNumber = Number(value);
+  let date = null;
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    date = asNumber > 1000000000000 ? new Date(asNumber) : new Date(asNumber * 1000);
+  } else {
+    const parsed = new Date(String(value));
+    if (!Number.isNaN(parsed.getTime())) {
+      date = parsed;
+    }
+  }
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return text(value, "-");
+  }
+
+  return date.toLocaleString("pt-BR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -2110,7 +2139,7 @@ function renderAdminUsers() {
       const name = text(user.name, "-");
       const status = text(user.status, "-");
       const roleText = text(user.role, "user");
-      const lastLogin = text(user.last_login_at, "-");
+      const lastLogin = formatDateTimeValue(user.last_login_at);
       return `
         <tr>
           <td>${escapeHtml(email)}</td>
