@@ -145,3 +145,19 @@ test("sorting: sample count fallback reads nested summary", () => {
   const value = _test.pivotSampleCount({ summary: { median_sample_count: 7 } });
   assert.equal(value, 7);
 });
+
+test("display: concentrador override tem prioridade na tecnologia do pivô", () => {
+  const technology = _test.pivotTechnologyValue({
+    is_concentrator: true,
+    last_cloud2: { technology: "LTE" },
+  });
+  assert.equal(technology, "concentrador");
+});
+
+test("display: tecnologia do cloud2 é usada quando pivô não é concentrador", () => {
+  const technology = _test.pivotTechnologyValue({
+    is_concentrator: false,
+    last_cloud2: { technology: "LTE CAT" },
+  });
+  assert.equal(technology, "LTE CAT");
+});

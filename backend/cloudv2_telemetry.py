@@ -48,6 +48,7 @@ QUALITY_RANK = {
 
 # Tolerancia percentual para considerar intervalos cloudv2 equivalentes.
 CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.25
+CONCENTRATOR_TECH_LABEL = "concentrador"
 
 
 def _ts_to_str(ts):
@@ -674,7 +675,8 @@ class TelemetryStore:
             by_firmware = {}
             for pivot in self.pivots.values():
                 cloud2 = pivot.get("last_cloud2") if isinstance(pivot.get("last_cloud2"), dict) else {}
-                technology = str(cloud2.get("technology") or "").strip()
+                is_concentrator = bool(pivot.get("is_concentrator"))
+                technology = CONCENTRATOR_TECH_LABEL if is_concentrator else str(cloud2.get("technology") or "").strip()
                 firmware = str(cloud2.get("firmware") or "").strip()
                 if technology:
                     key = technology.lower()
@@ -798,6 +800,20 @@ class TelemetryStore:
         summary = panel.get("summary") if isinstance(panel.get("summary"), dict) else {}
         session_meta = panel.get("session") if isinstance(panel.get("session"), dict) else {}
         probe_summary = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
+        panel_is_concentrator = panel.get("is_concentrator")
+        if panel_is_concentrator is None:
+            panel_is_concentrator = summary.get("is_concentrator")
+        resolved_is_concentrator = False
+        if isinstance(panel_is_concentrator, bool):
+            resolved_is_concentrator = panel_is_concentrator
+        elif isinstance(panel_is_concentrator, (int, float)):
+            resolved_is_concentrator = bool(panel_is_concentrator)
+        elif isinstance(panel_is_concentrator, str):
+            normalized_flag = panel_is_concentrator.strip().lower()
+            if normalized_flag in ("1", "true", "yes", "sim"):
+                resolved_is_concentrator = True
+            elif normalized_flag in ("0", "false", "no", "nao", "não"):
+                resolved_is_concentrator = False
 
         run_id = str(
             panel.get("run_id")
@@ -849,6 +865,7 @@ class TelemetryStore:
             discovered_ts,
             session_id=session_id,
             run_id=run_id,
+            is_concentrator=resolved_is_concentrator,
         )
 
         topic_counters = {topic: 0 for topic in self.monitor_topics}
@@ -1405,6 +1422,40 @@ class TelemetryStore:
             "interval_sec": normalized_interval,
         }
 
+    def update_pivot_concentrator(self, pivot_id, is_concentrator):
+        normalized_pivot = str(pivot_id or "").strip()
+        if not normalized_pivot:
+            raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized_pivot):
+            raise ValueError("pivot_id invalido")
+
+        normalized_flag = bool(is_concentrator)
+        with self._lock:
+            persisted_flag = self.persistence.set_pivot_is_concentrator(
+                normalized_pivot,
+                normalized_flag,
+                pivot_slug=slugify(normalized_pivot),
+                seen_ts=time.time(),
+            )
+            pivot = self.pivots.get(normalized_pivot)
+            if pivot is not None:
+                pivot["is_concentrator"] = bool(persisted_flag)
+                now_ts = time.time()
+                self._refresh_status_locked(pivot, now_ts)
+                self._persist_pivot_snapshot_locked(pivot, now_ts)
+
+            self._dirty = True
+
+        self.log.info(
+            "Tecnologia concentrador atualizada: pivot_id=%s is_concentrator=%s",
+            normalized_pivot,
+            persisted_flag,
+        )
+        return {
+            "pivot_id": normalized_pivot,
+            "is_concentrator": bool(persisted_flag),
+        }
+
     def _background_loop(self):
         while not self._stop_event.is_set():
             now = time.time()
@@ -1518,7 +1569,7 @@ class TelemetryStore:
             "total_sample_count": len(cleaned),
         }
 
-    def _new_pivot_state(self, pivot_id, discovered_ts, session_id=None, run_id=None):
+    def _new_pivot_state(self, pivot_id, discovered_ts, session_id=None, run_id=None, is_concentrator=False):
         probe_setting = self._probe_settings.get(pivot_id, {})
         probe_enabled = bool(probe_setting.get("enabled", False))
         probe_interval = _safe_int(probe_setting.get("interval_sec"), self.probe_default_interval_sec)
@@ -1532,6 +1583,7 @@ class TelemetryStore:
             "pivot_slug": slugify(pivot_id),
             "session_id": session_id,
             "run_id": run_id,
+            "is_concentrator": bool(is_concentrator),
             "discovered_at_ts": discovered_ts,
             "last_seen_ts": discovered_ts,
             "last_ping_ts": None,
@@ -1572,6 +1624,22 @@ class TelemetryStore:
             return False
 
         changed = False
+        baseline_is_concentrator = summary.get("is_concentrator")
+        if baseline_is_concentrator is not None:
+            parsed_flag = None
+            if isinstance(baseline_is_concentrator, bool):
+                parsed_flag = baseline_is_concentrator
+            elif isinstance(baseline_is_concentrator, (int, float)):
+                parsed_flag = bool(baseline_is_concentrator)
+            elif isinstance(baseline_is_concentrator, str):
+                normalized_flag = baseline_is_concentrator.strip().lower()
+                if normalized_flag in ("1", "true", "yes", "sim"):
+                    parsed_flag = True
+                elif normalized_flag in ("0", "false", "no", "nao", "não"):
+                    parsed_flag = False
+            if parsed_flag is not None and bool(pivot.get("is_concentrator")) != bool(parsed_flag):
+                pivot["is_concentrator"] = bool(parsed_flag)
+                changed = True
 
         baseline_last_ping_ts = _safe_float(summary.get("last_ping_ts"), None)
         baseline_last_cloudv2_ts = _safe_float(summary.get("last_cloudv2_ts"), None)
@@ -1726,6 +1794,15 @@ class TelemetryStore:
             return None
         return summary
 
+    def _load_pivot_concentrator_flag_locked(self, pivot_id):
+        normalized_pivot_id = str(pivot_id or "").strip()
+        if not normalized_pivot_id:
+            return False
+        try:
+            return bool(self.persistence.get_pivot_is_concentrator(normalized_pivot_id))
+        except RuntimeError:
+            return False
+
     def _get_or_create_pivot_locked(self, pivot_id, ts):
         pivot = self.pivots.get(pivot_id)
         if pivot is not None:
@@ -1733,14 +1810,18 @@ class TelemetryStore:
                 pivot["session_id"] = self._ensure_active_session_locked(pivot_id, ts, source="runtime")
             if not pivot.get("run_id"):
                 pivot["run_id"] = self._active_run_id
+            if "is_concentrator" not in pivot:
+                pivot["is_concentrator"] = self._load_pivot_concentrator_flag_locked(pivot_id)
             return pivot
 
         session_id = self._ensure_active_session_locked(pivot_id, ts, source="auto_discovery")
+        is_concentrator = self._load_pivot_concentrator_flag_locked(pivot_id)
         pivot = self._new_pivot_state(
             pivot_id,
             ts,
             session_id=session_id,
             run_id=self._active_run_id,
+            is_concentrator=is_concentrator,
         )
         baseline_summary = self._load_pivot_baseline_from_persistence_locked(pivot_id)
         if isinstance(baseline_summary, dict):
@@ -2699,6 +2780,11 @@ class TelemetryStore:
         status = self._compute_status_locked(pivot, now)
         probe = pivot["probe"]
         probe_stats = self._summarize_probe_stats_locked(probe)
+        is_concentrator = bool(pivot.get("is_concentrator"))
+        source_last_cloud2 = pivot.get("last_cloud2")
+        last_cloud2 = dict(source_last_cloud2) if isinstance(source_last_cloud2, dict) else {}
+        if is_concentrator:
+            last_cloud2["technology"] = CONCENTRATOR_TECH_LABEL
         last_activity_ts = max(
             [
                 _safe_float(pivot.get("last_seen_ts"), 0) or 0,
@@ -2717,6 +2803,7 @@ class TelemetryStore:
             "pivot_slug": pivot["pivot_slug"],
             "session_id": pivot.get("session_id"),
             "run_id": pivot.get("run_id"),
+            "is_concentrator": is_concentrator,
             "flags": {
                 "online": status["online"],
                 "offline": status["offline"],
@@ -2760,7 +2847,7 @@ class TelemetryStore:
             "last_ping_at": _ts_to_str(pivot.get("last_ping_ts")),
             "last_cloudv2_ts": pivot.get("last_cloudv2_ts"),
             "last_cloudv2_at": _ts_to_str(pivot.get("last_cloudv2_ts")),
-            "last_cloud2": pivot.get("last_cloud2"),
+            "last_cloud2": last_cloud2,
             "last_activity_ts": last_activity_ts if last_activity_ts > 0 else None,
             "last_activity_at": _ts_to_str(last_activity_ts) if last_activity_ts > 0 else "-",
             "last_activity_ago": _format_ago(now - last_activity_ts) if last_activity_ts > 0 else "-",
@@ -2799,7 +2886,10 @@ class TelemetryStore:
         drops_7d = [item for item in drop_events if _safe_float(item.get("ts"), 0) >= (now - 604800)]
 
         last_drop = drop_events[-1] if drop_events else None
-        last_cloud2 = pivot.get("last_cloud2") or {}
+        summary_last_cloud2 = summary.get("last_cloud2") if isinstance(summary.get("last_cloud2"), dict) else None
+        last_cloud2 = dict(summary_last_cloud2) if isinstance(summary_last_cloud2, dict) else (pivot.get("last_cloud2") or {})
+        if not isinstance(last_cloud2, dict):
+            last_cloud2 = {}
 
         timeline = sorted(
             list(pivot.get("timeline", [])),
@@ -2918,6 +3008,17 @@ class TelemetryStore:
                         session_id=(raw_session_id or None),
                         run_id=(raw_run_id or self._active_run_id),
                     )
+                    raw_is_concentrator = raw_pivot.get("is_concentrator")
+                    if isinstance(raw_is_concentrator, bool):
+                        pivot["is_concentrator"] = raw_is_concentrator
+                    elif isinstance(raw_is_concentrator, (int, float)):
+                        pivot["is_concentrator"] = bool(raw_is_concentrator)
+                    elif isinstance(raw_is_concentrator, str):
+                        normalized_flag = raw_is_concentrator.strip().lower()
+                        if normalized_flag in ("1", "true", "yes", "sim"):
+                            pivot["is_concentrator"] = True
+                        elif normalized_flag in ("0", "false", "no", "nao", "não"):
+                            pivot["is_concentrator"] = False
 
                     for field in (
                         "last_seen_ts",

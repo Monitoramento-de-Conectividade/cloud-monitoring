@@ -702,6 +702,18 @@ a:focus {
   justify-content: flex-end;
 }
 
+.pivot-admin-tech {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.hint-text {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .pivot-metrics-toggle {
   display: flex;
   justify-content: flex-start;

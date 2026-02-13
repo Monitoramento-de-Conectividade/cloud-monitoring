@@ -234,6 +234,52 @@ class TelemetryPersistence:
                     ),
                 )
 
+    def set_pivot_is_concentrator(self, pivot_id, is_concentrator, pivot_slug=None, seen_ts=None):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return False
+
+        normalized_slug = str(pivot_slug or slugify(normalized_id))
+        normalized_flag = 1 if bool(is_concentrator) else 0
+        with self._lock:
+            conn = self._require_conn_locked()
+            self._upsert_pivot_locked(conn, normalized_id, normalized_slug, seen_ts=seen_ts)
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE pivots
+                    SET
+                        is_concentrator = ?,
+                        updated_at_ts = ?
+                    WHERE pivot_id = ?
+                    """,
+                    (normalized_flag, time.time(), normalized_id),
+                )
+        return bool(normalized_flag)
+
+    def get_pivot_is_concentrator(self, pivot_id):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return False
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            row = conn.execute(
+                """
+                SELECT is_concentrator
+                FROM pivots
+                WHERE pivot_id = ?
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        parsed = _safe_bool(row["is_concentrator"], None)
+        if parsed is None:
+            parsed = bool(_safe_int(row["is_concentrator"], 0) or 0)
+        return bool(parsed)
+
     def _query_run_row_locked(self, conn, run_id=None):
         normalized_run = str(run_id or "").strip()
         if normalized_run:
@@ -611,6 +657,33 @@ class TelemetryPersistence:
                 values.append(value)
         return values
 
+    def _run_has_concentrator_pivots_locked(self, conn, run_id=None):
+        normalized_run = str(run_id or "").strip()
+        if normalized_run:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM pivots AS pivots
+                INNER JOIN monitoring_sessions AS sessions
+                    ON sessions.pivot_id = pivots.pivot_id
+                WHERE sessions.run_id = ?
+                    AND COALESCE(pivots.is_concentrator, 0) = 1
+                LIMIT 1
+                """,
+                (normalized_run,),
+            ).fetchone()
+            return row is not None
+
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM pivots
+            WHERE COALESCE(is_concentrator, 0) = 1
+            LIMIT 1
+            """
+        ).fetchone()
+        return row is not None
+
     def get_cloud2_filter_options(self, run_id=None, limit=500):
         with self._lock:
             conn = self._require_conn_locked()
@@ -627,6 +700,11 @@ class TelemetryPersistence:
                 run_id=effective_run,
                 limit=limit,
             )
+            if self._run_has_concentrator_pivots_locked(conn, run_id=effective_run):
+                known_keys = {str(item or "").strip().lower() for item in technologies}
+                if "concentrador" not in known_keys:
+                    technologies.append("concentrador")
+                    technologies.sort(key=lambda value: str(value).lower())
             return {
                 "run_id": effective_run,
                 "technologies": technologies,
@@ -1756,6 +1834,7 @@ class TelemetryPersistence:
             "pivot_slug": str(pivot_slug or slugify(pivot_id)),
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
+            "is_concentrator": False,
             "status": {
                 "code": "gray",
                 "label": "Inicial",
@@ -1826,6 +1905,11 @@ class TelemetryPersistence:
         item["pivot_slug"] = str(item.get("pivot_slug") or pivot_slug)
         item["session_id"] = str(item.get("session_id") or session_id)
         item["run_id"] = str(item.get("run_id") or run_id or "")
+        parsed = _safe_bool(item.get("is_concentrator"), None)
+        if parsed is None:
+            item.pop("is_concentrator", None)
+        else:
+            item["is_concentrator"] = parsed
 
         parsed = _safe_bool(item.get("median_ready"), None)
         if parsed is None:
@@ -1865,11 +1949,18 @@ class TelemetryPersistence:
             parsed = _safe_float(row["snapshot_disconnect_threshold_sec"], None)
             if parsed is not None:
                 item["disconnect_threshold_sec"] = parsed
+        if "pivot_is_concentrator" in row_keys:
+            parsed = _safe_bool(row["pivot_is_concentrator"], None)
+            if parsed is None:
+                parsed = bool(_safe_int(row["pivot_is_concentrator"], 0) or 0)
+            item["is_concentrator"] = bool(parsed)
 
         if "median_ready" not in item:
             item["median_ready"] = False
         if "median_sample_count" not in item:
             item["median_sample_count"] = 0
+        if "is_concentrator" not in item:
+            item["is_concentrator"] = False
 
         if not isinstance(item.get("status"), dict):
             item["status"] = {
@@ -1913,6 +2004,7 @@ class TelemetryPersistence:
                     sessions.pivot_id,
                     sessions.session_id,
                     sessions.updated_at_ts AS session_updated_at_ts,
+                    COALESCE(pivots.is_concentrator, 0) AS pivot_is_concentrator,
                     snapshots.snapshot_json,
                     snapshots.median_ready AS snapshot_median_ready,
                     snapshots.median_sample_count AS snapshot_median_sample_count,
@@ -1920,6 +2012,8 @@ class TelemetryPersistence:
                     snapshots.disconnect_threshold_sec AS snapshot_disconnect_threshold_sec,
                     snapshots.updated_at_ts AS snapshot_updated_at_ts
                 FROM monitoring_sessions AS sessions
+                INNER JOIN pivots AS pivots
+                    ON pivots.pivot_id = sessions.pivot_id
                 LEFT JOIN pivot_snapshots AS snapshots
                     ON snapshots.pivot_id = sessions.pivot_id
                     AND snapshots.session_id = sessions.session_id
@@ -1986,6 +2080,21 @@ class TelemetryPersistence:
                 """,
                 (normalized_id, resolved_session_id),
             ).fetchone()
+            pivot_row = conn.execute(
+                """
+                SELECT COALESCE(is_concentrator, 0) AS is_concentrator
+                FROM pivots
+                WHERE pivot_id = ?
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+            pivot_is_concentrator = False
+            if pivot_row is not None:
+                parsed = _safe_bool(pivot_row["is_concentrator"], None)
+                if parsed is None:
+                    parsed = bool(_safe_int(pivot_row["is_concentrator"], 0) or 0)
+                pivot_is_concentrator = bool(parsed)
 
         payload = {}
         if snapshot_row is not None:
@@ -2049,5 +2158,7 @@ class TelemetryPersistence:
             }
         )
         summary["probe"] = probe_summary
+        summary["is_concentrator"] = bool(pivot_is_concentrator)
         payload["summary"] = summary
+        payload["is_concentrator"] = bool(pivot_is_concentrator)
         return payload

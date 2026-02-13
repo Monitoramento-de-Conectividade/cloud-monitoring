@@ -60,6 +60,10 @@ const ui = HAS_DOM
       pivotStatus: document.getElementById("pivotStatus"),
       pivotQuality: document.getElementById("pivotQuality"),
       deletePivotBtn: document.getElementById("deletePivotBtn"),
+      pivotAdminTech: document.getElementById("pivotAdminTech"),
+      pivotConcentratorToggle: document.getElementById("pivotConcentratorToggle"),
+      savePivotTechnologyBtn: document.getElementById("savePivotTechnologyBtn"),
+      pivotTechnologyHint: document.getElementById("pivotTechnologyHint"),
       pivotMoreInfoBtn: document.getElementById("pivotMoreInfoBtn"),
       pivotMetrics: document.getElementById("pivotMetrics"),
       connPreset: document.getElementById("connPreset"),
@@ -234,6 +238,29 @@ function normalizeFilterKey(value) {
   return normalized ? normalized.toLowerCase() : "";
 }
 
+function toBoolean(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "sim"].includes(normalized)) return true;
+    if (["0", "false", "no", "nao", "não"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function isPivotConcentrator(item) {
+  if (!item || typeof item !== "object") return false;
+  const summary = item.summary && typeof item.summary === "object" ? item.summary : null;
+  if (summary && Object.prototype.hasOwnProperty.call(summary, "is_concentrator")) {
+    return toBoolean(summary.is_concentrator, false);
+  }
+  if (Object.prototype.hasOwnProperty.call(item, "is_concentrator")) {
+    return toBoolean(item.is_concentrator, false);
+  }
+  return false;
+}
+
 function buildFilterOptionItems(values) {
   const byKey = new Map();
   for (const rawValue of values || []) {
@@ -250,6 +277,7 @@ function buildFilterOptionItems(values) {
 }
 
 function pivotTechnologyValue(item) {
+  if (isPivotConcentrator(item)) return "concentrador";
   const cloud2 = (item || {}).last_cloud2 || {};
   return normalizeFilterText(cloud2.technology);
 }
@@ -1017,7 +1045,7 @@ function renderCards() {
           : `${samples} amostras (em análise)`;
 
         const rssi = escapeHtml(text(cloud2.rssi));
-        const technology = escapeHtml(text(cloud2.technology));
+        const technology = escapeHtml(text(pivotTechnologyValue(pivot)));
         const firmware = escapeHtml(text(cloud2.firmware));
 
         return `
@@ -1104,7 +1132,11 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
     { key: "drops_7d", label: "Desconexões (7 dias)", value: text(metrics.drops_7d, "0") },
     { key: "last_drop_duration", label: "Duração da última desconexão", value: fmtDuration(metrics.last_drop_duration_sec) },
     { key: "last_rssi", label: "Último sinal (RSSI)", value: text(metrics.last_rssi) },
-    { key: "last_technology", label: "Última tecnologia de rede", value: text(metrics.last_technology) },
+    {
+      key: "last_technology",
+      label: "Última tecnologia de rede",
+      value: isPivotConcentrator(pivot) ? "concentrador" : text(metrics.last_technology),
+    },
     { key: "firmware", label: "Firmware", value: text(metrics.last_firmware) },
     { key: "timeout_streak", label: "Falhas consecutivas de resposta", value: text(probe.timeout_streak, "0") },
     { key: "response_ratio", label: "Respostas/solicitações", value: responseCoverageText },
@@ -1957,12 +1989,14 @@ function renderPivotView() {
   if (!pivot || !state.selectedPivot) {
     ui.pivotView.hidden = true;
     syncPivotDeleteControl();
+    syncPivotTechnologyControl();
     clearConnectivitySegmentSelection();
     return;
   }
 
   ui.pivotView.hidden = false;
   syncPivotDeleteControl();
+  syncPivotTechnologyControl();
   const summary = pivot.summary || {};
   const probe = summary.probe || {};
   const connectivityView = renderConnectivityTimeline(pivot);
@@ -2003,6 +2037,13 @@ function renderPivotView() {
   ui.probeStatDelayLast.textContent = fmtSecondsPrecise(probe.latency_last_sec);
   ui.probeStatDelayAvg.textContent = fmtSecondsPrecise(probe.latency_avg_sec);
   ui.probeHint.textContent = "";
+  if (ui.pivotConcentratorToggle) {
+    ui.pivotConcentratorToggle.checked = isPivotConcentrator(pivot);
+  }
+  if (ui.pivotTechnologyHint) {
+    ui.pivotTechnologyHint.textContent = "";
+  }
+  syncPivotTechnologyControl();
 
   renderStatusSummary();
   renderCards();
@@ -2239,6 +2280,63 @@ function syncPivotDeleteControl() {
   }
 }
 
+function canCurrentUserManagePivotTechnology() {
+  return canCurrentUserDeletePivots();
+}
+
+function syncPivotTechnologyControl() {
+  if (!ui.pivotAdminTech || !ui.pivotConcentratorToggle || !ui.savePivotTechnologyBtn) return;
+  const allowed = canCurrentUserManagePivotTechnology();
+  const hasPivotSelected = !!String(state.selectedPivot || "").trim();
+  ui.pivotAdminTech.hidden = !allowed || !hasPivotSelected;
+  const disableControl = !allowed || !hasPivotSelected;
+  ui.pivotConcentratorToggle.disabled = disableControl;
+  ui.savePivotTechnologyBtn.disabled = disableControl;
+  if (ui.pivotTechnologyHint && disableControl) {
+    ui.pivotTechnologyHint.textContent = "";
+  }
+}
+
+async function savePivotTechnologySetting() {
+  if (!canCurrentUserManagePivotTechnology()) {
+    syncPivotTechnologyControl();
+    showToast("Apenas o administrador principal pode alterar a tecnologia do pivô.", "error", 3800);
+    return;
+  }
+
+  const pivotId = String(state.selectedPivot || "").trim();
+  if (!pivotId || !ui.pivotConcentratorToggle) return;
+
+  if (ui.savePivotTechnologyBtn) ui.savePivotTechnologyBtn.disabled = true;
+  try {
+    const response = await fetch(buildApiUrl("/api/pivot-technology"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_id: pivotId,
+        is_concentrator: !!ui.pivotConcentratorToggle.checked,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+    if (ui.pivotTechnologyHint) {
+      ui.pivotTechnologyHint.textContent = "Tecnologia atualizada com sucesso.";
+    }
+    showToast("Tecnologia do pivô salva com sucesso.", "success", 3200);
+    await refreshAll();
+  } catch (err) {
+    if (ui.pivotTechnologyHint) {
+      ui.pivotTechnologyHint.textContent = "Não foi possível salvar a tecnologia. Tente novamente.";
+    }
+    showToast("Não foi possível salvar a tecnologia do pivô.", "error", 4200);
+  } finally {
+    if (ui.savePivotTechnologyBtn) ui.savePivotTechnologyBtn.disabled = false;
+  }
+}
+
 async function deleteSelectedPivot() {
   if (!canCurrentUserDeletePivots()) {
     syncPivotDeleteControl();
@@ -2290,6 +2388,7 @@ function syncAdminControls() {
     renderAdminUsers();
   }
   syncPivotDeleteControl();
+  syncPivotTechnologyControl();
 }
 
 function renderAdminUsers() {
@@ -2560,6 +2659,9 @@ function wireEvents() {
       renderPivotView();
     });
   }
+  if (ui.savePivotTechnologyBtn) {
+    ui.savePivotTechnologyBtn.addEventListener("click", savePivotTechnologySetting);
+  }
   ui.saveProbe.addEventListener("click", saveProbeSetting);
 
   ui.connPreset.addEventListener("change", () => {
@@ -2701,6 +2803,8 @@ if (typeof module !== "undefined" && module.exports) {
     _test: {
       pivotSampleCount,
       compareBySamplesDesc,
+      isPivotConcentrator,
+      pivotTechnologyValue,
       getDisplayStatus,
       getDisplayQuality,
       buildQualityFromConnectivity,

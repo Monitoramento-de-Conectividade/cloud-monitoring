@@ -1,0 +1,1 @@
+ALTER TABLE pivots ADD COLUMN is_concentrator INTEGER NOT NULL DEFAULT 0;
