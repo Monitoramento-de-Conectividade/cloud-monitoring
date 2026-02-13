@@ -786,10 +786,12 @@ function applyFilterSort() {
   const selectedConnectivity = normalizeFilterKey(state.connectivityFilter) || "all";
   const selectedTechnology = normalizeFilterKey(state.technologyFilter) || "all";
   const selectedFirmware = normalizeFilterKey(state.firmwareFilter) || "all";
+  const probeActiveRankingMode = state.sort === "probe_active_response_ratio_desc";
 
   let filtered = list.filter((item) => {
     const quality = getDisplayQuality(item);
     const status = getDisplayStatus(item);
+    if (probeActiveRankingMode && !isProbeMonitoringEnabled(item)) return false;
     if (selectedStatus !== "all" && status.code !== selectedStatus) return false;
     if (selectedConnectivity !== "all" && quality.code !== selectedConnectivity) return false;
     if (needle) {
@@ -810,10 +812,12 @@ function applyFilterSort() {
   filtered.sort((a, b) => {
     const ap = String(a.pivot_id || "");
     const bp = String(b.pivot_id || "");
-    if (state.sort === "pivot_asc") return ap.localeCompare(bp);
-
     const aActivity = Number(a.last_activity_ts || 0);
     const bActivity = Number(b.last_activity_ts || 0);
+    if (state.sort === "probe_active_response_ratio_desc") {
+      return compareByProbeResponseRatioDesc(a, b, ap, bp, aActivity, bActivity);
+    }
+    if (state.sort === "pivot_asc") return ap.localeCompare(bp);
     if (state.sort === "samples_desc") return compareBySamplesDesc(a, b, ap, bp, aActivity, bActivity);
 
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
@@ -844,6 +848,61 @@ function pivotSampleCount(item) {
   const nested = Number((((item || {}).summary || {}).median_sample_count));
   if (Number.isFinite(nested) && nested >= 0) return Math.floor(nested);
   return 0;
+}
+
+function pivotProbeSummary(item) {
+  const direct = (item || {}).probe;
+  if (direct && typeof direct === "object") return direct;
+  const nested = ((item || {}).summary || {}).probe;
+  if (nested && typeof nested === "object") return nested;
+  return {};
+}
+
+function isProbeMonitoringEnabled(item) {
+  const probe = pivotProbeSummary(item);
+  return toBoolean(probe.enabled, false);
+}
+
+function pivotProbeResponseRatioPct(item) {
+  const probe = pivotProbeSummary(item);
+  const ratio = Number(probe.response_ratio_pct);
+  if (Number.isFinite(ratio) && ratio >= 0) return ratio;
+
+  const sentCount = Number(probe.sent_count);
+  const responseCount = Number(probe.response_count);
+  if (Number.isFinite(sentCount) && sentCount > 0 && Number.isFinite(responseCount) && responseCount >= 0) {
+    return (responseCount / sentCount) * 100;
+  }
+  return -1;
+}
+
+function compareByProbeResponseRatioDesc(
+  a,
+  b,
+  ap = String(a?.pivot_id || ""),
+  bp = String(b?.pivot_id || ""),
+  aActivity = null,
+  bActivity = null
+) {
+  const aRatio = pivotProbeResponseRatioPct(a);
+  const bRatio = pivotProbeResponseRatioPct(b);
+  if (aRatio !== bRatio) return bRatio - aRatio;
+
+  const aProbe = pivotProbeSummary(a);
+  const bProbe = pivotProbeSummary(b);
+  const aSent = Number(aProbe.sent_count || 0);
+  const bSent = Number(bProbe.sent_count || 0);
+  if (aSent !== bSent) return bSent - aSent;
+
+  const aResponse = Number(aProbe.response_count || 0);
+  const bResponse = Number(bProbe.response_count || 0);
+  if (aResponse !== bResponse) return bResponse - aResponse;
+
+  const aAct = Number.isFinite(Number(aActivity)) ? Number(aActivity) : Number(a?.last_activity_ts || 0);
+  const bAct = Number.isFinite(Number(bActivity)) ? Number(bActivity) : Number(b?.last_activity_ts || 0);
+  if (aAct !== bAct) return bAct - aAct;
+
+  return ap.localeCompare(bp);
 }
 
 function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(b?.pivot_id || ""), aActivity = null, bActivity = null) {
@@ -2803,6 +2862,9 @@ if (typeof module !== "undefined" && module.exports) {
     _test: {
       pivotSampleCount,
       compareBySamplesDesc,
+      isProbeMonitoringEnabled,
+      pivotProbeResponseRatioPct,
+      compareByProbeResponseRatioDesc,
       isPivotConcentrator,
       pivotTechnologyValue,
       getDisplayStatus,

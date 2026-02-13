@@ -146,6 +146,29 @@ test("sorting: sample count fallback reads nested summary", () => {
   assert.equal(value, 7);
 });
 
+test("sorting: latência ativa prioriza maior relação respostas/solicitações", () => {
+  const a = {
+    pivot_id: "A",
+    probe: { enabled: true, response_ratio_pct: 52.0, sent_count: 25, response_count: 13 },
+    last_activity_ts: 100,
+  };
+  const b = {
+    pivot_id: "B",
+    probe: { enabled: true, response_ratio_pct: 80.0, sent_count: 5, response_count: 4 },
+    last_activity_ts: 90,
+  };
+
+  const compare = _test.compareByProbeResponseRatioDesc(a, b);
+  assert.ok(compare > 0);
+});
+
+test("sorting: relação respostas/solicitações é calculada quando percentual não veio no payload", () => {
+  const ratio = _test.pivotProbeResponseRatioPct({
+    probe: { enabled: true, sent_count: 10, response_count: 7 },
+  });
+  assert.equal(ratio, 70);
+});
+
 test("display: concentrador override tem prioridade na tecnologia do pivô", () => {
   const technology = _test.pivotTechnologyValue({
     is_concentrator: true,
