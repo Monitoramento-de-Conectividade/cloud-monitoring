@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
     "dashboard_enabled": True,
     "dashboard_port": 8008,
     "dashboard_refresh_sec": 5,
+    "api_state_cache_ttl_sec": 2.0,
+    "api_quality_cache_ttl_sec": 2.0,
     "enable_background_worker": True,
     "require_apply_to_start": True,
     "continuous_monitoring_mode": True,
@@ -201,6 +203,8 @@ def _apply_env_overrides(config):
         "DASHBOARD_ENABLED": "dashboard_enabled",
         "DASHBOARD_PORT": "dashboard_port",
         "DASHBOARD_REFRESH_SEC": "dashboard_refresh_sec",
+        "API_STATE_CACHE_TTL_SEC": "api_state_cache_ttl_sec",
+        "API_QUALITY_CACHE_TTL_SEC": "api_quality_cache_ttl_sec",
         "ENABLE_BACKGROUND_WORKER": "enable_background_worker",
         "REQUIRE_APPLY_TO_START": "require_apply_to_start",
         "CONTINUOUS_MONITORING_MODE": "continuous_monitoring_mode",
@@ -296,6 +300,20 @@ def normalize_config(raw_config):
         DEFAULT_CONFIG["dashboard_refresh_sec"],
         minimum=1,
     )
+    base["api_state_cache_ttl_sec"] = _to_float(
+        base.get("api_state_cache_ttl_sec"),
+        DEFAULT_CONFIG["api_state_cache_ttl_sec"],
+        minimum=0.0,
+    )
+    if base["api_state_cache_ttl_sec"] > 5.0:
+        base["api_state_cache_ttl_sec"] = 5.0
+    base["api_quality_cache_ttl_sec"] = _to_float(
+        base.get("api_quality_cache_ttl_sec"),
+        DEFAULT_CONFIG["api_quality_cache_ttl_sec"],
+        minimum=0.0,
+    )
+    if base["api_quality_cache_ttl_sec"] > 5.0:
+        base["api_quality_cache_ttl_sec"] = 5.0
     base["enable_background_worker"] = _to_bool(
         base.get("enable_background_worker"),
         DEFAULT_CONFIG["enable_background_worker"],

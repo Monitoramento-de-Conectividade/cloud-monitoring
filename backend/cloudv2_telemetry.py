@@ -6,6 +6,7 @@ import re
 import statistics
 import threading
 import time
+import copy
 from datetime import datetime
 
 from backend.cloudv2_dashboard import DATA_DIR, ensure_dirs, slugify, write_json_atomic
@@ -235,6 +236,13 @@ class TelemetryStore:
             self.probe_default_interval_sec = self.probe_min_interval_sec
         self.probe_timeout_factor = max(1.0, float(config.get("probe_timeout_factor", 1.25)))
         self.probe_timeout_streak_alert = max(1, int(config.get("probe_timeout_streak_alert", 2)))
+        state_cache_ttl = _safe_float(config.get("api_state_cache_ttl_sec"), 2.0)
+        quality_cache_ttl = _safe_float(config.get("api_quality_cache_ttl_sec"), 2.0)
+        self.api_state_cache_ttl_sec = min(5.0, max(0.0, state_cache_ttl if state_cache_ttl is not None else 2.0))
+        self.api_quality_cache_ttl_sec = min(
+            5.0,
+            max(0.0, quality_cache_ttl if quality_cache_ttl is not None else 2.0),
+        )
 
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -244,6 +252,9 @@ class TelemetryStore:
         self._last_write_ts = 0.0
         self._event_seq = 0
         self._probe_sender = None
+        self._api_cache_generation = 0
+        self._state_snapshot_cache = {}
+        self._quality_cards_cache = {}
 
         self.pivots = {}
         self.pending_ping_unknown = {}
@@ -303,6 +314,7 @@ class TelemetryStore:
                 self.malformed_messages = []
                 self.duplicate_count = 0
                 self._dirty = True
+                self._invalidate_api_caches_locked()
             self._clear_dashboard_data_files()
             self.write()
         else:
@@ -356,6 +368,7 @@ class TelemetryStore:
                         self._persist_pivot_snapshot_locked(pivot, now)
 
                 self._dirty = True
+                self._invalidate_api_caches_locked()
             self.write()
 
         if self.enable_background_worker and (not self._started):
@@ -371,6 +384,59 @@ class TelemetryStore:
 
     def set_probe_sender(self, sender_fn):
         self._probe_sender = sender_fn
+
+    def _api_cache_key(self, run_id):
+        normalized_run = str(run_id or "").strip()
+        return normalized_run or "__default__"
+
+    def _invalidate_api_caches_locked(self):
+        self._api_cache_generation += 1
+        self._state_snapshot_cache.clear()
+        self._quality_cards_cache.clear()
+
+    def _get_cached_api_payload_locked(self, cache, cache_key, now_ts):
+        entry = cache.get(cache_key)
+        if not isinstance(entry, dict):
+            return None
+
+        generation = _safe_int(entry.get("generation"), None)
+        if generation is None or generation != self._api_cache_generation:
+            cache.pop(cache_key, None)
+            return None
+
+        expires_at_ts = _safe_float(entry.get("expires_at_ts"), None)
+        if expires_at_ts is None or expires_at_ts <= now_ts:
+            cache.pop(cache_key, None)
+            return None
+
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            cache.pop(cache_key, None)
+            return None
+        return copy.deepcopy(payload)
+
+    def _set_cached_api_payload_locked(
+        self,
+        cache,
+        cache_key,
+        payload,
+        ttl_sec,
+        now_ts,
+        expected_generation=None,
+    ):
+        ttl_value = _safe_float(ttl_sec, 0.0)
+        if ttl_value is None or ttl_value <= 0:
+            return
+        if expected_generation is not None and int(expected_generation) != int(self._api_cache_generation):
+            return
+        if not isinstance(payload, dict):
+            return
+
+        cache[cache_key] = {
+            "generation": int(self._api_cache_generation),
+            "expires_at_ts": float(now_ts) + float(ttl_value),
+            "payload": copy.deepcopy(payload),
+        }
 
     def process_message(self, topic, payload, ts=None):
         ts = float(ts if ts is not None else time.time())
@@ -399,6 +465,7 @@ class TelemetryStore:
             parsed, parse_error = parse_device_payload(payload_text)
             if parse_error:
                 self._record_malformed_locked(topic, payload_text, parse_error, ts)
+                self._invalidate_api_caches_locked()
                 return {"accepted": False, "reason": parse_error}
 
             pivot_id = parsed["pivot_id"]
@@ -411,6 +478,7 @@ class TelemetryStore:
                 self._prune_pivot_locked(pivot, ts)
                 self._persist_pivot_snapshot_locked(pivot, ts)
                 self._dirty = True
+                self._invalidate_api_caches_locked()
                 return {
                     "accepted": True,
                     "pivot_id": pivot_id,
@@ -422,6 +490,7 @@ class TelemetryStore:
             if pivot is None:
                 if topic == TOPIC_PING:
                     self._record_pending_ping_locked(pivot_id, ts, payload_text)
+                    self._invalidate_api_caches_locked()
                     return {
                         "accepted": False,
                         "reason": "ping para pivot nao descoberto",
@@ -452,6 +521,7 @@ class TelemetryStore:
             self._prune_pivot_locked(pivot, ts)
             self._persist_pivot_snapshot_locked(pivot, ts)
             self._dirty = True
+            self._invalidate_api_caches_locked()
             return {
                 "accepted": True,
                 "pivot_id": pivot_id,
@@ -517,7 +587,9 @@ class TelemetryStore:
                 self.log.warning("Falha ao publicar probe #11$ para pivot %s", pivot_id)
 
         if changed:
-            self._dirty = True
+            with self._lock:
+                self._dirty = True
+                self._invalidate_api_caches_locked()
         return changed
 
     def write(self):
@@ -553,30 +625,27 @@ class TelemetryStore:
     def get_state_snapshot(self, now=None, run_id=None):
         now = float(now if now is not None else time.time())
         normalized_run = str(run_id or "").strip()
+        cache_key = self._api_cache_key(normalized_run if normalized_run else None)
+        cache_ttl_sec = self.api_state_cache_ttl_sec
         if normalized_run:
+            with self._lock:
+                cached_payload = self._get_cached_api_payload_locked(self._state_snapshot_cache, cache_key, now)
+                if cached_payload is not None:
+                    return cached_payload
+                cache_generation = int(self._api_cache_generation)
+                settings = self._build_state_settings_locked()
+
             try:
                 persisted = self.persistence.get_run_state_payload(run_id=normalized_run)
             except RuntimeError:
                 persisted = None
             if persisted is None:
-                return {
+                payload = {
                     "updated_at": _ts_to_str(now),
                     "updated_at_ts": now,
                     "run_id": normalized_run,
                     "run": None,
-                    "settings": {
-                        "monitor_topics": list(self.monitor_topics),
-                        "connectivity_topics": list(CONNECTIVITY_TOPICS),
-                        "tolerance_factor": self.tolerance_factor,
-                        "ping_expected_sec": self.ping_expected_sec,
-                        "attention_disconnected_pct_threshold": self.attention_disconnected_pct_threshold,
-                        "critical_disconnected_pct_threshold": self.critical_disconnected_pct_threshold,
-                        "attention_disconnected_window_hours": self.attention_disconnected_window_hours,
-                        "cloudv2_median_window": self.cloudv2_window,
-                        "cloudv2_min_samples": self.cloudv2_min_samples,
-                        "show_pending_ping_pivots": self.show_pending_ping_pivots,
-                        "probe_timeout_streak_alert": self.probe_timeout_streak_alert,
-                    },
+                    "settings": settings,
                     "counts": {
                         "pivots": 0,
                         "pending_ping_unknown": 0,
@@ -588,13 +657,21 @@ class TelemetryStore:
                     "malformed_recent": [],
                     "mode": "history",
                 }
+                with self._lock:
+                    self._set_cached_api_payload_locked(
+                        self._state_snapshot_cache,
+                        cache_key,
+                        payload,
+                        ttl_sec=cache_ttl_sec,
+                        now_ts=now,
+                        expected_generation=cache_generation,
+                    )
+                return payload
 
             pivot_items = persisted.get("pivots") if isinstance(persisted.get("pivots"), list) else []
             run_info = persisted.get("run") if isinstance(persisted.get("run"), dict) else None
             mode = "live" if bool((run_info or {}).get("is_active")) else "history"
-            with self._lock:
-                settings = self._build_state_settings_locked()
-            return {
+            payload = {
                 "updated_at": persisted.get("updated_at") or _ts_to_str(now),
                 "updated_at_ts": _safe_float(persisted.get("updated_at_ts"), now),
                 "run_id": str(persisted.get("run_id") or normalized_run),
@@ -611,9 +688,32 @@ class TelemetryStore:
                 "malformed_recent": [],
                 "mode": mode,
             }
+            with self._lock:
+                self._set_cached_api_payload_locked(
+                    self._state_snapshot_cache,
+                    cache_key,
+                    payload,
+                    ttl_sec=cache_ttl_sec,
+                    now_ts=now,
+                    expected_generation=cache_generation,
+                )
+            return payload
 
         with self._lock:
-            return self._build_state_snapshot_locked(now)
+            cached_payload = self._get_cached_api_payload_locked(self._state_snapshot_cache, cache_key, now)
+            if cached_payload is not None:
+                return cached_payload
+
+            payload = self._build_state_snapshot_locked(now)
+            self._set_cached_api_payload_locked(
+                self._state_snapshot_cache,
+                cache_key,
+                payload,
+                ttl_sec=cache_ttl_sec,
+                now_ts=now,
+                expected_generation=self._api_cache_generation,
+            )
+            return payload
 
     def get_pivot_snapshot(self, pivot_id, now=None, session_id=None, run_id=None):
         explicit_now = now is not None
@@ -654,11 +754,29 @@ class TelemetryStore:
 
     def get_quality_cards_snapshot(self, run_id=None):
         normalized_run = str(run_id or "").strip() or None
+        now = time.time()
+        cache_key = self._api_cache_key(normalized_run)
+        cache_ttl_sec = self.api_quality_cache_ttl_sec
+        with self._lock:
+            cached_payload = self._get_cached_api_payload_locked(self._quality_cards_cache, cache_key, now)
+            if cached_payload is not None:
+                return cached_payload
+            cache_generation = int(self._api_cache_generation)
+
         try:
             payload = self.persistence.get_quality_cards_payload(run_id=normalized_run)
         except RuntimeError:
             payload = None
         if payload is not None:
+            with self._lock:
+                self._set_cached_api_payload_locked(
+                    self._quality_cards_cache,
+                    cache_key,
+                    payload,
+                    ttl_sec=cache_ttl_sec,
+                    now_ts=now,
+                    expected_generation=cache_generation,
+                )
             return payload
 
         now = time.time()
@@ -689,13 +807,22 @@ class TelemetryStore:
                 )
 
             run_payload = self._build_runtime_payload_locked(now).get("active_run")
-            return {
+            payload = {
                 "run_id": str((run_payload or {}).get("run_id") or normalized_run or ""),
                 "run": run_payload,
                 "updated_at_ts": now,
                 "updated_at": _ts_to_str(now),
                 "pivots": fallback_pivots,
             }
+            self._set_cached_api_payload_locked(
+                self._quality_cards_cache,
+                cache_key,
+                payload,
+                ttl_sec=cache_ttl_sec,
+                now_ts=now,
+                expected_generation=cache_generation,
+            )
+            return payload
 
     def list_monitoring_runs(self, limit=200):
         try:
@@ -764,6 +891,7 @@ class TelemetryStore:
             self._dedupe_cache = {}
             self._event_seq = 0
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
             result = {
                 "ok": True,
@@ -797,6 +925,7 @@ class TelemetryStore:
 
             removed_db = self.persistence.delete_pivot(normalized)
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
             result = {
                 "ok": True,
@@ -1112,6 +1241,7 @@ class TelemetryStore:
             self.duplicate_count = 0
             self._dedupe_cache = {}
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
             result = {
                 "run_id": normalized_run,
@@ -1184,6 +1314,7 @@ class TelemetryStore:
 
             self.pivots = rebuilt
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
             result = {
                 "run_id": run_id,
@@ -1261,6 +1392,7 @@ class TelemetryStore:
             self._refresh_status_locked(pivot, current_ts)
             self._persist_pivot_snapshot_locked(pivot, current_ts)
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
             return {
                 "pivot_id": normalized,
@@ -1453,6 +1585,7 @@ class TelemetryStore:
                 self._persist_pivot_snapshot_locked(pivot, now_ts)
 
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
         self.log.info(
             "Configuracao de probe atualizada: pivot_id=%s enabled=%s interval_sec=%s",
@@ -1490,6 +1623,7 @@ class TelemetryStore:
                 self._persist_pivot_snapshot_locked(pivot, now_ts)
 
             self._dirty = True
+            self._invalidate_api_caches_locked()
 
         self.log.info(
             "Tecnologia concentrador atualizada: pivot_id=%s is_concentrator=%s",
