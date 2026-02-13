@@ -60,6 +60,7 @@ const ui = HAS_DOM
       pivotStatus: document.getElementById("pivotStatus"),
       pivotQuality: document.getElementById("pivotQuality"),
       deletePivotBtn: document.getElementById("deletePivotBtn"),
+      pivotMoreInfoBtn: document.getElementById("pivotMoreInfoBtn"),
       pivotMetrics: document.getElementById("pivotMetrics"),
       connPreset: document.getElementById("connPreset"),
       connFromWrap: document.getElementById("connFromWrap"),
@@ -120,6 +121,7 @@ const state = {
   cardsPageSize: 18,
   selectedPivot: null,
   pivotData: null,
+  pivotMetricsExpanded: false,
   connPreset: "30d",
   connCustomFrom: "",
   connCustomTo: "",
@@ -1083,40 +1085,61 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
       : fmtPercent(summary.disconnected_pct);
 
   const cards = [
-    { label: "Status atual", value: statusLabel },
-    { label: "Detalhe do status", value: safeStatusReason },
-    { label: "Conectividade", value: qualityLabel },
-    { label: "Detalhe da conectividade", value: safeQualityReason },
-    { label: "% Conectado (janela)", value: connectedPctText },
-    { label: "% Desconectado (janela)", value: disconnectedPctText },
-    { label: "Última atualização de conectividade", value: text(summary.last_ping_at) },
-    { label: "Última atualização de dados", value: text(summary.last_cloudv2_at) },
+    { key: "status", label: "Status atual", value: statusLabel },
+    { key: "status_reason", label: "Detalhe do status", value: safeStatusReason },
+    { key: "connectivity", label: "Conectividade", value: qualityLabel },
+    { key: "connectivity_reason", label: "Detalhe da conectividade", value: safeQualityReason },
+    { key: "connected_pct", label: "% Conectado (janela)", value: connectedPctText },
+    { key: "disconnected_pct", label: "% Desconectado (janela)", value: disconnectedPctText },
+    { key: "last_ping", label: "Última atualização de conectividade", value: text(summary.last_ping_at) },
+    { key: "last_cloudv2", label: "Última atualização de dados", value: text(summary.last_cloudv2_at) },
     {
+      key: "median_cloudv2",
       label: "Intervalo típico de atualização",
       value: summary.median_ready
         ? `${fmtDuration(summary.median_cloudv2_interval_sec)} (${summary.median_sample_count} amostras)`
         : `${summary.median_sample_count} amostras`,
     },
-    { label: "Desconexões (24h)", value: text(metrics.drops_24h, "0") },
-    { label: "Desconexões (7 dias)", value: text(metrics.drops_7d, "0") },
-    { label: "Duração da última desconexão", value: fmtDuration(metrics.last_drop_duration_sec) },
-    { label: "Último sinal (RSSI)", value: text(metrics.last_rssi) },
-    { label: "Última tecnologia de rede", value: text(metrics.last_technology) },
-    { label: "Firmware", value: text(metrics.last_firmware) },
-    { label: "Falhas consecutivas de resposta", value: text(probe.timeout_streak, "0") },
-    { label: "Respostas/solicitações", value: responseCoverageText },
-    { label: "Total de falhas de resposta", value: text(timeoutCount, "0") },
-    { label: "Latência da última resposta", value: fmtSecondsPrecise(probe.latency_last_sec) },
-    { label: "Latência média", value: fmtSecondsPrecise(probe.latency_avg_sec) },
-    { label: "Latência mediana", value: fmtSecondsPrecise(probe.latency_median_sec) },
+    { key: "drops_24h", label: "Desconexões (24h)", value: text(metrics.drops_24h, "0") },
+    { key: "drops_7d", label: "Desconexões (7 dias)", value: text(metrics.drops_7d, "0") },
+    { key: "last_drop_duration", label: "Duração da última desconexão", value: fmtDuration(metrics.last_drop_duration_sec) },
+    { key: "last_rssi", label: "Último sinal (RSSI)", value: text(metrics.last_rssi) },
+    { key: "last_technology", label: "Última tecnologia de rede", value: text(metrics.last_technology) },
+    { key: "firmware", label: "Firmware", value: text(metrics.last_firmware) },
+    { key: "timeout_streak", label: "Falhas consecutivas de resposta", value: text(probe.timeout_streak, "0") },
+    { key: "response_ratio", label: "Respostas/solicitações", value: responseCoverageText },
+    { key: "timeout_total", label: "Total de falhas de resposta", value: text(timeoutCount, "0") },
+    { key: "latency_last", label: "Latência da última resposta", value: fmtSecondsPrecise(probe.latency_last_sec) },
+    { key: "latency_avg", label: "Latência média", value: fmtSecondsPrecise(probe.latency_avg_sec) },
+    { key: "latency_median", label: "Latência mediana", value: fmtSecondsPrecise(probe.latency_median_sec) },
     {
+      key: "latency_min_max",
       label: "Latência mínima/máxima",
       value: `${fmtSecondsPrecise(probe.latency_min_sec)} / ${fmtSecondsPrecise(probe.latency_max_sec)}`,
     },
-    { label: "Amostras de latência", value: text(latencySampleCount, "0") },
+    { key: "latency_samples", label: "Amostras de latência", value: text(latencySampleCount, "0") },
   ];
 
-  ui.pivotMetrics.innerHTML = cards
+  const collapsedCardKeys = new Set([
+    "status",
+    "connectivity",
+    "connected_pct",
+    "disconnected_pct",
+    "last_rssi",
+    "last_technology",
+  ]);
+  const hasExtraCards = cards.length > collapsedCardKeys.size;
+  const visibleCards = state.pivotMetricsExpanded
+    ? cards
+    : cards.filter((item) => collapsedCardKeys.has(String(item.key || "")));
+
+  if (ui.pivotMoreInfoBtn) {
+    ui.pivotMoreInfoBtn.hidden = !hasExtraCards;
+    ui.pivotMoreInfoBtn.textContent = state.pivotMetricsExpanded ? "Menos informações" : "Mais informações";
+    ui.pivotMoreInfoBtn.setAttribute("aria-expanded", state.pivotMetricsExpanded ? "true" : "false");
+  }
+
+  ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
       return `
       <div class="metric">
@@ -2177,6 +2200,7 @@ async function openPivot(pivotId) {
   const id = String(pivotId || "").trim();
   if (!id) return;
   state.connSelectedSegmentKey = null;
+  state.pivotMetricsExpanded = false;
   state.selectedPivot = id;
   state.panelSessionMeta = null;
   state.timelinePage = 1;
@@ -2187,6 +2211,7 @@ async function openPivot(pivotId) {
 
 function closePivot() {
   state.connSelectedSegmentKey = null;
+  state.pivotMetricsExpanded = false;
   state.selectedPivot = null;
   state.pivotData = null;
   state.panelSessionMeta = null;
@@ -2528,6 +2553,12 @@ function wireEvents() {
   ui.closePivot.addEventListener("click", closePivot);
   if (ui.deletePivotBtn) {
     ui.deletePivotBtn.addEventListener("click", deleteSelectedPivot);
+  }
+  if (ui.pivotMoreInfoBtn) {
+    ui.pivotMoreInfoBtn.addEventListener("click", () => {
+      state.pivotMetricsExpanded = !state.pivotMetricsExpanded;
+      renderPivotView();
+    });
   }
   ui.saveProbe.addEventListener("click", saveProbeSetting);
 

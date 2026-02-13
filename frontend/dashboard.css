@@ -702,6 +702,11 @@ a:focus {
   justify-content: flex-end;
 }
 
+.pivot-metrics-toggle {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .pivot-title-wrap {
   display: flex;
   align-items: center;
