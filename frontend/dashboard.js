@@ -143,6 +143,8 @@ const state = {
   panelRunMeta: null,
   refreshInFlight: false,
   authUserRole: "user",
+  authUserEmail: "",
+  pivotDeleteAllowed: false,
   adminUsers: [],
 };
 
@@ -190,6 +192,8 @@ const INTERNAL_TERMS = [
   "network",
   "mqtt",
 ];
+
+const FIXED_PIVOT_DELETE_EMAIL = "eduardocostar03@gmail.com";
 
 function parseHashPivot() {
   const raw = String(location.hash || "");
@@ -1929,11 +1933,13 @@ function renderPivotView() {
   const pivot = state.pivotData;
   if (!pivot || !state.selectedPivot) {
     ui.pivotView.hidden = true;
+    syncPivotDeleteControl();
     clearConnectivitySegmentSelection();
     return;
   }
 
   ui.pivotView.hidden = false;
+  syncPivotDeleteControl();
   const summary = pivot.summary || {};
   const probe = summary.probe || {};
   const connectivityView = renderConnectivityTimeline(pivot);
@@ -2190,7 +2196,31 @@ function closePivot() {
   renderPivotView();
 }
 
+function canCurrentUserDeletePivots() {
+  if (state.pivotDeleteAllowed === true) return true;
+  const role = String(state.authUserRole || "user").trim().toLowerCase();
+  const email = String(state.authUserEmail || "").trim().toLowerCase();
+  return role === "admin" && email === FIXED_PIVOT_DELETE_EMAIL;
+}
+
+function syncPivotDeleteControl() {
+  if (!ui.deletePivotBtn) return;
+  const allowed = canCurrentUserDeletePivots();
+  ui.deletePivotBtn.hidden = !allowed;
+  if (!allowed) {
+    ui.deletePivotBtn.disabled = true;
+  } else {
+    ui.deletePivotBtn.disabled = false;
+  }
+}
+
 async function deleteSelectedPivot() {
+  if (!canCurrentUserDeletePivots()) {
+    syncPivotDeleteControl();
+    showToast("Apenas o administrador principal pode deletar pivos.", "error", 3800);
+    return;
+  }
+
   const pivotId = String(state.selectedPivot || "").trim();
   if (!pivotId) return;
 
@@ -2234,6 +2264,7 @@ function syncAdminControls() {
     state.adminUsers = [];
     renderAdminUsers();
   }
+  syncPivotDeleteControl();
 }
 
 function renderAdminUsers() {
@@ -2349,8 +2380,13 @@ async function resolveViewerRole() {
       window.location.assign("/login");
       return false;
     }
-    const role = String(((data || {}).user || {}).role || "user").trim().toLowerCase();
+    const user = ((data || {}).user || {});
+    const role = String(user.role || "user").trim().toLowerCase();
+    const email = String(user.email || "").trim().toLowerCase();
+    const apiDeleteAllowed = Boolean((data || {}).pivot_delete_allowed);
     state.authUserRole = role || "user";
+    state.authUserEmail = email;
+    state.pivotDeleteAllowed = apiDeleteAllowed || (state.authUserRole === "admin" && state.authUserEmail === FIXED_PIVOT_DELETE_EMAIL);
     syncAdminControls();
     return true;
   } catch (err) {

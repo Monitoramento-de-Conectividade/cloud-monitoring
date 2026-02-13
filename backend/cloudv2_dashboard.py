@@ -10,6 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 from backend.cloudv2_auth import (
+    FIXED_ADMIN_EMAIL,
     PRIVACY_POLICY_VERSION,
     SESSION_COOKIE_NAME,
     SESSION_TTL_SEC,
@@ -467,6 +468,12 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
             return context
 
+        def _can_delete_pivots(self, auth_context):
+            current_user = (auth_context or {}).get("user") or {}
+            current_role = str(current_user.get("role") or "user").strip().lower()
+            current_email = str(current_user.get("email") or "").strip().lower()
+            return current_role == "admin" and current_email == FIXED_ADMIN_EMAIL
+
         def _check_rate_limit(self, path):
             rule = rate_limit_rules.get(str(path or "").strip())
             if rule is None:
@@ -510,6 +517,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                         "ok": True,
                         "authenticated": True,
                         "user": (auth_context or {}).get("user"),
+                        "pivot_delete_allowed": self._can_delete_pivots(auth_context),
                         "privacy_policy_version": PRIVACY_POLICY_VERSION,
                     },
                 )
@@ -1006,6 +1014,16 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 pivot_id = unquote(path[len("/api/pivot/") : -len("/delete")]).strip("/").strip()
                 if not pivot_id:
                     self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode deletar pivos.",
+                        },
+                    )
                     return
                 try:
                     body = self._read_json_body()
