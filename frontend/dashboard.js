@@ -157,6 +157,13 @@ const state = {
   authUserEmail: "",
   pivotDeleteAllowed: false,
   adminUsers: [],
+  headerRenderSignature: "",
+  statusSummaryRenderSignature: "",
+  pendingRenderSignature: "",
+  cardsPagerSignature: "",
+  cardsRenderPageKey: "",
+  cardsRenderSignaturesByPivotId: {},
+  cardsRenderIsEmpty: false,
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
@@ -985,24 +992,132 @@ function resetAllFilters() {
   renderCards();
 }
 
+function arraysShallowEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+}
+
+function updateCardsPager(totalPages) {
+  const pagerSignature = `${state.cardsPage}|${totalPages}`;
+  if (state.cardsPagerSignature === pagerSignature) return;
+  state.cardsPagerSignature = pagerSignature;
+  ui.cardsPageInfo.textContent = `Página ${state.cardsPage}/${totalPages}`;
+  ui.cardsPrev.disabled = state.cardsPage <= 1;
+  ui.cardsNext.disabled = state.cardsPage >= totalPages;
+}
+
+function buildPivotCardSignature(pivot) {
+  const safePivot = pivot || {};
+  const status = getDisplayStatus(safePivot);
+  const quality = getDisplayQuality(safePivot);
+  const cloud2 = safePivot.last_cloud2 || {};
+  return [
+    text(safePivot.pivot_id, "").trim(),
+    text(status.code, "gray"),
+    text(status.label, "Inicial"),
+    text(quality.code, "green"),
+    text(quality.label, "Estável"),
+    text(safePivot.last_ping_at, "-"),
+    text(safePivot.last_cloudv2_at, "-"),
+    text(safePivot.last_activity_at, "-"),
+    safePivot.median_ready ? 1 : 0,
+    Number(safePivot.median_sample_count || 0),
+    Number(safePivot.median_cloudv2_interval_sec || 0),
+    text(cloud2.rssi, "-"),
+    text(pivotTechnologyValue(safePivot), "-"),
+    text(cloud2.firmware, "-"),
+  ].join("|");
+}
+
+function buildPivotCardHtml(pivot) {
+  const status = getDisplayStatus(pivot);
+  const quality = getDisplayQuality(pivot);
+  const statusCode = text(status.code, "gray");
+  const statusLabel = escapeHtml(text(status.label, "Inicial"));
+  const qualityCode = text(quality.code, "green");
+  const qualityLabel = escapeHtml(text(quality.label, "Estável"));
+  const pivotIdRaw = text((pivot || {}).pivot_id, "pivô");
+  const pivotId = escapeHtml(pivotIdRaw);
+  const lastPing = escapeHtml(text((pivot || {}).last_ping_at));
+  const lastCloudv2 = escapeHtml(text((pivot || {}).last_cloudv2_at));
+  const cloud2 = (pivot || {}).last_cloud2 || {};
+  const medianReady = !!(pivot || {}).median_ready;
+  const samples = Number((pivot || {}).median_sample_count || 0);
+  const medianText = medianReady
+    ? `${fmtDuration((pivot || {}).median_cloudv2_interval_sec)} (${samples} amostras)`
+    : `${samples} amostras (em análise)`;
+
+  const rssi = escapeHtml(text(cloud2.rssi));
+  const technology = escapeHtml(text(pivotTechnologyValue(pivot)));
+  const firmware = escapeHtml(text(cloud2.firmware));
+
+  return `
+    <article class="pivot-card" data-pivot-id="${pivotId}">
+      <div class="pivot-head">
+        <div class="pivot-id">${pivotId}</div>
+        <div class="badge-stack">
+          <span class="badge ${statusCode}">Status: ${statusLabel}</span>
+          <span class="badge ${qualityCode}">Conectividade: ${qualityLabel}</span>
+        </div>
+      </div>
+      <div class="kv-grid">
+        <div class="k">Última atualização de conectividade</div><div>${lastPing}</div>
+        <div class="k">Última atualização de dados</div><div>${lastCloudv2}</div>
+        <div class="k">Intervalo típico de atualização</div><div>${escapeHtml(medianText)}</div>
+        <div class="k">Última atualização</div><div>${escapeHtml(text((pivot || {}).last_activity_at))}</div>
+        <div class="k">Sinal / Tecnologia</div><div>${rssi} / ${technology}</div>
+        <div class="k">Firmware</div><div>${firmware}</div>
+      </div>
+      <div class="card-actions">
+        <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visão</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderPivotCardsFull(pageItems, pageKey) {
+  ui.cardsGrid.innerHTML = pageItems.map((pivot) => buildPivotCardHtml(pivot)).join("");
+  const nextSignatures = {};
+  for (const pivot of pageItems) {
+    const pivotId = text((pivot || {}).pivot_id, "").trim();
+    if (!pivotId) continue;
+    nextSignatures[pivotId] = buildPivotCardSignature(pivot);
+  }
+  state.cardsRenderSignaturesByPivotId = nextSignatures;
+  state.cardsRenderPageKey = pageKey;
+  state.cardsRenderIsEmpty = false;
+}
+
 function renderHeader() {
   const raw = state.rawState || {};
   const updatedAt = text(raw.updated_at, "-");
   const counts = raw.counts || {};
+  const runMeta = raw.run || state.panelRunMeta || null;
+  const startedAt = text((runMeta || {}).started_at, "").trim();
+  const usingHistoricalRun = !!text(state.selectedRunId, "").trim();
+  const sessionHintText = usingHistoricalRun
+    ? (startedAt
+      ? `Exibindo sessão restaurada automaticamente (${startedAt}).`
+      : "Exibindo sessão restaurada automaticamente.")
+    : "Este painel exibe automaticamente os dados mais recentes.";
+  const headerSignature = [
+    updatedAt,
+    Number(counts.pivots || 0),
+    Number(counts.duplicate_drops || 0),
+    usingHistoricalRun ? 1 : 0,
+    sessionHintText,
+  ].join("|");
+  if (state.headerRenderSignature === headerSignature) return;
+  state.headerRenderSignature = headerSignature;
+
   ui.updatedAt.textContent = `Última atualização: ${updatedAt}`;
   ui.countsMeta.textContent = `${counts.pivots || 0} pivôs • ${counts.duplicate_drops || 0} duplicidades`;
   if (ui.sessionHint) {
-    const runMeta = raw.run || state.panelRunMeta || null;
-    const startedAt = text((runMeta || {}).started_at, "").trim();
-    const usingHistoricalRun = !!text(state.selectedRunId, "").trim();
-    if (usingHistoricalRun) {
-      ui.sessionHint.textContent = startedAt
-        ? `Exibindo sessão restaurada automaticamente (${startedAt}).`
-        : "Exibindo sessão restaurada automaticamente.";
-    } else {
-      ui.sessionHint.textContent =
-        "Este painel exibe automaticamente os dados mais recentes.";
-    }
+    ui.sessionHint.textContent = sessionHintText;
   }
 }
 
@@ -1079,6 +1194,21 @@ function renderStatusSummary() {
         `Conectividade critica no periodo selecionado. Ocorre quando o percentual desconectado fica acima de ${criticalThreshold.toFixed(1)}%.`,
     },
   ];
+  const summarySignature = [
+    stateCounts.all,
+    stateCounts.green,
+    stateCounts.red,
+    stateCounts.gray,
+    qualityCounts.green,
+    qualityCounts.calculating,
+    qualityCounts.yellow,
+    qualityCounts.critical,
+    minSamples,
+    attentionThreshold.toFixed(1),
+    criticalThreshold.toFixed(1),
+  ].join("|");
+  if (state.statusSummaryRenderSignature === summarySignature) return;
+  state.statusSummaryRenderSignature = summarySignature;
 
   ui.statusSummary.innerHTML = summaryItems
     .map(
@@ -1101,6 +1231,14 @@ function renderPending() {
   const raw = state.rawState || {};
   const enabled = !!(((raw.settings || {}).show_pending_ping_pivots));
   const pending = raw.pending_ping || [];
+  const pendingSignature = !enabled
+    ? "disabled"
+    : `enabled|${pending
+      .slice(0, 40)
+      .map((item) => `${text(item.pivot_id)}:${Number(item.count || 0)}:${text(item.last_seen_at)}`)
+      .join("|")}`;
+  if (state.pendingRenderSignature === pendingSignature) return;
+  state.pendingRenderSignature = pendingSignature;
 
   if (!enabled) {
     ui.pendingPanel.hidden = true;
@@ -1130,66 +1268,67 @@ function renderCards() {
   if (state.cardsPage > totalPages) state.cardsPage = totalPages;
   const start = (state.cardsPage - 1) * state.cardsPageSize;
   const pageItems = filtered.slice(start, start + state.cardsPageSize);
-  state.visiblePivotIds = pageItems.map((pivot) => text((pivot || {}).pivot_id, "").trim()).filter(Boolean);
+  const nextVisiblePivotIds = pageItems.map((pivot) => text((pivot || {}).pivot_id, "").trim()).filter(Boolean);
+  state.visiblePivotIds = nextVisiblePivotIds;
+  updateCardsPager(totalPages);
 
   if (!pageItems.length) {
-    ui.cardsGrid.innerHTML = `<div class="empty">Nenhum pivô encontrado para os filtros selecionados.</div>`;
-  } else {
-    ui.cardsGrid.innerHTML = pageItems
-      .map((pivot) => {
-        const status = getDisplayStatus(pivot);
-        const quality = getDisplayQuality(pivot);
-        const statusCode = text(status.code, "gray");
-        const statusLabel = escapeHtml(text(status.label, "Inicial"));
-        const qualityCode = text(quality.code, "green");
-        const qualityLabel = escapeHtml(text(quality.label, "Estável"));
-        const pivotId = escapeHtml(text(pivot.pivot_id, "pivô"));
-        const lastPing = escapeHtml(text(pivot.last_ping_at));
-        const lastCloudv2 = escapeHtml(text(pivot.last_cloudv2_at));
-        const cloud2 = pivot.last_cloud2 || {};
-        const medianReady = !!pivot.median_ready;
-        const samples = Number(pivot.median_sample_count || 0);
-        const medianText = medianReady
-          ? `${fmtDuration(pivot.median_cloudv2_interval_sec)} (${samples} amostras)`
-          : `${samples} amostras (em análise)`;
-
-        const rssi = escapeHtml(text(cloud2.rssi));
-        const technology = escapeHtml(text(pivotTechnologyValue(pivot)));
-        const firmware = escapeHtml(text(cloud2.firmware));
-
-        return `
-          <article class="pivot-card">
-            <div class="pivot-head">
-              <div class="pivot-id">${pivotId}</div>
-              <div class="badge-stack">
-                <span class="badge ${statusCode}">Status: ${statusLabel}</span>
-                <span class="badge ${qualityCode}">Conectividade: ${qualityLabel}</span>
-              </div>
-            </div>
-            <div class="kv-grid">
-              <div class="k">Última atualização de conectividade</div><div>${lastPing}</div>
-              <div class="k">Última atualização de dados</div><div>${lastCloudv2}</div>
-              <div class="k">Intervalo típico de atualização</div><div>${escapeHtml(medianText)}</div>
-              <div class="k">Última atualização</div><div>${escapeHtml(text(pivot.last_activity_at))}</div>
-              <div class="k">Sinal / Tecnologia</div><div>${rssi} / ${technology}</div>
-              <div class="k">Firmware</div><div>${firmware}</div>
-            </div>
-            <div class="card-actions">
-              <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visão</button>
-            </div>
-          </article>
-        `;
-      })
-      .join("");
+    if (!state.cardsRenderIsEmpty) {
+      ui.cardsGrid.innerHTML = `<div class="empty">Nenhum pivô encontrado para os filtros selecionados.</div>`;
+      state.cardsRenderIsEmpty = true;
+      state.cardsRenderPageKey = "empty";
+      state.cardsRenderSignaturesByPivotId = {};
+    }
+    return;
   }
 
-  ui.cardsPageInfo.textContent = `Página ${state.cardsPage}/${totalPages}`;
-  ui.cardsPrev.disabled = state.cardsPage <= 1;
-  ui.cardsNext.disabled = state.cardsPage >= totalPages;
-
-  for (const button of ui.cardsGrid.querySelectorAll(".open-pivot")) {
-    button.addEventListener("click", () => openPivot(button.dataset.pivot || ""));
+  const pagePivotIds = nextVisiblePivotIds;
+  const pageKey = `${state.cardsPage}|${totalPages}|${pagePivotIds.join(",")}`;
+  if (state.cardsRenderIsEmpty || state.cardsRenderPageKey !== pageKey) {
+    renderPivotCardsFull(pageItems, pageKey);
+    return;
   }
+
+  const existingCardElements = new Map();
+  for (const card of ui.cardsGrid.querySelectorAll(".pivot-card[data-pivot-id]")) {
+    const pivotId = text(card.getAttribute("data-pivot-id"), "").trim();
+    if (!pivotId) continue;
+    existingCardElements.set(pivotId, card);
+  }
+
+  let needFullRebuild = false;
+  let changedAny = false;
+  const nextSignatures = {};
+  for (const pivot of pageItems) {
+    const pivotId = text((pivot || {}).pivot_id, "").trim();
+    if (!pivotId) continue;
+    const signature = buildPivotCardSignature(pivot);
+    nextSignatures[pivotId] = signature;
+    if (state.cardsRenderSignaturesByPivotId[pivotId] === signature) continue;
+
+    const cardElement = existingCardElements.get(pivotId);
+    if (!cardElement) {
+      needFullRebuild = true;
+      break;
+    }
+    cardElement.outerHTML = buildPivotCardHtml(pivot);
+    changedAny = true;
+  }
+
+  const previousPivotIds = Object.keys(state.cardsRenderSignaturesByPivotId);
+  if (!needFullRebuild && !arraysShallowEqual(previousPivotIds, pagePivotIds)) {
+    needFullRebuild = true;
+  }
+  if (needFullRebuild) {
+    renderPivotCardsFull(pageItems, pageKey);
+    return;
+  }
+
+  if (changedAny) {
+    state.cardsRenderSignaturesByPivotId = nextSignatures;
+  }
+  state.cardsRenderPageKey = pageKey;
+  state.cardsRenderIsEmpty = false;
 }
 
 function renderPivotMetrics(pivot, statusView = null, qualityView = null, connectivityView = null) {
@@ -2826,6 +2965,14 @@ function wireEvents() {
       deleteManagedUser(userId, userEmail);
     });
   }
+
+  ui.cardsGrid.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest(".open-pivot");
+    if (!button || !ui.cardsGrid.contains(button)) return;
+    openPivot(button.dataset.pivot || "");
+  });
 
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
