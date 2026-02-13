@@ -190,6 +190,13 @@ class TelemetryStore:
         self.enable_background_worker = bool(config.get("enable_background_worker", True))
         self.require_apply_to_start = bool(config.get("require_apply_to_start", True))
         self.history_mode = str(config.get("history_mode", "merge")).strip().lower()
+        self.continuous_monitoring_mode = bool(config.get("continuous_monitoring_mode", True))
+        if self.continuous_monitoring_mode and self.history_mode != "merge":
+            self.log.warning(
+                "Modo continuo ativo: history_mode=%s ignorado e ajustado para merge.",
+                self.history_mode,
+            )
+            self.history_mode = "merge"
 
         self.ping_expected_sec = max(1, int(config.get("ping_interval_minutes", 3)) * 60)
         self.tolerance_factor = max(1.0, float(config.get("tolerance_factor", 1.5)))
@@ -258,6 +265,12 @@ class TelemetryStore:
         )
 
         self.runtime_path = os.path.join(DATA_DIR, "runtime_store.json")
+
+    def _ensure_manual_session_rotation_allowed(self, action_label):
+        if self.continuous_monitoring_mode:
+            raise ValueError(
+                f"modo continuo ativo: acao '{action_label}' desabilitada para evitar reset de sessao/run"
+            )
 
     def start(self):
         ensure_dirs()
@@ -940,6 +953,7 @@ class TelemetryStore:
         return pivot
 
     def activate_history_run(self, run_id, now=None, source="ui"):
+        self._ensure_manual_session_rotation_allowed("activate_history_run")
         normalized_run = str(run_id or "").strip()
         if not normalized_run:
             raise ValueError("run_id obrigatorio")
@@ -1051,6 +1065,7 @@ class TelemetryStore:
         return result
 
     def start_new_monitoring_run(self, now=None, source="ui"):
+        self._ensure_manual_session_rotation_allowed("start_new_monitoring_run")
         current_ts = float(now if now is not None else time.time())
         with self._lock:
             self.persistence.deactivate_all_active_sessions(now_ts=current_ts)
@@ -1128,6 +1143,7 @@ class TelemetryStore:
             return []
 
     def start_new_monitoring_session(self, pivot_id, now=None, source="ui"):
+        self._ensure_manual_session_rotation_allowed("start_new_monitoring_session")
         normalized = str(pivot_id or "").strip()
         if not normalized:
             raise ValueError("pivot_id obrigatorio")

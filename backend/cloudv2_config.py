@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "dashboard_refresh_sec": 5,
     "enable_background_worker": True,
     "require_apply_to_start": True,
+    "continuous_monitoring_mode": True,
     "history_mode": "merge",
     "history_retention_hours": 24,
     "tolerance_factor": 1.5,
@@ -202,6 +203,7 @@ def _apply_env_overrides(config):
         "DASHBOARD_REFRESH_SEC": "dashboard_refresh_sec",
         "ENABLE_BACKGROUND_WORKER": "enable_background_worker",
         "REQUIRE_APPLY_TO_START": "require_apply_to_start",
+        "CONTINUOUS_MONITORING_MODE": "continuous_monitoring_mode",
         "HISTORY_MODE": "history_mode",
         "HISTORY_RETENTION_HOURS": "history_retention_hours",
         "TOLERANCE_FACTOR": "tolerance_factor",
@@ -301,6 +303,10 @@ def normalize_config(raw_config):
     base["require_apply_to_start"] = _to_bool(
         base.get("require_apply_to_start"),
         DEFAULT_CONFIG["require_apply_to_start"],
+    )
+    base["continuous_monitoring_mode"] = _to_bool(
+        base.get("continuous_monitoring_mode"),
+        DEFAULT_CONFIG["continuous_monitoring_mode"],
     )
 
     base["history_mode"] = _normalize_history_mode(base.get("history_mode", DEFAULT_CONFIG["history_mode"]))

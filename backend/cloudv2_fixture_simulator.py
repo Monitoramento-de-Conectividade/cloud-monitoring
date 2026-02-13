@@ -19,6 +19,7 @@ def run_fixture():
     config = normalize_config(
         {
             "history_mode": "fresh",
+            "continuous_monitoring_mode": False,
             "dashboard_refresh_sec": 1,
             "history_retention_hours": 24,
             "require_apply_to_start": False,
