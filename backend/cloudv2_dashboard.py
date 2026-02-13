@@ -833,6 +833,14 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, payload)
                 return
 
+            if path == "/api/quality-lite":
+                run_id = (query.get("run_id") or [None])[0]
+                if isinstance(run_id, str):
+                    run_id = run_id.strip() or None
+                payload = telemetry_store.get_quality_cards_snapshot(run_id=run_id)
+                self._write_json(200, payload)
+                return
+
             if path == "/api/monitoring/runs":
                 limit_raw = (query.get("limit") or [None])[0]
                 try:

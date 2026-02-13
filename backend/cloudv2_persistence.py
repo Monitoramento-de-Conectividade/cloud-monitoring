@@ -1640,6 +1640,37 @@ class TelemetryPersistence:
             events.append(event)
         return events
 
+    def fetch_timeline_events_light(self, pivot_id, session_id, limit=None):
+        normalized_id = str(pivot_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        if not normalized_id or not normalized_session:
+            return []
+        safe_limit = max(1, min(50000, int(limit or self.max_events_per_pivot)))
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT ts, topic
+                FROM connectivity_events
+                WHERE pivot_id = ? AND session_id = ?
+                ORDER BY ts DESC, id DESC
+                LIMIT ?
+                """,
+                (normalized_id, normalized_session, safe_limit),
+            ).fetchall()
+
+        events = []
+        for row in rows:
+            ts_value = _safe_float(row["ts"], None)
+            events.append(
+                {
+                    "ts": ts_value,
+                    "topic": str(row["topic"] or ""),
+                }
+            )
+        return events
+
     def fetch_probe_events(self, pivot_id, session_id, limit=None):
         normalized_id = str(pivot_id or "").strip()
         normalized_session = str(session_id or "").strip()
@@ -2040,6 +2071,100 @@ class TelemetryPersistence:
                 continue
             if last_updated_ts is None or row_updated > last_updated_ts:
                 last_updated_ts = row_updated
+
+        if last_updated_ts is None:
+            last_updated_ts = time.time()
+
+        return {
+            "run_id": resolved_run_id,
+            "run": self._row_to_run_dict_locked(run_row, now_ts=last_updated_ts),
+            "updated_at_ts": last_updated_ts,
+            "updated_at": _ts_to_str(last_updated_ts),
+            "pivots": pivots,
+        }
+
+    def get_quality_cards_payload(self, run_id=None, timeline_limit=None):
+        safe_timeline_limit = max(1, min(50000, int(timeline_limit or self.max_events_per_pivot)))
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            run_row = self._query_run_row_locked(conn, run_id=run_id)
+            if run_row is None:
+                return None
+
+            resolved_run_id = str(run_row["run_id"] or "").strip()
+            if not resolved_run_id:
+                return None
+
+            rows = conn.execute(
+                """
+                SELECT
+                    sessions.pivot_id,
+                    sessions.session_id,
+                    sessions.updated_at_ts AS session_updated_at_ts,
+                    COALESCE(pivots.is_concentrator, 0) AS pivot_is_concentrator,
+                    snapshots.snapshot_json,
+                    snapshots.median_ready AS snapshot_median_ready,
+                    snapshots.median_sample_count AS snapshot_median_sample_count,
+                    snapshots.median_cloudv2_interval_sec AS snapshot_median_cloudv2_interval_sec,
+                    snapshots.disconnect_threshold_sec AS snapshot_disconnect_threshold_sec,
+                    snapshots.updated_at_ts AS snapshot_updated_at_ts
+                FROM monitoring_sessions AS sessions
+                INNER JOIN pivots AS pivots
+                    ON pivots.pivot_id = sessions.pivot_id
+                LEFT JOIN pivot_snapshots AS snapshots
+                    ON snapshots.pivot_id = sessions.pivot_id
+                    AND snapshots.session_id = sessions.session_id
+                WHERE sessions.run_id = ?
+                    AND sessions.session_id = (
+                        SELECT sessions_inner.session_id
+                        FROM monitoring_sessions AS sessions_inner
+                        WHERE sessions_inner.run_id = sessions.run_id
+                            AND sessions_inner.pivot_id = sessions.pivot_id
+                        ORDER BY sessions_inner.updated_at_ts DESC, sessions_inner.started_at_ts DESC
+                        LIMIT 1
+                    )
+                ORDER BY sessions.pivot_id COLLATE NOCASE ASC
+                """,
+                (resolved_run_id,),
+            ).fetchall()
+
+        pivots = []
+        last_updated_ts = _safe_float(run_row["updated_at_ts"], None)
+        for row in rows:
+            summary = self._build_state_summary_from_snapshot_row(row, resolved_run_id)
+            pivot_id = str(summary.get("pivot_id") or row["pivot_id"] or "").strip()
+            session_id = str(summary.get("session_id") or row["session_id"] or "").strip()
+            if not pivot_id or not session_id:
+                continue
+
+            timeline = self.fetch_timeline_events_light(
+                pivot_id,
+                session_id,
+                limit=safe_timeline_limit,
+            )
+            timeline_latest_ts = _safe_float((timeline[0] or {}).get("ts"), None) if timeline else None
+            pivot_updated_ts = _safe_float(
+                row["snapshot_updated_at_ts"],
+                _safe_float(row["session_updated_at_ts"], timeline_latest_ts),
+            )
+            if pivot_updated_ts is None:
+                pivot_updated_ts = time.time()
+
+            pivots.append(
+                {
+                    "pivot_id": pivot_id,
+                    "pivot_slug": str(summary.get("pivot_slug") or slugify(pivot_id)),
+                    "session_id": session_id,
+                    "run_id": resolved_run_id,
+                    "updated_at_ts": pivot_updated_ts,
+                    "updated_at": _ts_to_str(pivot_updated_ts),
+                    "summary": summary,
+                    "timeline": timeline,
+                }
+            )
+            if last_updated_ts is None or pivot_updated_ts > last_updated_ts:
+                last_updated_ts = pivot_updated_ts
 
         if last_updated_ts is None:
             last_updated_ts = time.time()

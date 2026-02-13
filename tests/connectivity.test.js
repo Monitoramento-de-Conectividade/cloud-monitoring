@@ -184,3 +184,24 @@ test("display: tecnologia do cloud2 é usada quando pivô não é concentrador",
   });
   assert.equal(technology, "LTE CAT");
 });
+
+test("quality signature: changes when session or activity changes", () => {
+  const base = {
+    run_id: "run-1",
+    session_id: "session-1",
+    last_activity_ts: 100,
+    last_ping_ts: 90,
+    last_cloudv2_ts: 95,
+    last_cloud2: { ts: 98 },
+    median_sample_count: 5,
+    median_ready: true,
+    status: { code: "green" },
+    quality: { code: "green" },
+    probe: { sent_count: 10, response_count: 9 },
+  };
+  const sigA = _test.buildQualitySourceSignature(base);
+  const sigB = _test.buildQualitySourceSignature({ ...base, session_id: "session-2" });
+  const sigC = _test.buildQualitySourceSignature({ ...base, last_activity_ts: 101 });
+  assert.notEqual(sigA, sigB);
+  assert.notEqual(sigA, sigC);
+});

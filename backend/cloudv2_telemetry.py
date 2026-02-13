@@ -652,6 +652,51 @@ class TelemetryStore:
     def get_complete_panel(self, pivot_id, session_id=None, run_id=None, now=None):
         return self.get_pivot_snapshot(pivot_id, now=now, session_id=session_id, run_id=run_id)
 
+    def get_quality_cards_snapshot(self, run_id=None):
+        normalized_run = str(run_id or "").strip() or None
+        try:
+            payload = self.persistence.get_quality_cards_payload(run_id=normalized_run)
+        except RuntimeError:
+            payload = None
+        if payload is not None:
+            return payload
+
+        now = time.time()
+        with self._lock:
+            fallback_pivots = []
+            for pivot in self.pivots.values():
+                pivot_payload = self._build_pivot_snapshot_locked(pivot, now)
+                fallback_pivots.append(
+                    {
+                        "pivot_id": str(pivot_payload.get("pivot_id") or ""),
+                        "pivot_slug": str(pivot_payload.get("pivot_slug") or ""),
+                        "session_id": str(pivot_payload.get("session_id") or ""),
+                        "run_id": str(pivot_payload.get("run_id") or ""),
+                        "updated_at_ts": _safe_float(pivot_payload.get("updated_at_ts"), now),
+                        "updated_at": str(pivot_payload.get("updated_at") or _ts_to_str(now)),
+                        "summary": pivot_payload.get("summary")
+                        if isinstance(pivot_payload.get("summary"), dict)
+                        else {},
+                        "timeline": [
+                            {
+                                "ts": _safe_float(event.get("ts"), None),
+                                "topic": str(event.get("topic") or ""),
+                            }
+                            for event in (pivot_payload.get("timeline") or [])
+                            if isinstance(event, dict)
+                        ],
+                    }
+                )
+
+            run_payload = self._build_runtime_payload_locked(now).get("active_run")
+            return {
+                "run_id": str((run_payload or {}).get("run_id") or normalized_run or ""),
+                "run": run_payload,
+                "updated_at_ts": now,
+                "updated_at": _ts_to_str(now),
+                "pivots": fallback_pivots,
+            }
+
     def list_monitoring_runs(self, limit=200):
         try:
             return self.persistence.list_runs(limit=limit)

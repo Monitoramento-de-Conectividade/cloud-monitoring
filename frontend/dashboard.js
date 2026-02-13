@@ -141,6 +141,11 @@ const state = {
   lastRefreshToastAtMs: 0,
   qualityOverridesByPivotId: {},
   statusOverridesByPivotId: {},
+  qualitySourceSignatureByPivotId: {},
+  qualityOverridesLastRefreshMs: 0,
+  qualityOverrideRefreshIntervalMs: 45000,
+  qualityOverrideMaxConcurrency: 3,
+  visiblePivotIds: [],
   qualityRefreshSeq: 0,
   selectedRunId: null,
   lastRunResolveAttemptMs: 0,
@@ -660,6 +665,12 @@ function buildStateUrl(runId = null) {
   return `/api/state?run_id=${encodeURIComponent(normalizedRun)}`;
 }
 
+function buildQualityLiteUrl(runId = null) {
+  const normalizedRun = String(runId || "").trim();
+  if (!normalizedRun) return "/api/quality-lite";
+  return `/api/quality-lite?run_id=${encodeURIComponent(normalizedRun)}`;
+}
+
 function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
   const normalized = String(pivotId || "").trim();
   if (!normalized) return "";
@@ -917,6 +928,44 @@ function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(
   return ap.localeCompare(bp);
 }
 
+function buildQualitySourceSignature(item) {
+  const pivot = item && typeof item === "object" ? item : {};
+  const status = pivot.status && typeof pivot.status === "object" ? pivot.status : {};
+  const quality = pivot.quality && typeof pivot.quality === "object" ? pivot.quality : {};
+  const lastCloud2 = pivot.last_cloud2 && typeof pivot.last_cloud2 === "object" ? pivot.last_cloud2 : {};
+  const probe = pivotProbeSummary(pivot);
+
+  return [
+    text(pivot.run_id, "").trim(),
+    text(pivot.session_id, "").trim(),
+    Number(pivot.last_activity_ts || 0),
+    Number(pivot.last_ping_ts || 0),
+    Number(pivot.last_cloudv2_ts || 0),
+    Number(lastCloud2.ts || 0),
+    Number(pivot.median_sample_count || 0),
+    pivot.median_ready ? 1 : 0,
+    text(status.code, "").trim(),
+    text(quality.code, "").trim(),
+    Number(probe.sent_count || 0),
+    Number(probe.response_count || 0),
+  ].join("|");
+}
+
+function resolveVisiblePivotIdsForRefresh() {
+  const fromState = Array.isArray(state.visiblePivotIds)
+    ? state.visiblePivotIds.map((pivotId) => String(pivotId || "").trim()).filter(Boolean)
+    : [];
+  if (fromState.length) return fromState;
+
+  const filtered = applyFilterSort();
+  if (!filtered.length) return [];
+  const totalPages = Math.max(1, Math.ceil(filtered.length / state.cardsPageSize));
+  const safePage = Math.max(1, Math.min(totalPages, Number(state.cardsPage || 1)));
+  const start = (safePage - 1) * state.cardsPageSize;
+  const pageItems = filtered.slice(start, start + state.cardsPageSize);
+  return pageItems.map((item) => text((item || {}).pivot_id, "").trim()).filter(Boolean);
+}
+
 function resetAllFilters() {
   state.search = "";
   state.sort = "critical";
@@ -1081,6 +1130,7 @@ function renderCards() {
   if (state.cardsPage > totalPages) state.cardsPage = totalPages;
   const start = (state.cardsPage - 1) * state.cardsPageSize;
   const pageItems = filtered.slice(start, start + state.cardsPageSize);
+  state.visiblePivotIds = pageItems.map((pivot) => text((pivot || {}).pivot_id, "").trim()).filter(Boolean);
 
   if (!pageItems.length) {
     ui.cardsGrid.innerHTML = `<div class="empty">Nenhum pivô encontrado para os filtros selecionados.</div>`;
@@ -2149,6 +2199,14 @@ async function refreshState(options = {}) {
       delete state.statusOverridesByPivotId[pivotId];
     }
   }
+  for (const pivotId of Object.keys(state.qualitySourceSignatureByPivotId)) {
+    if (!currentPivotIds.has(pivotId)) {
+      delete state.qualitySourceSignatureByPivotId[pivotId];
+    }
+  }
+  if (Array.isArray(state.visiblePivotIds) && state.visiblePivotIds.length) {
+    state.visiblePivotIds = state.visiblePivotIds.filter((pivotId) => currentPivotIds.has(String(pivotId || "").trim()));
+  }
   if (state.selectedPivot && !currentPivotIds.has(state.selectedPivot)) {
     if (skipRender) {
       state.connSelectedSegmentKey = null;
@@ -2207,51 +2265,123 @@ async function refreshPivot(options = {}) {
 
 async function refreshQualityOverrides(options = {}) {
   const skipRender = !!options.skipRender;
+  const forceRefresh = !!options.force;
   const pivots = state.pivots || [];
   if (!pivots.length) {
     state.qualityOverridesByPivotId = {};
     state.statusOverridesByPivotId = {};
+    state.qualitySourceSignatureByPivotId = {};
+    state.qualityOverridesLastRefreshMs = Date.now();
     return;
   }
 
+  const nowMs = Date.now();
+  const refreshIntervalMs = Math.max(30000, Number(state.qualityOverrideRefreshIntervalMs || 45000));
   const seq = Number(state.qualityRefreshSeq || 0) + 1;
   state.qualityRefreshSeq = seq;
 
-  const pivotIds = pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean);
-  const nextOverrides = {};
-  const nextStatusOverrides = {};
-  let cursor = 0;
-  const workerCount = Math.max(1, Math.min(6, pivotIds.length));
+  const pivotMetaById = new Map();
+  for (const pivot of pivots) {
+    const pivotId = text((pivot || {}).pivot_id, "").trim();
+    if (!pivotId) continue;
+    const signature = buildQualitySourceSignature(pivot);
+    const hasQuality = Object.prototype.hasOwnProperty.call(state.qualityOverridesByPivotId, pivotId);
+    const hasStatus = Object.prototype.hasOwnProperty.call(state.statusOverridesByPivotId, pivotId);
+    const previousSignature = state.qualitySourceSignatureByPivotId[pivotId];
+    pivotMetaById.set(pivotId, {
+      signature,
+      changed: signature !== previousSignature,
+      missing: !(hasQuality && hasStatus),
+    });
+  }
 
-  const runWorker = async () => {
-    while (cursor < pivotIds.length) {
-      const currentIndex = cursor;
-      cursor += 1;
-      const pivotId = pivotIds[currentIndex];
-      if (!pivotId) continue;
-      try {
-        const pivotData = await getJson(buildPivotPanelUrl(pivotId, state.selectedRunId));
-        const view = computeConnectivityView(pivotData);
-        const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
-        nextOverrides[pivotId] = quality;
-        const detailStatus = view.status || {};
-        nextStatusOverrides[pivotId] = {
-          code: text(detailStatus.code, "gray"),
-          label: text(detailStatus.label, "Inicial"),
-          reason: text(detailStatus.reason, ""),
-          rank: Number(detailStatus.rank ?? 99),
-        };
-      } catch (err) {
-        continue;
-      }
-    }
+  if (!pivotMetaById.size) return;
+
+  const duePeriodicRefresh =
+    forceRefresh || (nowMs - Number(state.qualityOverridesLastRefreshMs || 0) >= refreshIntervalMs);
+  const visiblePivotIds = resolveVisiblePivotIdsForRefresh();
+  const selectedPivotId = text(state.selectedPivot, "").trim();
+
+  const prioritySet = new Set();
+  const priorityOrderedIds = [];
+  const pushPriority = (pivotId) => {
+    const id = String(pivotId || "").trim();
+    if (!id || prioritySet.has(id) || !pivotMetaById.has(id)) return;
+    prioritySet.add(id);
+    priorityOrderedIds.push(id);
   };
+  pushPriority(selectedPivotId);
+  for (const pivotId of visiblePivotIds) pushPriority(pivotId);
 
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  const allPivotIds = [...pivotMetaById.keys()];
+  const orderedPivotIds = [
+    ...priorityOrderedIds,
+    ...allPivotIds.filter((pivotId) => !prioritySet.has(pivotId)),
+  ];
+
+  const targetPivotIds = [];
+  for (const pivotId of orderedPivotIds) {
+    const meta = pivotMetaById.get(pivotId);
+    if (!meta) continue;
+    const isPriority = prioritySet.has(pivotId);
+    const shouldFetch = forceRefresh
+      || meta.missing
+      || (isPriority && meta.changed)
+      || (duePeriodicRefresh && meta.changed);
+    if (shouldFetch) targetPivotIds.push(pivotId);
+  }
+
+  if (!targetPivotIds.length) {
+    if (duePeriodicRefresh) {
+      state.qualityOverridesLastRefreshMs = nowMs;
+    }
+    return;
+  }
+
+  const nextOverrides = { ...state.qualityOverridesByPivotId };
+  const nextStatusOverrides = { ...state.statusOverridesByPivotId };
+  const nextSignatures = { ...state.qualitySourceSignatureByPivotId };
+  let qualityPayload = null;
+  try {
+    qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
+  } catch (err) {
+    return;
+  }
+
+  const qualityPivots = Array.isArray(qualityPayload?.pivots) ? qualityPayload.pivots : [];
+  const qualityPivotById = new Map();
+  for (const pivot of qualityPivots) {
+    const pivotId = text((pivot || {}).pivot_id, "").trim();
+    if (!pivotId) continue;
+    qualityPivotById.set(pivotId, pivot);
+  }
+
+  for (const pivotId of targetPivotIds) {
+    const pivotData = qualityPivotById.get(pivotId);
+    if (!pivotData) continue;
+
+    const view = computeConnectivityView(pivotData);
+    const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
+    nextOverrides[pivotId] = quality;
+    const detailStatus = view.status || {};
+    nextStatusOverrides[pivotId] = {
+      code: text(detailStatus.code, "gray"),
+      label: text(detailStatus.label, "Inicial"),
+      reason: text(detailStatus.reason, ""),
+      rank: Number(detailStatus.rank ?? 99),
+    };
+    const meta = pivotMetaById.get(pivotId);
+    if (meta) {
+      nextSignatures[pivotId] = meta.signature;
+    }
+  }
+
   if (seq !== state.qualityRefreshSeq) return;
 
   state.qualityOverridesByPivotId = nextOverrides;
   state.statusOverridesByPivotId = nextStatusOverrides;
+  state.qualitySourceSignatureByPivotId = nextSignatures;
+  state.qualityOverridesLastRefreshMs = nowMs;
   if (!skipRender) {
     renderStatusSummary();
     renderCards();
@@ -2865,6 +2995,7 @@ if (typeof module !== "undefined" && module.exports) {
       isProbeMonitoringEnabled,
       pivotProbeResponseRatioPct,
       compareByProbeResponseRatioDesc,
+      buildQualitySourceSignature,
       isPivotConcentrator,
       pivotTechnologyValue,
       getDisplayStatus,
