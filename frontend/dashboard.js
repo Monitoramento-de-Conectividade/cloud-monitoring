@@ -100,6 +100,8 @@ const ui = HAS_DOM
       cloud2Table: document.getElementById("cloud2Table"),
       toastRegion: document.getElementById("toastRegion"),
       sessionHint: document.getElementById("sessionHint"),
+      initialLoadingOverlay: document.getElementById("initialLoadingOverlay"),
+      initialLoadingText: document.getElementById("initialLoadingText"),
     }
   : {};
 
@@ -563,6 +565,22 @@ function showToast(message, level = "success", ttlMs = 3200) {
   window.setTimeout(() => {
     toast.remove();
   }, Math.max(900, Number(ttlMs)));
+}
+
+function setInitialLoading(loading, message = "") {
+  if (!HAS_DOM) return;
+  if (ui.initialLoadingText) {
+    const safeMessage = String(message || "").trim();
+    if (safeMessage) {
+      ui.initialLoadingText.textContent = safeMessage;
+    }
+  }
+  if (ui.initialLoadingOverlay) {
+    ui.initialLoadingOverlay.hidden = !loading;
+  }
+  if (document.body) {
+    document.body.classList.toggle("initial-loading", !!loading);
+  }
 }
 
 async function getJson(url) {
@@ -1977,7 +1995,8 @@ async function loadUiConfig() {
   }
 }
 
-async function refreshState() {
+async function refreshState(options = {}) {
+  const skipRender = !!options.skipRender;
   const requestedRunId = normalizeRunId(state.selectedRunId) || null;
   const data = await getJson(buildStateUrl(requestedRunId));
   state.rawState = data;
@@ -2002,22 +2021,36 @@ async function refreshState() {
     }
   }
   if (state.selectedPivot && !currentPivotIds.has(state.selectedPivot)) {
-    closePivot();
+    if (skipRender) {
+      state.connSelectedSegmentKey = null;
+      state.selectedPivot = null;
+      state.pivotData = null;
+      state.panelSessionMeta = null;
+      state.panelRunMeta = data.run || null;
+      setHashPivot("");
+    } else {
+      closePivot();
+    }
   }
-  renderHeader();
-  renderStatusSummary();
-  renderPending();
-  renderCards();
+  if (!skipRender) {
+    renderHeader();
+    renderStatusSummary();
+    renderPending();
+    renderCards();
+  }
   return { selectedRunChanged };
 }
 
-async function refreshPivot() {
+async function refreshPivot(options = {}) {
+  const skipRender = !!options.skipRender;
   if (!state.selectedPivot) {
     state.pivotData = null;
     state.panelSessionMeta = null;
     state.panelRunMeta = state.rawState?.run || null;
-    renderSessionControls();
-    renderPivotView();
+    if (!skipRender) {
+      renderSessionControls();
+      renderPivotView();
+    }
     return;
   }
 
@@ -2037,11 +2070,14 @@ async function refreshPivot() {
     state.panelSessionMeta = null;
     state.panelRunMeta = state.rawState?.run || null;
   }
-  renderSessionControls();
-  renderPivotView();
+  if (!skipRender) {
+    renderSessionControls();
+    renderPivotView();
+  }
 }
 
-async function refreshQualityOverrides() {
+async function refreshQualityOverrides(options = {}) {
+  const skipRender = !!options.skipRender;
   const pivots = state.pivots || [];
   if (!pivots.length) {
     state.qualityOverridesByPivotId = {};
@@ -2087,26 +2123,37 @@ async function refreshQualityOverrides() {
 
   state.qualityOverridesByPivotId = nextOverrides;
   state.statusOverridesByPivotId = nextStatusOverrides;
-  renderStatusSummary();
-  renderCards();
+  if (!skipRender) {
+    renderStatusSummary();
+    renderCards();
+  }
 }
 
-async function refreshAll() {
+async function refreshAll(options = {}) {
+  const suppressInterimRender = !!options.suppressInterimRender;
   if (state.refreshInFlight) return;
   state.refreshInFlight = true;
   try {
-    const stateResult = await refreshState();
+    const stateResult = await refreshState({ skipRender: suppressInterimRender });
     if (stateResult?.selectedRunChanged) {
-      await refreshState();
+      await refreshState({ skipRender: suppressInterimRender });
     }
     if (!state.pivots.length) {
       const resolved = await autoResolveRunIdFromBackend({ allowOverride: true });
       if (resolved) {
-        await refreshState();
+        await refreshState({ skipRender: suppressInterimRender });
       }
     }
-    await refreshQualityOverrides();
-    await refreshPivot();
+    await refreshQualityOverrides({ skipRender: suppressInterimRender });
+    await refreshPivot({ skipRender: suppressInterimRender });
+    if (suppressInterimRender) {
+      renderHeader();
+      renderStatusSummary();
+      renderPending();
+      renderCards();
+      renderSessionControls();
+      renderPivotView();
+    }
     state.lastRefreshToastAtMs = 0;
   } catch (err) {
     ui.cardsGrid.innerHTML = `<div class="empty">Não foi possível carregar os dados. Tente novamente.</div>`;
@@ -2551,6 +2598,7 @@ function wireEvents() {
 async function boot() {
   const authorized = await resolveViewerRole();
   if (!authorized) return;
+  setInitialLoading(true, "Buscando pivos e calculando conectividade inicial...");
   wireEvents();
   if (String(state.authUserRole || "").trim().toLowerCase() === "admin") {
     await refreshAdminUsers();
@@ -2568,7 +2616,11 @@ async function boot() {
   if (hashPivot) {
     state.selectedPivot = hashPivot;
   }
-  await refreshAll();
+  try {
+    await refreshAll({ suppressInterimRender: true });
+  } finally {
+    setInitialLoading(false);
+  }
   setInterval(refreshAll, state.refreshMs);
 }
 
