@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sqlite3
+import statistics
 import threading
 import time
 import uuid
@@ -13,6 +14,7 @@ from backend.cloudv2_dashboard import slugify
 
 DEFAULT_DB_PATH = os.path.join(resolve_data_dir(), "telemetry.sqlite3")
 DEFAULT_MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
+PROBE_STATS_WINDOW_SEC = 30 * 24 * 3600
 
 
 def _ts_to_str(ts):
@@ -1632,6 +1634,78 @@ class TelemetryPersistence:
             )
         return points
 
+    def summarize_probe_stats_for_pivot(self, pivot_id, window_sec=None, now_ts=None):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return {
+                "sent_count": 0,
+                "response_count": 0,
+                "timeout_count": 0,
+                "response_ratio_pct": None,
+                "latency_sample_count": 0,
+                "latency_last_sec": None,
+                "latency_avg_sec": None,
+                "latency_median_sec": None,
+                "latency_min_sec": None,
+                "latency_max_sec": None,
+            }
+
+        safe_window = _safe_float(window_sec, None)
+        if safe_window is None or safe_window <= 0:
+            safe_window = float(PROBE_STATS_WINDOW_SEC)
+
+        reference_ts = _safe_float(now_ts, None)
+        if reference_ts is None:
+            reference_ts = time.time()
+        cutoff_ts = reference_ts - safe_window
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT event_type, latency_sec, ts
+                FROM probe_events
+                WHERE pivot_id = ?
+                    AND ts >= ?
+                ORDER BY ts ASC, id ASC
+                """,
+                (normalized_id, cutoff_ts),
+            ).fetchall()
+
+        sent_count = 0
+        response_count = 0
+        timeout_count = 0
+        latency_samples = []
+
+        for row in rows:
+            event_type = str(row["event_type"] or "").strip().lower()
+            if event_type == "sent":
+                sent_count += 1
+                continue
+            if event_type == "timeout":
+                timeout_count += 1
+                continue
+            if event_type != "response":
+                continue
+
+            response_count += 1
+            latency = _safe_float(row["latency_sec"], None)
+            if latency is not None and latency >= 0:
+                latency_samples.append(latency)
+
+        return {
+            "sent_count": sent_count,
+            "response_count": response_count,
+            "timeout_count": timeout_count,
+            "response_ratio_pct": ((response_count / sent_count) * 100.0) if sent_count > 0 else None,
+            "latency_sample_count": len(latency_samples),
+            "latency_last_sec": latency_samples[-1] if latency_samples else None,
+            "latency_avg_sec": (sum(latency_samples) / len(latency_samples)) if latency_samples else None,
+            "latency_median_sec": statistics.median(latency_samples) if latency_samples else None,
+            "latency_min_sec": min(latency_samples) if latency_samples else None,
+            "latency_max_sec": max(latency_samples) if latency_samples else None,
+        }
+
     def fetch_cloud2_events(self, pivot_id, session_id, limit=None):
         normalized_id = str(pivot_id or "").strip()
         normalized_session = str(session_id or "").strip()
@@ -1952,4 +2026,28 @@ class TelemetryPersistence:
         payload["run_id"] = resolved_run_id
         payload["session"] = self._row_to_session_dict_locked(session_row)
         payload["run"] = self._row_to_run_dict_locked(run_row)
+
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        probe_summary = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
+        probe_stats = self.summarize_probe_stats_for_pivot(
+            normalized_id,
+            window_sec=PROBE_STATS_WINDOW_SEC,
+            now_ts=payload.get("updated_at_ts"),
+        )
+        probe_summary.update(
+            {
+                "sent_count": int(probe_stats["sent_count"]),
+                "response_count": int(probe_stats["response_count"]),
+                "timeout_count": int(probe_stats["timeout_count"]),
+                "response_ratio_pct": probe_stats["response_ratio_pct"],
+                "latency_sample_count": int(probe_stats["latency_sample_count"]),
+                "latency_last_sec": probe_stats["latency_last_sec"],
+                "latency_avg_sec": probe_stats["latency_avg_sec"],
+                "latency_median_sec": probe_stats["latency_median_sec"],
+                "latency_min_sec": probe_stats["latency_min_sec"],
+                "latency_max_sec": probe_stats["latency_max_sec"],
+            }
+        )
+        summary["probe"] = probe_summary
+        payload["summary"] = summary
         return payload
