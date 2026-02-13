@@ -55,6 +55,8 @@ DEFAULT_CONFIG = {
     "probe_timeout_factor": 1.25,
     "probe_timeout_streak_alert": 2,
     "max_events_per_pivot": 5000,
+    "max_events_per_pivot_panel": 5000,
+    "max_events_per_pivot_list": 5000,
     "probe_settings": {},
     "sqlite_db_path": os.path.join(resolve_data_dir(), "telemetry.sqlite3"),
 }
@@ -223,6 +225,8 @@ def _apply_env_overrides(config):
         "PROBE_TIMEOUT_FACTOR": "probe_timeout_factor",
         "PROBE_TIMEOUT_STREAK_ALERT": "probe_timeout_streak_alert",
         "MAX_EVENTS_PER_PIVOT": "max_events_per_pivot",
+        "MAX_EVENTS_PER_PIVOT_PANEL": "max_events_per_pivot_panel",
+        "MAX_EVENTS_PER_PIVOT_LIST": "max_events_per_pivot_list",
         "SQLITE_DB_PATH": "sqlite_db_path",
     }
     for env_name, config_key in overrides.items():
@@ -241,6 +245,17 @@ def _apply_env_overrides(config):
     # No Render, PORT e a porta HTTP de entrada publicada pela plataforma.
     if running_on_render and legacy_port_env and not dashboard_port_env:
         config["dashboard_port"] = legacy_port_env
+
+    # Em producao, aumenta o intervalo padrao do refresh do dashboard para reduzir carga.
+    # Ainda permite sobrescrita explicita via arquivo/env.
+    if running_on_render and not os.environ.get("DASHBOARD_REFRESH_SEC"):
+        current_refresh = _to_int(
+            config.get("dashboard_refresh_sec"),
+            DEFAULT_CONFIG["dashboard_refresh_sec"],
+            minimum=1,
+        )
+        if current_refresh < 10:
+            config["dashboard_refresh_sec"] = 10
 
     cmd_topics_env = os.environ.get("CMD_TOPICS")
     if cmd_topics_env:
@@ -407,6 +422,20 @@ def normalize_config(raw_config):
         DEFAULT_CONFIG["max_events_per_pivot"],
         minimum=100,
     )
+    base["max_events_per_pivot_panel"] = _to_int(
+        base.get("max_events_per_pivot_panel", base["max_events_per_pivot"]),
+        base["max_events_per_pivot"],
+        minimum=100,
+    )
+    base["max_events_per_pivot_list"] = _to_int(
+        base.get("max_events_per_pivot_list", base["max_events_per_pivot_panel"]),
+        base["max_events_per_pivot_panel"],
+        minimum=100,
+    )
+    if base["max_events_per_pivot_list"] > base["max_events_per_pivot_panel"]:
+        base["max_events_per_pivot_list"] = base["max_events_per_pivot_panel"]
+    # Compatibilidade com codigo legado que ainda consulta max_events_per_pivot.
+    base["max_events_per_pivot"] = base["max_events_per_pivot_panel"]
     base["sqlite_db_path"] = (
         str(base.get("sqlite_db_path", DEFAULT_CONFIG["sqlite_db_path"])).strip()
         or DEFAULT_CONFIG["sqlite_db_path"]

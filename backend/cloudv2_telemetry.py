@@ -227,7 +227,18 @@ class TelemetryStore:
         self.dedupe_window_sec = max(1, int(config.get("dedupe_window_sec", 8)))
         self.history_retention_hours = max(24, int(config.get("history_retention_hours", 24)))
         self.retention_sec = self.history_retention_hours * 3600
-        self.max_events_per_pivot = max(100, int(config.get("max_events_per_pivot", 5000)))
+        self.max_events_per_pivot_panel = max(
+            100,
+            int(config.get("max_events_per_pivot_panel", config.get("max_events_per_pivot", 5000))),
+        )
+        self.max_events_per_pivot_list = max(
+            100,
+            int(config.get("max_events_per_pivot_list", self.max_events_per_pivot_panel)),
+        )
+        if self.max_events_per_pivot_list > self.max_events_per_pivot_panel:
+            self.max_events_per_pivot_list = self.max_events_per_pivot_panel
+        # Compatibilidade com logica existente (painel detalhado).
+        self.max_events_per_pivot = self.max_events_per_pivot_panel
         self.show_pending_ping_pivots = bool(config.get("show_pending_ping_pivots", False))
 
         self.probe_default_interval_sec = max(10, int(config.get("probe_default_interval_sec", 300)))
@@ -272,7 +283,7 @@ class TelemetryStore:
             self.sqlite_db_path = os.path.join(DATA_DIR, "telemetry.sqlite3")
         self.persistence = TelemetryPersistence(
             db_path=self.sqlite_db_path,
-            max_events_per_pivot=self.max_events_per_pivot,
+            max_events_per_pivot=self.max_events_per_pivot_panel,
             log=self.log,
         )
 
@@ -764,7 +775,10 @@ class TelemetryStore:
             cache_generation = int(self._api_cache_generation)
 
         try:
-            payload = self.persistence.get_quality_cards_payload(run_id=normalized_run)
+            payload = self.persistence.get_quality_cards_payload(
+                run_id=normalized_run,
+                timeline_limit=self.max_events_per_pivot_list,
+            )
         except RuntimeError:
             payload = None
         if payload is not None:
@@ -795,14 +809,16 @@ class TelemetryStore:
                         "summary": pivot_payload.get("summary")
                         if isinstance(pivot_payload.get("summary"), dict)
                         else {},
-                        "timeline": [
-                            {
-                                "ts": _safe_float(event.get("ts"), None),
-                                "topic": str(event.get("topic") or ""),
-                            }
-                            for event in (pivot_payload.get("timeline") or [])
-                            if isinstance(event, dict)
-                        ],
+                        "timeline": (
+                            [
+                                {
+                                    "ts": _safe_float(event.get("ts"), None),
+                                    "topic": str(event.get("topic") or ""),
+                                }
+                                for event in (pivot_payload.get("timeline") or [])
+                                if isinstance(event, dict)
+                            ][-self.max_events_per_pivot_list :]
+                        ),
                     }
                 )
 
@@ -2818,6 +2834,8 @@ class TelemetryStore:
             "cloudv2_min_samples": self.cloudv2_min_samples,
             "show_pending_ping_pivots": self.show_pending_ping_pivots,
             "probe_timeout_streak_alert": self.probe_timeout_streak_alert,
+            "max_events_per_pivot_panel": self.max_events_per_pivot_panel,
+            "max_events_per_pivot_list": self.max_events_per_pivot_list,
         }
 
     def _build_state_snapshot_locked(self, now):
