@@ -15,7 +15,7 @@ from backend.cloudv2_dashboard import slugify
 DEFAULT_DB_PATH = os.path.join(resolve_data_dir(), "telemetry.sqlite3")
 DEFAULT_MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
 PROBE_STATS_WINDOW_SEC = 30 * 24 * 3600
-TIMELINE_MINI_BINS = 48
+TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_DEFAULT_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
 CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network")
@@ -191,8 +191,12 @@ def _build_timeline_mini_segments(events, window_end_ts, window_sec, disconnect_
             continue
         message_ts.append(ts_value)
 
-    if not message_ts:
+    total_duration = end_ts - start_ts
+    if total_duration <= 0:
         return []
+
+    if not message_ts:
+        return [{"state": "offline", "ratio": 1.0}]
 
     message_ts = sorted(set(message_ts))
     online_intervals = []
@@ -217,37 +221,93 @@ def _build_timeline_mini_segments(events, window_end_ts, window_sec, disconnect_
         online_intervals.append((current_start, current_end))
 
     if not online_intervals:
-        return []
+        return [{"state": "offline", "ratio": 1.0}]
 
-    bin_count = TIMELINE_MINI_BINS
-    bin_size = safe_window_sec / float(bin_count)
+    raw_segments = []
+    cursor = start_ts
+    for interval_start, interval_end in online_intervals:
+        if interval_start > cursor:
+            raw_segments.append({"state": "offline", "start": cursor, "end": interval_start})
+        raw_segments.append({"state": "online", "start": interval_start, "end": interval_end})
+        cursor = interval_end
+        if cursor >= end_ts:
+            break
+    if cursor < end_ts:
+        raw_segments.append({"state": "offline", "start": cursor, "end": end_ts})
+    raw_segments = [segment for segment in raw_segments if segment["end"] > segment["start"]]
+    if not raw_segments:
+        return [{"state": "offline", "ratio": 1.0}]
+
+    def build_ratio_segments(segments):
+        ratio_segments = []
+        for segment in segments:
+            ratio = (segment["end"] - segment["start"]) / total_duration
+            if ratio <= 0:
+                continue
+            state = segment["state"]
+            if ratio_segments and ratio_segments[-1]["state"] == state:
+                ratio_segments[-1]["ratio"] += ratio
+            else:
+                ratio_segments.append({"state": state, "ratio": ratio})
+        if not ratio_segments:
+            return []
+        total_ratio = sum(item["ratio"] for item in ratio_segments)
+        if total_ratio <= 0:
+            return []
+        for item in ratio_segments:
+            item["ratio"] = round(item["ratio"] / total_ratio, 6)
+        return ratio_segments
+
+    if len(raw_segments) <= TIMELINE_MINI_BINS:
+        direct = build_ratio_segments(raw_segments)
+        if direct:
+            return direct
+        return [{"state": "offline", "ratio": 1.0}]
+
+    bin_size = total_duration / float(TIMELINE_MINI_BINS)
     states = []
-    interval_idx = 0
-    for idx in range(bin_count):
-        midpoint = start_ts + ((idx + 0.5) * bin_size)
-        while interval_idx < len(online_intervals) and midpoint > online_intervals[interval_idx][1]:
-            interval_idx += 1
-        is_online = False
-        if interval_idx < len(online_intervals):
-            interval_start, interval_end = online_intervals[interval_idx]
-            is_online = interval_start <= midpoint <= interval_end
-        states.append("online" if is_online else "offline")
+    segment_idx = 0
+    for bin_idx in range(TIMELINE_MINI_BINS):
+        bin_start = start_ts + (bin_idx * bin_size)
+        bin_end = bin_start + bin_size
+        online_overlap = 0.0
+        offline_overlap = 0.0
 
-    segments = []
+        while segment_idx < len(raw_segments) and raw_segments[segment_idx]["end"] <= bin_start:
+            segment_idx += 1
+
+        probe_idx = segment_idx
+        while probe_idx < len(raw_segments):
+            segment = raw_segments[probe_idx]
+            if segment["start"] >= bin_end:
+                break
+            overlap_start = max(bin_start, segment["start"])
+            overlap_end = min(bin_end, segment["end"])
+            overlap = overlap_end - overlap_start
+            if overlap > 0:
+                if segment["state"] == "online":
+                    online_overlap += overlap
+                else:
+                    offline_overlap += overlap
+            probe_idx += 1
+
+        states.append("online" if online_overlap >= offline_overlap else "offline")
+
+    compressed = []
     current_state = states[0]
     current_count = 1
     for state in states[1:]:
         if state == current_state:
             current_count += 1
             continue
-        segments.append({"state": current_state, "ratio": current_count / float(bin_count)})
+        compressed.append({"state": current_state, "ratio": current_count / float(TIMELINE_MINI_BINS)})
         current_state = state
         current_count = 1
-    segments.append({"state": current_state, "ratio": current_count / float(bin_count)})
+    compressed.append({"state": current_state, "ratio": current_count / float(TIMELINE_MINI_BINS)})
 
-    for segment in segments:
+    for segment in compressed:
         segment["ratio"] = round(segment["ratio"], 6)
-    return segments
+    return compressed
 
 
 class TelemetryPersistence:
