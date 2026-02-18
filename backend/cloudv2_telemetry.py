@@ -23,6 +23,8 @@ MONITOR_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_CLOUD2, TOPIC_NETWORK, TOPIC_
 PROBE_RESPONSE_TOPICS = {TOPIC_NETWORK, TOPIC_INFO}
 CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 TIMELINE_MINI_BINS = 48
+TIMELINE_MINI_WINDOW_SEC = 30 * 24 * 3600
+TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
 
 STATUS_LABELS = {
     "green": "Online",
@@ -2664,7 +2666,7 @@ class TelemetryStore:
 
     def _build_timeline_mini_segments_locked(self, pivot, now, disconnect_threshold_sec, window_sec):
         threshold_sec = _safe_float(disconnect_threshold_sec, None)
-        safe_window_sec = _safe_float(window_sec, None)
+        safe_window_sec = _safe_float(window_sec, TIMELINE_MINI_WINDOW_SEC)
         if threshold_sec is None or threshold_sec <= 0 or safe_window_sec is None or safe_window_sec <= 0:
             return []
 
@@ -2672,7 +2674,27 @@ class TelemetryStore:
         if end_ts is None:
             return []
 
+        min_timeline_ts = None
+        for event in pivot.get("timeline", []):
+            if not isinstance(event, dict):
+                continue
+            event_ts = _safe_float(event.get("ts"), None)
+            if event_ts is None or event_ts <= 0 or event_ts > end_ts:
+                continue
+            if min_timeline_ts is None or event_ts < min_timeline_ts:
+                min_timeline_ts = event_ts
+
+        if min_timeline_ts is None:
+            min_timeline_ts = max(0.0, end_ts - TIMELINE_MINI_EMPTY_FALLBACK_SEC)
+
         start_ts = end_ts - safe_window_sec
+        if start_ts < min_timeline_ts:
+            start_ts = min_timeline_ts
+        if start_ts >= end_ts:
+            start_ts = max(min_timeline_ts, end_ts - TIMELINE_MINI_EMPTY_FALLBACK_SEC)
+        if start_ts >= end_ts:
+            return []
+
         min_relevant_ts = start_ts - threshold_sec
         message_ts = []
         for event in pivot.get("timeline", []):
@@ -3180,7 +3202,7 @@ class TelemetryStore:
             pivot,
             now,
             disconnect_threshold_sec=status["disconnect_threshold_sec"],
-            window_sec=status["attention_window_sec"],
+            window_sec=TIMELINE_MINI_WINDOW_SEC,
         )
 
         return {

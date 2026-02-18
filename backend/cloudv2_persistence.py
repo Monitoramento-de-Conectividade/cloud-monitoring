@@ -17,6 +17,7 @@ DEFAULT_MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
 PROBE_STATS_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_BINS = 48
 TIMELINE_MINI_DEFAULT_WINDOW_SEC = 30 * 24 * 3600
+TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
 CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network")
 
 
@@ -155,7 +156,26 @@ def _build_timeline_mini_segments(events, window_end_ts, window_sec, disconnect_
     if end_ts is None or safe_window_sec is None or safe_window_sec <= 0 or threshold_sec is None or threshold_sec <= 0:
         return []
 
+    min_timeline_ts = None
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        event_ts = _safe_float(event.get("ts"), None)
+        if event_ts is None or event_ts <= 0 or event_ts > end_ts:
+            continue
+        if min_timeline_ts is None or event_ts < min_timeline_ts:
+            min_timeline_ts = event_ts
+    if min_timeline_ts is None:
+        min_timeline_ts = max(0.0, end_ts - TIMELINE_MINI_EMPTY_FALLBACK_SEC)
+
     start_ts = end_ts - safe_window_sec
+    if start_ts < min_timeline_ts:
+        start_ts = min_timeline_ts
+    if start_ts >= end_ts:
+        start_ts = max(min_timeline_ts, end_ts - TIMELINE_MINI_EMPTY_FALLBACK_SEC)
+    if start_ts >= end_ts:
+        return []
+
     min_relevant_ts = start_ts - threshold_sec
     message_ts = []
     for event in events or []:
@@ -2327,21 +2347,17 @@ class TelemetryPersistence:
             if row_updated is None:
                 row_updated = time.time()
 
-            existing_mini = _normalize_timeline_mini_segments(summary.get("timeline_mini"))
-            if existing_mini:
-                summary["timeline_mini"] = existing_mini
-            elif pivot_id and session_id:
+            if pivot_id and session_id:
                 timeline_events = self.fetch_timeline_events_light(
                     pivot_id,
                     session_id,
                     limit=self.max_events_per_pivot,
                 )
-                attention_window_sec = _safe_float(summary.get("attention_window_sec"), TIMELINE_MINI_DEFAULT_WINDOW_SEC)
                 disconnect_threshold_sec = _safe_float(summary.get("disconnect_threshold_sec"), None)
                 summary["timeline_mini"] = _build_timeline_mini_segments(
                     timeline_events,
                     window_end_ts=row_updated,
-                    window_sec=attention_window_sec,
+                    window_sec=TIMELINE_MINI_DEFAULT_WINDOW_SEC,
                     disconnect_threshold_sec=disconnect_threshold_sec,
                 )
             else:
