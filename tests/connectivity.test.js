@@ -221,3 +221,50 @@ test("ui: pivot com RSSI exibe o card de RSSI", () => {
   });
   assert.equal(shouldRender, true);
 });
+
+test("ui: ordem antiga de colunas é migrada para timeline + sinal/tecnologia", () => {
+  const normalized = _test.normalizePivotTableColumnOrder([
+    "pivot_id",
+    "status",
+    "last_ping_at",
+    "signal_technology",
+    "firmware",
+  ]);
+  const timelineIndex = normalized.indexOf("timeline");
+  const signalIndex = normalized.indexOf("signal");
+  const technologyIndex = normalized.indexOf("technology");
+  assert.ok(timelineIndex >= 0);
+  assert.ok(signalIndex >= 0);
+  assert.ok(technologyIndex >= 0);
+});
+
+test("ui: sinal e tecnologia usam novos campos e fallback combinado", () => {
+  assert.equal(
+    _test.pivotSignalValue({ signal: "21", signal_technology: "10 / LTE", last_cloud2: { rssi: "9" } }),
+    "21"
+  );
+  assert.equal(
+    _test.pivotTechnologyColumnValue({ technology: "LTE", signal_technology: "10 / GSM", last_cloud2: { technology: "EDGE" } }),
+    "LTE"
+  );
+  assert.equal(
+    _test.pivotSignalValue({ signal_technology: "18 / 4G" }),
+    "18"
+  );
+  assert.equal(
+    _test.pivotTechnologyColumnValue({ signal_technology: "18 / 4G" }),
+    "4G"
+  );
+});
+
+test("ui: timeline mini normaliza segmentos inválidos e mantém soma positiva", () => {
+  const segments = _test.normalizeTimelineMiniSegments([
+    { state: "online", ratio: 0.5 },
+    { state: "offline", ratio: 0.5 },
+    { state: "invalid", ratio: 0.8 },
+    { state: "online", ratio: -1 },
+  ]);
+  assert.equal(segments.length, 2);
+  const total = segments.reduce((acc, item) => acc + item.ratio, 0);
+  assert.ok(total > 0.99 && total < 1.01);
+});

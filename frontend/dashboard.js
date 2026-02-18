@@ -248,11 +248,12 @@ const PIVOT_TABLE_COLUMNS = [
   { key: "pivot_id", label: "Pivo" },
   { key: "status", label: "Status" },
   { key: "connectivity", label: "Conectividade" },
-  { key: "last_ping_at", label: "Ultima atualizacao de conectividade" },
+  { key: "timeline", label: "Timeline" },
   { key: "last_cloudv2_at", label: "Ultima atualizacao de dados" },
   { key: "median", label: "Intervalo tipico de atualizacao" },
   { key: "last_activity_at", label: "Ultima atualizacao" },
-  { key: "signal_technology", label: "Sinal / Tecnologia" },
+  { key: "signal", label: "Sinal" },
+  { key: "technology", label: "Tecnologia" },
   { key: "firmware", label: "Firmware" },
 ];
 const PIVOT_TABLE_COLUMN_KEYS = PIVOT_TABLE_COLUMNS.map((item) => item.key);
@@ -357,6 +358,86 @@ function pivotTechnologyValue(item) {
 function pivotFirmwareValue(item) {
   const cloud2 = (item || {}).last_cloud2 || {};
   return normalizeFilterText(cloud2.firmware);
+}
+
+function parseSignalTechnologyCombined(value) {
+  const raw = normalizeFilterText(value);
+  if (!raw) return { signal: "", technology: "" };
+  const sepIndex = raw.indexOf("/");
+  if (sepIndex < 0) return { signal: raw, technology: "" };
+  const signal = normalizeFilterText(raw.slice(0, sepIndex));
+  const technology = normalizeFilterText(raw.slice(sepIndex + 1));
+  return {
+    signal: signal === "-" ? "" : signal,
+    technology: technology === "-" ? "" : technology,
+  };
+}
+
+function pivotSignalValue(item) {
+  const safePivot = item || {};
+  const directSignal = normalizeFilterText(safePivot.signal);
+  if (directSignal) return directSignal;
+  const cloud2 = safePivot.last_cloud2 || {};
+  const cloudSignal = normalizeFilterText(cloud2.rssi);
+  if (cloudSignal) return cloudSignal;
+  const parsed = parseSignalTechnologyCombined(safePivot.signal_technology);
+  return parsed.signal;
+}
+
+function pivotTechnologyColumnValue(item) {
+  const safePivot = item || {};
+  const directTechnology = normalizeFilterText(safePivot.technology);
+  if (directTechnology) return directTechnology;
+  const cloud2 = safePivot.last_cloud2 || {};
+  const cloudTechnology = normalizeFilterText(cloud2.technology);
+  if (cloudTechnology) return cloudTechnology;
+  const parsed = parseSignalTechnologyCombined(safePivot.signal_technology);
+  if (parsed.technology) return parsed.technology;
+  return pivotTechnologyValue(safePivot);
+}
+
+function normalizeTimelineMiniSegments(rawSegments) {
+  if (!Array.isArray(rawSegments)) return [];
+  const normalized = [];
+  let consumedRatio = 0;
+  for (const segment of rawSegments) {
+    if (!segment || typeof segment !== "object") continue;
+    const state = normalizeFilterKey(segment.state);
+    if (state !== "online" && state !== "offline") continue;
+    const ratio = Number(segment.ratio);
+    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+    const clamped = Math.max(0, Math.min(1, ratio));
+    consumedRatio += clamped;
+    normalized.push({ state, ratio: clamped });
+    if (normalized.length >= 60) break;
+  }
+  if (!normalized.length) return [];
+  if (consumedRatio <= 0) return [];
+  return normalized.map((segment) => ({
+    state: segment.state,
+    ratio: segment.ratio / consumedRatio,
+  }));
+}
+
+function buildTimelineMiniHtml(item) {
+  const safePivot = item || {};
+  const segments = normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini);
+  if (!segments.length) {
+    return `
+      <div class="pivot-timeline-mini empty" aria-hidden="true">
+        <span class="pivot-timeline-mini-segment neutral" style="width: 100%;"></span>
+      </div>
+    `;
+  }
+
+  const segmentsHtml = segments
+    .map((segment) => {
+      const widthPct = Math.max(0, Math.min(100, segment.ratio * 100));
+      const cssState = segment.state === "online" ? "online" : "offline";
+      return `<span class="pivot-timeline-mini-segment ${cssState}" style="width: ${widthPct.toFixed(4)}%;"></span>`;
+    })
+    .join("");
+  return `<div class="pivot-timeline-mini" aria-hidden="true">${segmentsHtml}</div>`;
 }
 
 function fallbackCloud2FilterOptionsFromPivots(pivots) {
@@ -1085,17 +1166,26 @@ function arraysShallowEqual(a, b) {
   return true;
 }
 
+function expandPivotTableColumnOrderKey(rawKey) {
+  const key = String(rawKey || "").trim();
+  if (!key) return [];
+  if (key === "last_ping_at") return ["timeline"];
+  if (key === "signal_technology") return ["signal", "technology"];
+  return [key];
+}
+
 function normalizePivotTableColumnOrder(order) {
   const rawOrder = Array.isArray(order) ? order : [];
   const normalized = [];
   const seen = new Set();
   for (const item of rawOrder) {
-    const key = String(item || "").trim();
-    if (!key) continue;
-    if (!PIVOT_TABLE_COLUMN_KEYS.includes(key)) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(key);
+    const expandedKeys = expandPivotTableColumnOrderKey(item);
+    for (const key of expandedKeys) {
+      if (!PIVOT_TABLE_COLUMN_KEYS.includes(key)) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push(key);
+    }
   }
   for (const key of PIVOT_TABLE_COLUMN_KEYS) {
     if (seen.has(key)) continue;
@@ -1145,6 +1235,9 @@ function buildPivotCardSignature(pivot) {
   const status = getDisplayStatus(safePivot);
   const quality = getDisplayQuality(safePivot);
   const cloud2 = safePivot.last_cloud2 || {};
+  const timelineSegments = normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini)
+    .map((segment) => `${segment.state}:${segment.ratio.toFixed(4)}`)
+    .join(",");
   return [
     text(safePivot.pivot_id, "").trim(),
     text(status.code, "gray"),
@@ -1154,11 +1247,12 @@ function buildPivotCardSignature(pivot) {
     text(safePivot.last_ping_at, "-"),
     text(safePivot.last_cloudv2_at, "-"),
     text(safePivot.last_activity_at, "-"),
+    timelineSegments,
     safePivot.median_ready ? 1 : 0,
     Number(safePivot.median_sample_count || 0),
     Number(safePivot.median_cloudv2_interval_sec || 0),
-    text(cloud2.rssi, "-"),
-    text(pivotTechnologyValue(safePivot), "-"),
+    text(safePivot.signal, text(cloud2.rssi, "-")),
+    text(safePivot.technology, text(pivotTechnologyValue(safePivot), "-")),
     text(cloud2.firmware, "-"),
   ].join("|");
 }
@@ -1183,8 +1277,8 @@ function buildPivotCardHtml(pivot) {
       if (columnKey === "connectivity") {
         return `<td><span class="badge ${escapeHtml(text(quality.code, "green"))}">${escapeHtml(text(quality.label, "Estavel"))}</span></td>`;
       }
-      if (columnKey === "last_ping_at") {
-        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_ping_at))}</td>`;
+      if (columnKey === "timeline") {
+        return `<td class="pivot-timeline-cell">${buildTimelineMiniHtml(safePivot)}</td>`;
       }
       if (columnKey === "last_cloudv2_at") {
         return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_cloudv2_at))}</td>`;
@@ -1200,9 +1294,11 @@ function buildPivotCardHtml(pivot) {
       if (columnKey === "last_activity_at") {
         return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_activity_at))}</td>`;
       }
-      if (columnKey === "signal_technology") {
-        const signalTech = `${text(cloud2.rssi)} / ${text(pivotTechnologyValue(safePivot))}`;
-        return `<td class="pivot-table-text">${escapeHtml(signalTech)}</td>`;
+      if (columnKey === "signal") {
+        return `<td class="pivot-table-text">${escapeHtml(text(pivotSignalValue(safePivot)))}</td>`;
+      }
+      if (columnKey === "technology") {
+        return `<td class="pivot-table-text">${escapeHtml(text(pivotTechnologyColumnValue(safePivot)))}</td>`;
       }
       if (columnKey === "firmware") {
         return `<td class="pivot-table-text">${escapeHtml(text(cloud2.firmware))}</td>`;
@@ -3538,6 +3634,12 @@ if (typeof module !== "undefined" && module.exports) {
       isProbeMonitoringEnabled,
       pivotProbeResponseRatioPct,
       compareByProbeResponseRatioDesc,
+      parseSignalTechnologyCombined,
+      pivotSignalValue,
+      pivotTechnologyColumnValue,
+      normalizeTimelineMiniSegments,
+      normalizePivotTableColumnOrder,
+      expandPivotTableColumnOrderKey,
       buildQualitySourceSignature,
       isPivotConcentrator,
       pivotTechnologyValue,

@@ -569,7 +569,7 @@ a:focus {
 
 .pivot-table {
   width: 100%;
-  min-width: 1100px;
+  min-width: 1280px;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -628,6 +628,44 @@ a:focus {
 .pivot-table-text.strong {
   color: #123a2a;
   font-weight: 700;
+}
+
+.pivot-timeline-cell {
+  min-width: 200px;
+}
+
+.pivot-timeline-mini {
+  display: flex;
+  align-items: stretch;
+  width: min(260px, 100%);
+  min-width: 160px;
+  height: 20px;
+  border: 1px solid #d3e3d8;
+  border-radius: 999px;
+  background: #f3f8f5;
+  overflow: hidden;
+}
+
+.pivot-timeline-mini-segment {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+}
+
+.pivot-timeline-mini-segment.online {
+  background: #3ec285;
+}
+
+.pivot-timeline-mini-segment.offline {
+  background: #df5a46;
+}
+
+.pivot-timeline-mini-segment.neutral {
+  background: #d7e2db;
+}
+
+.pivot-timeline-mini.empty {
+  background: #f6faf8;
 }
 
 .pivot-card {

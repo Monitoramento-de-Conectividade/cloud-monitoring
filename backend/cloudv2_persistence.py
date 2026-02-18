@@ -15,6 +15,9 @@ from backend.cloudv2_dashboard import slugify
 DEFAULT_DB_PATH = os.path.join(resolve_data_dir(), "telemetry.sqlite3")
 DEFAULT_MIGRATIONS_DIR = os.path.join(os.path.dirname(__file__), "migrations")
 PROBE_STATS_WINDOW_SEC = 30 * 24 * 3600
+TIMELINE_MINI_BINS = 48
+TIMELINE_MINI_DEFAULT_WINDOW_SEC = 30 * 24 * 3600
+CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network")
 
 
 def _ts_to_str(ts):
@@ -51,6 +54,180 @@ def _safe_bool(value, default=None):
         if normalized in {"0", "false", "no", "n", "nao", "não"}:
             return False
     return default
+
+
+def _normalize_text(value):
+    return str(value or "").strip()
+
+
+def _parse_signal_technology_combined(value):
+    raw = _normalize_text(value)
+    if not raw:
+        return ("", "")
+    if "/" not in raw:
+        return (raw, "")
+
+    left, right = raw.split("/", 1)
+    signal = _normalize_text(left)
+    technology = _normalize_text(right)
+    if signal in ("-", "--"):
+        signal = ""
+    if technology in ("-", "--"):
+        technology = ""
+    return (signal, technology)
+
+
+def _ensure_summary_signal_fields(item):
+    if not isinstance(item, dict):
+        return item
+
+    last_cloud2 = item.get("last_cloud2") if isinstance(item.get("last_cloud2"), dict) else {}
+    signal = _normalize_text(item.get("signal"))
+    technology = _normalize_text(item.get("technology"))
+    combined = _normalize_text(item.get("signal_technology"))
+
+    if not signal:
+        signal = _normalize_text(last_cloud2.get("rssi"))
+    if not technology:
+        technology = _normalize_text(last_cloud2.get("technology"))
+
+    if combined:
+        parsed_signal, parsed_technology = _parse_signal_technology_combined(combined)
+        if not signal and parsed_signal:
+            signal = parsed_signal
+        if not technology and parsed_technology:
+            technology = parsed_technology
+
+    if signal and not _normalize_text(last_cloud2.get("rssi")):
+        last_cloud2["rssi"] = signal
+    if technology and not _normalize_text(last_cloud2.get("technology")):
+        last_cloud2["technology"] = technology
+
+    item["last_cloud2"] = last_cloud2
+    item["signal"] = signal
+    item["technology"] = technology
+    item["signal_technology"] = f"{signal or '-'} / {technology or '-'}"
+    return item
+
+
+def _normalize_timeline_mini_segments(raw_segments):
+    if not isinstance(raw_segments, list):
+        return []
+
+    cleaned = []
+    for segment in raw_segments:
+        if not isinstance(segment, dict):
+            continue
+        state = _normalize_text(segment.get("state")).lower()
+        if state not in ("online", "offline"):
+            continue
+        ratio = _safe_float(segment.get("ratio"), None)
+        if ratio is None or ratio <= 0:
+            continue
+        cleaned.append({"state": state, "ratio": max(0.0, ratio)})
+        if len(cleaned) >= TIMELINE_MINI_BINS:
+            break
+
+    if not cleaned:
+        return []
+
+    total = sum(segment["ratio"] for segment in cleaned)
+    if total <= 0:
+        return []
+
+    merged = []
+    for segment in cleaned:
+        normalized_ratio = segment["ratio"] / total
+        if merged and merged[-1]["state"] == segment["state"]:
+            merged[-1]["ratio"] += normalized_ratio
+        else:
+            merged.append({"state": segment["state"], "ratio": normalized_ratio})
+
+    for segment in merged:
+        segment["ratio"] = round(segment["ratio"], 6)
+    return merged
+
+
+def _build_timeline_mini_segments(events, window_end_ts, window_sec, disconnect_threshold_sec):
+    end_ts = _safe_float(window_end_ts, None)
+    safe_window_sec = _safe_float(window_sec, None)
+    threshold_sec = _safe_float(disconnect_threshold_sec, None)
+    if end_ts is None or safe_window_sec is None or safe_window_sec <= 0 or threshold_sec is None or threshold_sec <= 0:
+        return []
+
+    start_ts = end_ts - safe_window_sec
+    min_relevant_ts = start_ts - threshold_sec
+    message_ts = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        topic = _normalize_text(event.get("topic"))
+        if topic not in CONNECTIVITY_TOPICS:
+            continue
+        ts_value = _safe_float(event.get("ts"), None)
+        if ts_value is None:
+            continue
+        if ts_value < min_relevant_ts or ts_value > end_ts:
+            continue
+        message_ts.append(ts_value)
+
+    if not message_ts:
+        return []
+
+    message_ts = sorted(set(message_ts))
+    online_intervals = []
+    current_start = None
+    current_end = None
+    for ts_value in message_ts:
+        interval_start = max(start_ts, ts_value)
+        interval_end = min(end_ts, ts_value + threshold_sec)
+        if interval_end <= interval_start:
+            continue
+        if current_start is None:
+            current_start = interval_start
+            current_end = interval_end
+            continue
+        if interval_start <= current_end:
+            current_end = max(current_end, interval_end)
+            continue
+        online_intervals.append((current_start, current_end))
+        current_start = interval_start
+        current_end = interval_end
+    if current_start is not None:
+        online_intervals.append((current_start, current_end))
+
+    if not online_intervals:
+        return []
+
+    bin_count = TIMELINE_MINI_BINS
+    bin_size = safe_window_sec / float(bin_count)
+    states = []
+    interval_idx = 0
+    for idx in range(bin_count):
+        midpoint = start_ts + ((idx + 0.5) * bin_size)
+        while interval_idx < len(online_intervals) and midpoint > online_intervals[interval_idx][1]:
+            interval_idx += 1
+        is_online = False
+        if interval_idx < len(online_intervals):
+            interval_start, interval_end = online_intervals[interval_idx]
+            is_online = interval_start <= midpoint <= interval_end
+        states.append("online" if is_online else "offline")
+
+    segments = []
+    current_state = states[0]
+    current_count = 1
+    for state in states[1:]:
+        if state == current_state:
+            current_count += 1
+            continue
+        segments.append({"state": current_state, "ratio": current_count / float(bin_count)})
+        current_state = state
+        current_count = 1
+    segments.append({"state": current_state, "ratio": current_count / float(bin_count)})
+
+    for segment in segments:
+        segment["ratio"] = round(segment["ratio"], 6)
+    return segments
 
 
 class TelemetryPersistence:
@@ -1955,6 +2132,10 @@ class TelemetryPersistence:
             "last_cloudv2_ts": None,
             "last_cloudv2_at": "-",
             "last_cloud2": {},
+            "signal": "",
+            "technology": "",
+            "signal_technology": "- / -",
+            "timeline_mini": [],
             "last_activity_ts": None,
             "last_activity_at": "-",
             "median_ready": False,
@@ -2088,6 +2269,8 @@ class TelemetryPersistence:
             )["probe"]
         if not isinstance(item.get("last_cloud2"), dict):
             item["last_cloud2"] = {}
+        _ensure_summary_signal_fields(item)
+        item["timeline_mini"] = _normalize_timeline_mini_segments(item.get("timeline_mini"))
         return item
 
     def get_run_state_payload(self, run_id=None):
@@ -2137,8 +2320,34 @@ class TelemetryPersistence:
         pivots = []
         last_updated_ts = _safe_float(run_row["updated_at_ts"], None)
         for row in rows:
-            pivots.append(self._build_state_summary_from_snapshot_row(row, resolved_run_id))
+            summary = self._build_state_summary_from_snapshot_row(row, resolved_run_id)
+            pivot_id = str(summary.get("pivot_id") or row["pivot_id"] or "").strip()
+            session_id = str(summary.get("session_id") or row["session_id"] or "").strip()
             row_updated = _safe_float(row["snapshot_updated_at_ts"], _safe_float(row["session_updated_at_ts"], None))
+            if row_updated is None:
+                row_updated = time.time()
+
+            existing_mini = _normalize_timeline_mini_segments(summary.get("timeline_mini"))
+            if existing_mini:
+                summary["timeline_mini"] = existing_mini
+            elif pivot_id and session_id:
+                timeline_events = self.fetch_timeline_events_light(
+                    pivot_id,
+                    session_id,
+                    limit=self.max_events_per_pivot,
+                )
+                attention_window_sec = _safe_float(summary.get("attention_window_sec"), TIMELINE_MINI_DEFAULT_WINDOW_SEC)
+                disconnect_threshold_sec = _safe_float(summary.get("disconnect_threshold_sec"), None)
+                summary["timeline_mini"] = _build_timeline_mini_segments(
+                    timeline_events,
+                    window_end_ts=row_updated,
+                    window_sec=attention_window_sec,
+                    disconnect_threshold_sec=disconnect_threshold_sec,
+                )
+            else:
+                summary["timeline_mini"] = []
+
+            pivots.append(summary)
             if row_updated is None:
                 continue
             if last_updated_ts is None or row_updated > last_updated_ts:

@@ -22,6 +22,7 @@ TOPIC_INFO = "cloudv2-info"
 MONITOR_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_CLOUD2, TOPIC_NETWORK, TOPIC_INFO)
 PROBE_RESPONSE_TOPICS = {TOPIC_NETWORK, TOPIC_INFO}
 CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
+TIMELINE_MINI_BINS = 48
 
 STATUS_LABELS = {
     "green": "Online",
@@ -84,6 +85,26 @@ def _safe_int(value, default=None):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_text(value):
+    return str(value or "").strip()
+
+
+def _parse_signal_technology_combined(value):
+    raw = _normalize_text(value)
+    if not raw:
+        return ("", "")
+    if "/" not in raw:
+        return (raw, "")
+    left, right = raw.split("/", 1)
+    signal = _normalize_text(left)
+    technology = _normalize_text(right)
+    if signal in ("-", "--"):
+        signal = ""
+    if technology in ("-", "--"):
+        technology = ""
+    return (signal, technology)
 
 
 def _parse_duration_seconds(value):
@@ -2641,6 +2662,86 @@ class TelemetryStore:
         disconnected_sec = max(0.0, float(window_sec) - connected_sec)
         return (disconnected_sec / float(window_sec)) * 100.0
 
+    def _build_timeline_mini_segments_locked(self, pivot, now, disconnect_threshold_sec, window_sec):
+        threshold_sec = _safe_float(disconnect_threshold_sec, None)
+        safe_window_sec = _safe_float(window_sec, None)
+        if threshold_sec is None or threshold_sec <= 0 or safe_window_sec is None or safe_window_sec <= 0:
+            return []
+
+        end_ts = _safe_float(now, None)
+        if end_ts is None:
+            return []
+
+        start_ts = end_ts - safe_window_sec
+        min_relevant_ts = start_ts - threshold_sec
+        message_ts = []
+        for event in pivot.get("timeline", []):
+            if not isinstance(event, dict):
+                continue
+            topic = str(event.get("topic") or "")
+            if topic not in CONNECTIVITY_TOPICS:
+                continue
+            ts = _safe_float(event.get("ts"), None)
+            if ts is None:
+                continue
+            if ts < min_relevant_ts or ts > end_ts:
+                continue
+            message_ts.append(ts)
+
+        if not message_ts:
+            return []
+
+        message_ts = sorted(set(message_ts))
+        online_intervals = []
+        current_start = None
+        current_end = None
+        for ts in message_ts:
+            interval_start = max(start_ts, ts)
+            interval_end = min(end_ts, ts + threshold_sec)
+            if interval_end <= interval_start:
+                continue
+            if current_start is None:
+                current_start = interval_start
+                current_end = interval_end
+                continue
+            if interval_start <= current_end:
+                current_end = max(current_end, interval_end)
+                continue
+            online_intervals.append((current_start, current_end))
+            current_start = interval_start
+            current_end = interval_end
+        if current_start is not None:
+            online_intervals.append((current_start, current_end))
+
+        if not online_intervals:
+            return []
+
+        bin_size = safe_window_sec / float(TIMELINE_MINI_BINS)
+        states = []
+        interval_idx = 0
+        for idx in range(TIMELINE_MINI_BINS):
+            midpoint = start_ts + ((idx + 0.5) * bin_size)
+            while interval_idx < len(online_intervals) and midpoint > online_intervals[interval_idx][1]:
+                interval_idx += 1
+            is_online = False
+            if interval_idx < len(online_intervals):
+                interval_start, interval_end = online_intervals[interval_idx]
+                is_online = interval_start <= midpoint <= interval_end
+            states.append("online" if is_online else "offline")
+
+        segments = []
+        current_state = states[0]
+        current_count = 1
+        for state_value in states[1:]:
+            if state_value == current_state:
+                current_count += 1
+                continue
+            segments.append({"state": current_state, "ratio": round(current_count / float(TIMELINE_MINI_BINS), 6)})
+            current_state = state_value
+            current_count = 1
+        segments.append({"state": current_state, "ratio": round(current_count / float(TIMELINE_MINI_BINS), 6)})
+        return segments
+
     def _compute_status_locked(self, pivot, now):
         topic_last_ts = pivot.get("topic_last_ts") or {}
         topic_intervals = pivot.get("topic_intervals_sec") or {}
@@ -3049,6 +3150,20 @@ class TelemetryStore:
         last_cloud2 = dict(source_last_cloud2) if isinstance(source_last_cloud2, dict) else {}
         if is_concentrator:
             last_cloud2["technology"] = CONCENTRATOR_TECH_LABEL
+        signal = _normalize_text(last_cloud2.get("rssi"))
+        technology = _normalize_text(last_cloud2.get("technology"))
+        combined_signal_technology = _normalize_text(pivot.get("signal_technology"))
+        if combined_signal_technology:
+            parsed_signal, parsed_technology = _parse_signal_technology_combined(combined_signal_technology)
+            if not signal and parsed_signal:
+                signal = parsed_signal
+            if not technology and parsed_technology:
+                technology = parsed_technology
+        if signal and not _normalize_text(last_cloud2.get("rssi")):
+            last_cloud2["rssi"] = signal
+        if technology and not _normalize_text(last_cloud2.get("technology")):
+            last_cloud2["technology"] = technology
+        signal_technology = f"{signal or '-'} / {technology or '-'}"
         last_activity_ts = max(
             [
                 _safe_float(pivot.get("last_seen_ts"), 0) or 0,
@@ -3061,6 +3176,12 @@ class TelemetryStore:
         )
 
         probe_alert = int(probe.get("timeout_streak", 0)) >= self.probe_timeout_streak_alert
+        timeline_mini = self._build_timeline_mini_segments_locked(
+            pivot,
+            now,
+            disconnect_threshold_sec=status["disconnect_threshold_sec"],
+            window_sec=status["attention_window_sec"],
+        )
 
         return {
             "pivot_id": pivot["pivot_id"],
@@ -3112,6 +3233,10 @@ class TelemetryStore:
             "last_cloudv2_ts": pivot.get("last_cloudv2_ts"),
             "last_cloudv2_at": _ts_to_str(pivot.get("last_cloudv2_ts")),
             "last_cloud2": last_cloud2,
+            "signal": signal,
+            "technology": technology,
+            "signal_technology": signal_technology,
+            "timeline_mini": timeline_mini,
             "last_activity_ts": last_activity_ts if last_activity_ts > 0 else None,
             "last_activity_at": _ts_to_str(last_activity_ts) if last_activity_ts > 0 else "-",
             "last_activity_ago": _format_ago(now - last_activity_ts) if last_activity_ts > 0 else "-",
