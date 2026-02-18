@@ -691,7 +691,13 @@ class TelemetryStore:
                 settings = self._build_state_settings_locked()
 
             try:
-                persisted = self.persistence.get_run_state_payload(run_id=normalized_run)
+                persisted = self.persistence.get_run_state_payload(
+                    run_id=normalized_run,
+                    connectivity_settings={
+                        "ping_expected_sec": self.ping_expected_sec,
+                        "tolerance_factor": self.tolerance_factor,
+                    },
+                )
             except RuntimeError:
                 persisted = None
             if persisted is None:

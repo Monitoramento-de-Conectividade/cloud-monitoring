@@ -310,6 +310,37 @@ def _build_timeline_mini_segments(events, window_end_ts, window_sec, disconnect_
     return compressed
 
 
+def _resolve_timeline_disconnect_threshold(summary, settings=None):
+    safe_summary = summary if isinstance(summary, dict) else {}
+    safe_settings = settings if isinstance(settings, dict) else {}
+
+    threshold = _safe_float(safe_summary.get("disconnect_threshold_sec"), None)
+    if threshold is not None and threshold > 0:
+        return threshold
+
+    tolerance = _safe_float(safe_settings.get("tolerance_factor"), None)
+    if tolerance is None or tolerance <= 0:
+        tolerance = 1.5
+
+    max_expected = _safe_float(safe_summary.get("max_expected_interval_sec"), None)
+    if max_expected is None or max_expected <= 0:
+        expected_by_topic = safe_summary.get("expected_by_topic_sec") if isinstance(safe_summary.get("expected_by_topic_sec"), dict) else {}
+        candidates = []
+        for topic in CONNECTIVITY_TOPICS:
+            value = _safe_float(expected_by_topic.get(topic), None)
+            if value is not None and value > 0:
+                candidates.append(value)
+        if candidates:
+            max_expected = max(candidates)
+
+    if max_expected is None or max_expected <= 0:
+        max_expected = _safe_float(safe_settings.get("ping_expected_sec"), None)
+    if max_expected is None or max_expected <= 0:
+        max_expected = 180.0
+
+    return max(30.0, max_expected * tolerance)
+
+
 class TelemetryPersistence:
     def __init__(self, db_path=None, migrations_dir=None, max_events_per_pivot=5000, log=None):
         self.db_path = str(db_path or DEFAULT_DB_PATH)
@@ -2353,7 +2384,7 @@ class TelemetryPersistence:
         item["timeline_mini"] = _normalize_timeline_mini_segments(item.get("timeline_mini"))
         return item
 
-    def get_run_state_payload(self, run_id=None):
+    def get_run_state_payload(self, run_id=None, connectivity_settings=None):
         with self._lock:
             conn = self._require_conn_locked()
             run_row = self._query_run_row_locked(conn, run_id=run_id)
@@ -2413,7 +2444,10 @@ class TelemetryPersistence:
                     session_id,
                     limit=self.max_events_per_pivot,
                 )
-                disconnect_threshold_sec = _safe_float(summary.get("disconnect_threshold_sec"), None)
+                disconnect_threshold_sec = _resolve_timeline_disconnect_threshold(
+                    summary,
+                    settings=connectivity_settings,
+                )
                 summary["timeline_mini"] = _build_timeline_mini_segments(
                     timeline_events,
                     window_end_ts=row_updated,

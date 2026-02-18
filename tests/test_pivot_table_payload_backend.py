@@ -76,6 +76,68 @@ class PivotTablePayloadTests(unittest.TestCase):
             finally:
                 persistence.stop()
 
+    def test_run_state_payload_timeline_mini_uses_threshold_fallback_from_settings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                pivot_id = "PivotFallback_1"
+                base_ts = 1_700_100_000.0
+
+                run = persistence.get_or_create_active_run(now_ts=base_ts, source="test")
+                session = persistence.get_or_create_active_session(
+                    pivot_id,
+                    pivot_slug="pivotfallback-1",
+                    now_ts=base_ts,
+                    source="test",
+                    run_id=run["run_id"],
+                )
+                session_id = session["session_id"]
+
+                # Snapshot sem disconnect_threshold para forcar fallback.
+                persistence.upsert_snapshot(
+                    pivot_id,
+                    session_id,
+                    {
+                        "pivot_id": pivot_id,
+                        "session_id": session_id,
+                        "run_id": run["run_id"],
+                        "updated_at_ts": base_ts + 600,
+                        "summary": {
+                            "status": {"code": "green", "label": "Online", "rank": 2},
+                            "quality": {"code": "green", "label": "Saudavel", "rank": 2},
+                        },
+                    },
+                    updated_at_ts=base_ts + 600,
+                )
+
+                for event_ts in (base_ts + 590, base_ts + 595, base_ts + 599):
+                    persistence.insert_connectivity_event(
+                        pivot_id,
+                        session_id,
+                        {
+                            "ts": event_ts,
+                            "topic": "cloudv2-ping",
+                            "type": "ping",
+                            "summary": "evento ping",
+                        },
+                    )
+
+                payload = persistence.get_run_state_payload(
+                    run_id=run["run_id"],
+                    connectivity_settings={"ping_expected_sec": 300, "tolerance_factor": 1.5},
+                )
+                self.assertIsNotNone(payload)
+                self.assertEqual(len(payload["pivots"]), 1)
+                timeline_mini = payload["pivots"][0].get("timeline_mini") or []
+                self.assertGreater(len(timeline_mini), 0)
+                # Com fallback adequado, deve existir ao menos um trecho online.
+                has_online = any(str(item.get("state")) == "online" and float(item.get("ratio") or 0) > 0 for item in timeline_mini)
+                self.assertTrue(has_online)
+            finally:
+                persistence.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
