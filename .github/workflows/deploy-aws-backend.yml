@@ -48,8 +48,8 @@ jobs:
               exit 1
             fi
           done
-          if ! printf '%s' "${AWS_EC2_SSH_KEY}" | grep -q "PRIVATE KEY"; then
-            echo "::error::AWS_EC2_SSH_KEY parece invalida. Use a chave PRIVADA completa (BEGIN ... PRIVATE KEY)."
+          if ! printf '%s' "${AWS_EC2_SSH_KEY}" | grep -Eq "PRIVATE KEY|PuTTY-User-Key-File-"; then
+            echo "::error::AWS_EC2_SSH_KEY invalida. Formatos aceitos: OpenSSH/PEM ou PPK (PuTTY)."
             exit 1
           fi
 
@@ -59,19 +59,32 @@ jobs:
           AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
         run: |
           set -euo pipefail
+          RAW_KEY_PATH="${RUNNER_TEMP}/ec2_deploy_key.raw"
           KEY_PATH="${RUNNER_TEMP}/ec2_deploy_key"
           umask 077
 
           # Aceita segredo com quebras reais de linha ou com "\n" literal.
           if printf '%s' "${AWS_EC2_SSH_KEY}" | grep -q '\\n'; then
-            printf '%b\n' "${AWS_EC2_SSH_KEY}" > "${KEY_PATH}"
+            printf '%b\n' "${AWS_EC2_SSH_KEY}" > "${RAW_KEY_PATH}"
           else
-            printf '%s\n' "${AWS_EC2_SSH_KEY}" > "${KEY_PATH}"
+            printf '%s\n' "${AWS_EC2_SSH_KEY}" > "${RAW_KEY_PATH}"
           fi
+
+          sed -i 's/\r$//' "${RAW_KEY_PATH}"
+
+          # Suporta chave PPK (PuTTY) convertendo para OpenSSH no runner.
+          if grep -q '^PuTTY-User-Key-File-' "${RAW_KEY_PATH}"; then
+            sudo apt-get update -y
+            sudo apt-get install -y putty-tools
+            puttygen "${RAW_KEY_PATH}" -O private-openssh -o "${KEY_PATH}"
+          else
+            cp "${RAW_KEY_PATH}" "${KEY_PATH}"
+          fi
+
           chmod 600 "${KEY_PATH}"
 
           if ! ssh-keygen -yf "${KEY_PATH}" >/dev/null 2>&1; then
-            echo "::error::AWS_EC2_SSH_KEY invalida ou formato nao suportado."
+            echo "::error::AWS_EC2_SSH_KEY invalida ou nao foi possivel converter para OpenSSH."
             exit 1
           fi
 
