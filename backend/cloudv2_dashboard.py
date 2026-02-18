@@ -624,7 +624,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 session_token = result.get("session_token")
                 payload = dict(result)
                 payload.pop("session_token", None)
-                payload["redirect"] = "/index.html"
+                payload["redirect"] = f"{self._request_base_url()}/index.html"
                 self._write_json(
                     200,
                     payload,

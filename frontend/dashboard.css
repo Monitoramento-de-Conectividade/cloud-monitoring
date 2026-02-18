@@ -862,6 +862,21 @@ a:focus {
   grid-column: span 5;
 }
 
+@media (min-width: 1221px) {
+  .pivot-sections:has(#pivotRssiPanel:not([hidden])) #pivotRssiPanel {
+    order: 4;
+  }
+
+  .pivot-sections:has(#pivotRssiPanel:not([hidden])) .table-panel {
+    order: 5;
+  }
+
+  .pivot-sections:has(#pivotRssiPanel:not([hidden])) .timeline-panel {
+    order: 6;
+    grid-column: 1 / -1;
+  }
+}
+
 .conn-controls {
   display: grid;
   align-items: end;

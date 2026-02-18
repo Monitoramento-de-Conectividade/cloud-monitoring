@@ -16,6 +16,35 @@ function resolveApiBaseUrl() {
 
 const API_BASE_URL = resolveApiBaseUrl();
 
+function resolveApiOrigin() {
+  if (!HAS_WINDOW || !API_BASE_URL) return "";
+  try {
+    const parsed = new URL(API_BASE_URL, window.location.href);
+    return String(parsed.origin || "").trim();
+  } catch (err) {
+    return "";
+  }
+}
+
+function buildAppUrl(url) {
+  const normalized = String(url || "").trim();
+  if (!normalized) return normalized;
+  if (!normalized.startsWith("/") || /^https?:\/\//i.test(normalized)) return normalized;
+  const apiOrigin = resolveApiOrigin();
+  if (!apiOrigin) return normalized;
+  return `${apiOrigin}${normalized}`;
+}
+
+function ensureCanonicalAppOrigin() {
+  if (!HAS_WINDOW) return false;
+  const apiOrigin = resolveApiOrigin();
+  if (!apiOrigin || apiOrigin === window.location.origin) return false;
+  const target = `${apiOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (target === window.location.href) return false;
+  window.location.replace(target);
+  return true;
+}
+
 function buildApiUrl(url) {
   const normalized = String(url || "").trim();
   if (!normalized) return normalized;
@@ -689,7 +718,7 @@ async function getJson(url) {
   if (!response.ok) {
     const redirect = String(payload.redirect || "").trim();
     if (redirect) {
-      window.location.assign(redirect);
+      window.location.assign(buildAppUrl(redirect));
       throw new Error(`AUTH_REDIRECT_${response.status}`);
     }
     throw new Error(String(payload.error || payload.message || response.status));
@@ -3169,7 +3198,7 @@ async function resolveViewerRole() {
     });
     const data = await response.json();
     if (!response.ok || !data.ok || !data.authenticated) {
-      window.location.assign("/login");
+      window.location.assign(buildAppUrl("/login"));
       return false;
     }
     const user = ((data || {}).user || {});
@@ -3182,7 +3211,7 @@ async function resolveViewerRole() {
     syncAdminControls();
     return true;
   } catch (err) {
-    window.location.assign("/login");
+    window.location.assign(buildAppUrl("/login"));
     return false;
   }
 }
@@ -3199,7 +3228,7 @@ async function logoutDashboard() {
   } catch (err) {
     // no-op
   } finally {
-    window.location.assign("/login");
+    window.location.assign(buildAppUrl("/login"));
   }
 }
 
@@ -3461,6 +3490,7 @@ function wireEvents() {
 }
 
 async function boot() {
+  if (ensureCanonicalAppOrigin()) return;
   const authorized = await resolveViewerRole();
   if (!authorized) return;
   setInitialLoading(true, "Buscando pivos e calculando conectividade inicial...");

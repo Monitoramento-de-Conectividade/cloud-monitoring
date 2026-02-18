@@ -19,6 +19,35 @@
 
   const API_BASE_URL = resolveApiBaseUrl();
 
+  function resolveApiOrigin() {
+    if (!HAS_WINDOW || !API_BASE_URL) return "";
+    try {
+      const parsed = new URL(API_BASE_URL, window.location.href);
+      return String(parsed.origin || "").trim();
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function buildAppUrl(url) {
+    const normalized = String(url || "").trim();
+    if (!normalized) return normalized;
+    if (!normalized.startsWith("/") || /^https?:\/\//i.test(normalized)) return normalized;
+    const apiOrigin = resolveApiOrigin();
+    if (!apiOrigin) return normalized;
+    return `${apiOrigin}${normalized}`;
+  }
+
+  function ensureCanonicalAppOrigin() {
+    if (!HAS_WINDOW) return false;
+    const apiOrigin = resolveApiOrigin();
+    if (!apiOrigin || apiOrigin === window.location.origin) return false;
+    const target = `${apiOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (target === window.location.href) return false;
+    window.location.replace(target);
+    return true;
+  }
+
   function buildApiUrl(url) {
     const normalized = String(url || "").trim();
     if (!normalized) return normalized;
@@ -136,7 +165,7 @@
       try {
         const { response, data } = await postJson("/auth/login", { email, password });
         if (response.ok && data.ok) {
-          window.location.assign(data.redirect || "/index.html");
+          window.location.assign(buildAppUrl(data.redirect || "/index.html"));
           return;
         }
         setStatus(data.message || data.error || "Falha no login.", "error");
@@ -166,14 +195,14 @@
       if (!isAuthenticated || role !== "admin") {
         setStatus("Acesso restrito. Somente o administrador pode criar contas.", "error");
         window.setTimeout(() => {
-          window.location.assign("/login");
+          window.location.assign(buildAppUrl("/login"));
         }, 900);
         return;
       }
     } catch (err) {
       setStatus("Nao foi possivel validar permissao. Faca login novamente.", "error");
       window.setTimeout(() => {
-        window.location.assign("/login");
+        window.location.assign(buildAppUrl("/login"));
       }, 900);
       return;
     }
@@ -195,7 +224,7 @@
         if (response.ok && data.ok) {
           setStatus(data.message || "Cadastro concluido.", "success");
           window.setTimeout(() => {
-            window.location.assign("/login?registered=1");
+            window.location.assign(buildAppUrl("/login?registered=1"));
           }, 600);
           return;
         }
@@ -237,7 +266,7 @@
       if (response.ok && data.ok && data.authenticated) {
         currentUser = data.user || null;
         if (currentUser && currentUser.email_verified) {
-          window.location.assign("/index.html");
+          window.location.assign(buildAppUrl("/index.html"));
           return;
         }
         if (currentUser && currentUser.email) {
@@ -291,7 +320,7 @@
         } catch (err) {
           // no-op
         }
-        window.location.assign("/login");
+        window.location.assign(buildAppUrl("/login"));
       });
     }
 
@@ -322,7 +351,7 @@
             setStatus(data.message || data.error || "Falha ao excluir conta.", "error");
             return;
           }
-          window.location.assign("/login?deleted=1");
+          window.location.assign(buildAppUrl("/login?deleted=1"));
         } catch (err) {
           setStatus("Falha ao excluir conta.", "error");
         }
@@ -399,7 +428,7 @@
         if (response.ok && data.ok) {
           setStatus(data.message || "Senha redefinida com sucesso.", "success");
           window.setTimeout(() => {
-            window.location.assign("/login?reset=1");
+            window.location.assign(buildAppUrl("/login?reset=1"));
           }, 600);
           return;
         }
@@ -410,6 +439,8 @@
       }
     });
   }
+
+  if (ensureCanonicalAppOrigin()) return;
 
   if (page === "login") initLoginPage();
   if (page === "register") initRegisterPage();
