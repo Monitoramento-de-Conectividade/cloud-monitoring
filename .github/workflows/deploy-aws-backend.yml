@@ -89,16 +89,13 @@ jobs:
           BACKEND_PUBLIC_PORT: ${{ secrets.BACKEND_PUBLIC_PORT }}
           BROKER: ${{ secrets.BROKER }}
           MQTT_PORT: ${{ secrets.MQTT_PORT }}
-          MQTT_AMAZON_CA_PEM_B64: ${{ secrets.MQTT_AMAZON_CA_PEM_B64 }}
-          MQTT_DEVICE_CRT_B64: ${{ secrets.MQTT_DEVICE_CRT_B64 }}
-          MQTT_PRIVATE_KEY_B64: ${{ secrets.MQTT_PRIVATE_KEY_B64 }}
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.AWS_EC2_HOST }}
           username: ${{ secrets.AWS_EC2_USER }}
           key_path: ${{ steps.sshkey.outputs.key_path }}
           port: ${{ secrets.AWS_EC2_PORT || '22' }}
-          envs: BRANCH,APP_DIR,REPO_URL,FRONTEND_URL,BACKEND_URL,ADMIN_EMAIL,ADMIN_PASSWORD,BACKEND_PUBLIC_PORT,BROKER,MQTT_PORT,MQTT_AMAZON_CA_PEM_B64,MQTT_DEVICE_CRT_B64,MQTT_PRIVATE_KEY_B64
+          envs: BRANCH,APP_DIR,REPO_URL,FRONTEND_URL,BACKEND_URL,ADMIN_EMAIL,ADMIN_PASSWORD,BACKEND_PUBLIC_PORT,BROKER,MQTT_PORT
           script: |
             set -euo pipefail
 
@@ -143,9 +140,44 @@ jobs:
             sudo systemctl start docker || true
 
             mkdir -p certs logs_mqtt
-            printf '%s' "${MQTT_AMAZON_CA_PEM_B64}" | base64 -d > certs/amazon_ca.pem
-            printf '%s' "${MQTT_DEVICE_CRT_B64}" | base64 -d > certs/device.pem.crt
-            printf '%s' "${MQTT_PRIVATE_KEY_B64}" | base64 -d > certs/private.pem.key
+
+            tmp_dir="$(mktemp -d)"
+            trap 'rm -rf "${tmp_dir}"' EXIT
+
+            cat > "${tmp_dir}/amazon_ca.secret" <<'EOF_SECRET'
+            ${{ secrets.MQTT_AMAZON_CA_PEM_B64 }}
+            EOF_SECRET
+            cat > "${tmp_dir}/device_crt.secret" <<'EOF_SECRET'
+            ${{ secrets.MQTT_DEVICE_CRT_B64 }}
+            EOF_SECRET
+            cat > "${tmp_dir}/private_key.secret" <<'EOF_SECRET'
+            ${{ secrets.MQTT_PRIVATE_KEY_B64 }}
+            EOF_SECRET
+
+            write_pem_secret() {
+              local source_file="$1"
+              local target_file="$2"
+              local label="$3"
+
+              # Aceita secret em PEM ASCII (BEGIN/END) e mantem compatibilidade com base64.
+              if grep -q "-----BEGIN " "${source_file}"; then
+                sed 's/\r$//' "${source_file}" > "${target_file}"
+              else
+                tr -d '\r\n\t ' < "${source_file}" | base64 -d > "${target_file}" 2>/dev/null || {
+                  echo "Erro: secret ${label} nao esta em PEM ASCII nem em base64 valido." >&2
+                  exit 1
+                }
+              fi
+
+              if ! grep -q "-----BEGIN " "${target_file}"; then
+                echo "Erro: secret ${label} invalido (header PEM ausente)." >&2
+                exit 1
+              fi
+            }
+
+            write_pem_secret "${tmp_dir}/amazon_ca.secret" certs/amazon_ca.pem "MQTT_AMAZON_CA_PEM_B64"
+            write_pem_secret "${tmp_dir}/device_crt.secret" certs/device.pem.crt "MQTT_DEVICE_CRT_B64"
+            write_pem_secret "${tmp_dir}/private_key.secret" certs/private.pem.key "MQTT_PRIVATE_KEY_B64"
 
             for cert_path in certs/amazon_ca.pem certs/device.pem.crt certs/private.pem.key; do
               if [ ! -s "${cert_path}" ]; then
