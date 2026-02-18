@@ -361,3 +361,23 @@ bash scripts/ec2-enable-auto-recovery.sh
 Opcional:
 
 - `ALARM_PREFIX=meu-projeto` para customizar o nome dos alarmes.
+
+## Perfil recomendado para EC2 pequena (t2.micro + gp2 30GiB)
+
+Se sua instancia for pequena (1 vCPU / 1 GiB RAM), use limites de runtime para reduzir escrita em disco:
+
+- `DASHBOARD_REFRESH_SEC=20`
+- `API_STATE_CACHE_TTL_SEC=5`
+- `API_QUALITY_CACHE_TTL_SEC=5`
+- `MAX_EVENTS_PER_PIVOT=800`
+- `MAX_EVENTS_PER_PIVOT_PANEL=800`
+- `MAX_EVENTS_PER_PIVOT_LIST=400`
+- `PROBE_DEFAULT_INTERVAL_SEC=900`
+- `PROBE_MIN_INTERVAL_SEC=180`
+
+Coloque essas variaveis no `.env.backend` antes de subir o container.
+
+Importante:
+
+- `gp2` em 30 GiB tem baseline baixo de IOPS (minimo 100) e pode esgotar burst sob carga continua.
+- Para estabilidade, prefira migrar o volume para `gp3` (mesmo tamanho) com IOPS/throughput provisionados.
