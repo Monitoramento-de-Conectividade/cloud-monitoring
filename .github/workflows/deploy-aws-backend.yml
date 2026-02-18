@@ -173,7 +173,7 @@ jobs:
               local label="$3"
 
               # Aceita secret em PEM ASCII (BEGIN/END) e mantem compatibilidade com base64.
-              if grep -q "-----BEGIN " "${source_file}"; then
+              if grep -q -- "-----BEGIN " "${source_file}"; then
                 sed 's/\r$//' "${source_file}" > "${target_file}"
               else
                 tr -d '\r\n\t ' < "${source_file}" | base64 -d > "${target_file}" 2>/dev/null || {
@@ -182,7 +182,7 @@ jobs:
                 }
               fi
 
-              if ! grep -q "-----BEGIN " "${target_file}"; then
+              if ! grep -q -- "-----BEGIN " "${target_file}"; then
                 echo "Erro: secret ${label} invalido (header PEM ausente)." >&2
                 exit 1
               fi
