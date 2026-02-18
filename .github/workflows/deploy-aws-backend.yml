@@ -29,39 +29,69 @@ jobs:
             echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Validate AWS secrets
+      - name: Validate deploy secrets
         env:
           AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
           AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
           AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          MQTT_AMAZON_CA_PEM_B64: ${{ secrets.MQTT_AMAZON_CA_PEM_B64 }}
+          MQTT_DEVICE_CRT_B64: ${{ secrets.MQTT_DEVICE_CRT_B64 }}
+          MQTT_PRIVATE_KEY_B64: ${{ secrets.MQTT_PRIVATE_KEY_B64 }}
         run: |
           set -euo pipefail
-          for name in AWS_EC2_HOST AWS_EC2_USER AWS_EC2_SSH_KEY; do
+          for name in AWS_EC2_HOST AWS_EC2_USER AWS_EC2_SSH_KEY BACKEND_URL ADMIN_EMAIL ADMIN_PASSWORD MQTT_AMAZON_CA_PEM_B64 MQTT_DEVICE_CRT_B64 MQTT_PRIVATE_KEY_B64; do
             if [ -z "${!name:-}" ]; then
               echo "::error::Secret obrigatorio ausente: ${name}"
               exit 1
             fi
           done
 
-      - name: Deploy via SSH
+      - name: Bootstrap and deploy via SSH
+        env:
+          BRANCH: ${{ steps.vars.outputs.branch }}
+          APP_DIR: ${{ secrets.AWS_EC2_APP_DIR }}
+          REPO_URL: ${{ secrets.AWS_REPO_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          BACKEND_PUBLIC_PORT: ${{ secrets.BACKEND_PUBLIC_PORT }}
+          BROKER: ${{ secrets.BROKER }}
+          MQTT_PORT: ${{ secrets.MQTT_PORT }}
+          MQTT_AMAZON_CA_PEM_B64: ${{ secrets.MQTT_AMAZON_CA_PEM_B64 }}
+          MQTT_DEVICE_CRT_B64: ${{ secrets.MQTT_DEVICE_CRT_B64 }}
+          MQTT_PRIVATE_KEY_B64: ${{ secrets.MQTT_PRIVATE_KEY_B64 }}
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.AWS_EC2_HOST }}
           username: ${{ secrets.AWS_EC2_USER }}
           key: ${{ secrets.AWS_EC2_SSH_KEY }}
           port: ${{ secrets.AWS_EC2_PORT || '22' }}
+          envs: BRANCH,APP_DIR,REPO_URL,FRONTEND_URL,BACKEND_URL,ADMIN_EMAIL,ADMIN_PASSWORD,BACKEND_PUBLIC_PORT,BROKER,MQTT_PORT,MQTT_AMAZON_CA_PEM_B64,MQTT_DEVICE_CRT_B64,MQTT_PRIVATE_KEY_B64
           script_stop: true
           script: |
             set -euo pipefail
-            APP_DIR="${{ secrets.AWS_EC2_APP_DIR }}"
-            REPO_URL="${{ secrets.AWS_REPO_URL }}"
-            BRANCH="${{ steps.vars.outputs.branch }}"
 
             if [ -z "${APP_DIR}" ]; then
               APP_DIR="$HOME/cloud-monitoring"
             fi
             if [ -z "${REPO_URL}" ]; then
               REPO_URL="https://github.com/Monitoramento-de-Conectividade/cloud-monitoring.git"
+            fi
+            if [ -z "${FRONTEND_URL:-}" ]; then
+              FRONTEND_URL="https://cloud-monitoring.vercel.app"
+            fi
+            if [ -z "${BACKEND_PUBLIC_PORT:-}" ]; then
+              BACKEND_PUBLIC_PORT="8008"
+            fi
+            if [ -z "${BROKER:-}" ]; then
+              BROKER="a19mijesri84u2-ats.iot.us-east-1.amazonaws.com"
+            fi
+            if [ -z "${MQTT_PORT:-}" ]; then
+              MQTT_PORT="8883"
             fi
 
             if [ ! -d "${APP_DIR}/.git" ]; then
@@ -78,10 +108,68 @@ jobs:
             fi
             git pull --ff-only origin "${BRANCH}"
 
-            chmod +x scripts/ec2-deploy-backend.sh
-            APP_DIR="${APP_DIR}" BRANCH="${BRANCH}" REPO_URL="${REPO_URL}" ./scripts/ec2-deploy-backend.sh
+            if ! command -v docker >/dev/null 2>&1; then
+              chmod +x scripts/ec2-install-docker.sh
+              sudo ./scripts/ec2-install-docker.sh
+            fi
+            sudo systemctl enable docker || true
+            sudo systemctl start docker || true
+
+            mkdir -p certs logs_mqtt
+            printf '%s' "${MQTT_AMAZON_CA_PEM_B64}" | base64 -d > certs/amazon_ca.pem
+            printf '%s' "${MQTT_DEVICE_CRT_B64}" | base64 -d > certs/device.pem.crt
+            printf '%s' "${MQTT_PRIVATE_KEY_B64}" | base64 -d > certs/private.pem.key
+
+            for cert_path in certs/amazon_ca.pem certs/device.pem.crt certs/private.pem.key; do
+              if [ ! -s "${cert_path}" ]; then
+                echo "Erro: certificado invalido/ausente em ${cert_path}" >&2
+                exit 1
+              fi
+            done
+
+            chmod 600 certs/amazon_ca.pem certs/device.pem.crt certs/private.pem.key
+
+            cat > .env.backend <<EOF
+            BACKEND_PUBLIC_PORT=${BACKEND_PUBLIC_PORT}
+            BROKER=${BROKER}
+            MQTT_PORT=${MQTT_PORT}
+            CORS_ALLOWED_ORIGINS=${FRONTEND_URL}
+            AUTH_COOKIE_SAMESITE=None
+            AUTH_COOKIE_SECURE=1
+            AUTH_BASE_URL=${BACKEND_URL}
+            REQUIRE_APPLY_TO_START=0
+            HISTORY_MODE=merge
+            DASHBOARD_REFRESH_SEC=20
+            API_STATE_CACHE_TTL_SEC=5
+            API_QUALITY_CACHE_TTL_SEC=5
+            MAX_EVENTS_PER_PIVOT=800
+            MAX_EVENTS_PER_PIVOT_PANEL=800
+            MAX_EVENTS_PER_PIVOT_LIST=400
+            PROBE_DEFAULT_INTERVAL_SEC=900
+            PROBE_MIN_INTERVAL_SEC=180
+            AUTH_FIXED_ADMIN_ENABLED=1
+            AUTH_FIXED_ADMIN_EMAIL=${ADMIN_EMAIL}
+            AUTH_FIXED_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+            AUTH_EMAIL_MODE=console
+            EOF
+
+            sudo docker compose up -d --build backend
+            sudo docker compose ps backend
+            sudo docker logs --tail=120 cloud-monitoring-backend || true
+
+            for _ in $(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:8008/login" >/dev/null; then
+                echo "Healthcheck local OK"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "Erro: healthcheck local falhou apos deploy." >&2
+            exit 1
 
   deploy_frontend_vercel:
+    needs: deploy_backend_aws
     runs-on: ubuntu-latest
     steps:
       - name: Validate Vercel deploy hook secret
