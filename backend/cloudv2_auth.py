@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -1197,6 +1198,129 @@ class AuthService:
                 "session_ttl_sec": SESSION_TTL_SEC,
                 "logs_policy": "Apenas logs operacionais minimos, sem senha, token bruto ou e-mail completo.",
             },
+        }
+
+    def get_pivot_table_columns(self, user_id):
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            return []
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT prefs.pivot_table_columns_json
+                FROM users
+                LEFT JOIN user_ui_preferences AS prefs
+                    ON prefs.user_id = users.id
+                WHERE users.id = ?
+                    AND users.deleted_at IS NULL
+                    AND users.status = 'active'
+                LIMIT 1
+                """,
+                (normalized_user_id,),
+            ).fetchone()
+
+        if row is None:
+            return []
+
+        raw_json = row["pivot_table_columns_json"]
+        if raw_json in (None, ""):
+            return []
+
+        try:
+            parsed = json.loads(raw_json)
+        except (TypeError, ValueError):
+            return []
+
+        if not isinstance(parsed, list):
+            return []
+
+        cleaned = []
+        seen = set()
+        for item in parsed:
+            key = str(item or "").strip()
+            if not key:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(key)
+            if len(cleaned) >= 64:
+                break
+        return cleaned
+
+    def set_pivot_table_columns(self, user_id, columns):
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            return {
+                "ok": False,
+                "code": "auth_required",
+                "message": "Autenticacao obrigatoria.",
+            }
+
+        if not isinstance(columns, list):
+            return {
+                "ok": False,
+                "code": "invalid_columns",
+                "message": "Lista de colunas invalida.",
+            }
+
+        cleaned = []
+        seen = set()
+        for item in columns:
+            key = str(item or "").strip()
+            if not key:
+                continue
+            if len(key) > 80:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(key)
+            if len(cleaned) >= 64:
+                break
+
+        now_ts = _now_ts()
+        payload = json.dumps(cleaned, ensure_ascii=False)
+        with self._connect() as conn:
+            user_row = conn.execute(
+                """
+                SELECT id
+                FROM users
+                WHERE id = ?
+                    AND deleted_at IS NULL
+                    AND status = 'active'
+                LIMIT 1
+                """,
+                (normalized_user_id,),
+            ).fetchone()
+            if user_row is None:
+                return {
+                    "ok": False,
+                    "code": "user_not_found",
+                    "message": "Usuario nao encontrado.",
+                }
+
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_ui_preferences (
+                        user_id,
+                        pivot_table_columns_json,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        pivot_table_columns_json = excluded.pivot_table_columns_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (normalized_user_id, payload, now_ts, now_ts),
+                )
+
+        return {
+            "ok": True,
+            "code": "ok",
+            "columns": cleaned,
         }
 
     def _is_active_admin_row(self, row):

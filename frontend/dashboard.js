@@ -179,6 +179,9 @@ const state = {
   cardsRenderPageKey: "",
   cardsRenderSignaturesByPivotId: {},
   cardsRenderIsEmpty: false,
+  pivotTableColumnOrder: [],
+  pivotTableDragKey: "",
+  pivotTablePreferenceLoaded: false,
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
@@ -211,6 +214,19 @@ const EVENT_LABEL = {
   probe_response_unmatched: "Resposta fora da janela",
   session_started: "Nova sessão",
 };
+
+const PIVOT_TABLE_COLUMNS = [
+  { key: "pivot_id", label: "Pivo" },
+  { key: "status", label: "Status" },
+  { key: "connectivity", label: "Conectividade" },
+  { key: "last_ping_at", label: "Ultima atualizacao de conectividade" },
+  { key: "last_cloudv2_at", label: "Ultima atualizacao de dados" },
+  { key: "median", label: "Intervalo tipico de atualizacao" },
+  { key: "last_activity_at", label: "Ultima atualizacao" },
+  { key: "signal_technology", label: "Sinal / Tecnologia" },
+  { key: "firmware", label: "Firmware" },
+];
+const PIVOT_TABLE_COLUMN_KEYS = PIVOT_TABLE_COLUMNS.map((item) => item.key);
 
 const INTERNAL_TERMS = [
   "cloudv2",
@@ -681,6 +697,26 @@ async function getJson(url) {
   return payload;
 }
 
+async function putJson(url, body) {
+  const targetUrl = buildApiUrl(url);
+  const response = await fetch(targetUrl, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch (err) {
+    payload = {};
+  }
+  if (!response.ok) {
+    throw new Error(String(payload.error || payload.message || response.status));
+  }
+  return payload;
+}
+
 function buildStateUrl(runId = null) {
   const normalizedRun = String(runId || "").trim();
   if (!normalizedRun) return "/api/state";
@@ -708,6 +744,10 @@ function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
   const query = params.toString();
   const base = `/api/pivot/${encodeURIComponent(normalized)}/panel`;
   return query ? `${base}?${query}` : base;
+}
+
+function buildPivotTableColumnsUrl() {
+  return "/api/user/pivot-table-columns";
 }
 
 function normalizeRunId(value) {
@@ -1016,6 +1056,52 @@ function arraysShallowEqual(a, b) {
   return true;
 }
 
+function normalizePivotTableColumnOrder(order) {
+  const rawOrder = Array.isArray(order) ? order : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const item of rawOrder) {
+    const key = String(item || "").trim();
+    if (!key) continue;
+    if (!PIVOT_TABLE_COLUMN_KEYS.includes(key)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(key);
+  }
+  for (const key of PIVOT_TABLE_COLUMN_KEYS) {
+    if (seen.has(key)) continue;
+    normalized.push(key);
+  }
+  return normalized;
+}
+
+function ensurePivotTableColumnOrder() {
+  state.pivotTableColumnOrder = normalizePivotTableColumnOrder(state.pivotTableColumnOrder);
+}
+
+async function loadPivotTableColumnPreference() {
+  if (state.pivotTablePreferenceLoaded) return;
+  ensurePivotTableColumnOrder();
+  try {
+    const payload = await getJson(buildPivotTableColumnsUrl());
+    if (payload && payload.ok) {
+      state.pivotTableColumnOrder = normalizePivotTableColumnOrder(payload.columns);
+    }
+  } catch (err) {
+    state.pivotTableColumnOrder = normalizePivotTableColumnOrder(state.pivotTableColumnOrder);
+  }
+  state.pivotTablePreferenceLoaded = true;
+}
+
+async function savePivotTableColumnPreference() {
+  ensurePivotTableColumnOrder();
+  try {
+    await putJson(buildPivotTableColumnsUrl(), { columns: state.pivotTableColumnOrder });
+  } catch (err) {
+    showToast("Nao foi possivel salvar a ordem das colunas.", "warn", 2600);
+  }
+}
+
 function updateCardsPager(totalPages) {
   const pagerSignature = `${state.cardsPage}|${totalPages}`;
   if (state.cardsPagerSignature === pagerSignature) return;
@@ -1049,53 +1135,154 @@ function buildPivotCardSignature(pivot) {
 }
 
 function buildPivotCardHtml(pivot) {
-  const status = getDisplayStatus(pivot);
-  const quality = getDisplayQuality(pivot);
-  const statusCode = text(status.code, "gray");
-  const statusLabel = escapeHtml(text(status.label, "Inicial"));
-  const qualityCode = text(quality.code, "green");
-  const qualityLabel = escapeHtml(text(quality.label, "Estável"));
-  const pivotIdRaw = text((pivot || {}).pivot_id, "pivô");
+  const safePivot = pivot || {};
+  const pivotIdRaw = text((safePivot || {}).pivot_id, "pivo");
   const pivotId = escapeHtml(pivotIdRaw);
-  const lastPing = escapeHtml(text((pivot || {}).last_ping_at));
-  const lastCloudv2 = escapeHtml(text((pivot || {}).last_cloudv2_at));
-  const cloud2 = (pivot || {}).last_cloud2 || {};
-  const medianReady = !!(pivot || {}).median_ready;
-  const samples = Number((pivot || {}).median_sample_count || 0);
-  const medianText = medianReady
-    ? `${fmtDuration((pivot || {}).median_cloudv2_interval_sec)} (${samples} amostras)`
-    : `${samples} amostras (em análise)`;
 
-  const rssi = escapeHtml(text(cloud2.rssi));
-  const technology = escapeHtml(text(pivotTechnologyValue(pivot)));
-  const firmware = escapeHtml(text(cloud2.firmware));
+  const cells = state.pivotTableColumnOrder
+    .map((columnKey) => {
+      const status = getDisplayStatus(safePivot);
+      const quality = getDisplayQuality(safePivot);
+      const cloud2 = safePivot.last_cloud2 || {};
 
-  return `
-    <article class="pivot-card" data-pivot-id="${pivotId}">
-      <div class="pivot-head">
-        <div class="pivot-id">${pivotId}</div>
-        <div class="badge-stack">
-          <span class="badge ${statusCode}">Status: ${statusLabel}</span>
-          <span class="badge ${qualityCode}">Conectividade: ${qualityLabel}</span>
-        </div>
-      </div>
-      <div class="kv-grid">
-        <div class="k">Última atualização de conectividade</div><div>${lastPing}</div>
-        <div class="k">Última atualização de dados</div><div>${lastCloudv2}</div>
-        <div class="k">Intervalo típico de atualização</div><div>${escapeHtml(medianText)}</div>
-        <div class="k">Última atualização</div><div>${escapeHtml(text((pivot || {}).last_activity_at))}</div>
-        <div class="k">Sinal / Tecnologia</div><div>${rssi} / ${technology}</div>
-        <div class="k">Firmware</div><div>${firmware}</div>
-      </div>
-      <div class="card-actions">
-        <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visão</button>
-      </div>
-    </article>
-  `;
+      if (columnKey === "pivot_id") {
+        return `<td class="pivot-table-text strong">${escapeHtml(text(safePivot.pivot_id, "-"))}</td>`;
+      }
+      if (columnKey === "status") {
+        return `<td><span class="badge ${escapeHtml(text(status.code, "gray"))}">${escapeHtml(text(status.label, "Inicial"))}</span></td>`;
+      }
+      if (columnKey === "connectivity") {
+        return `<td><span class="badge ${escapeHtml(text(quality.code, "green"))}">${escapeHtml(text(quality.label, "Estavel"))}</span></td>`;
+      }
+      if (columnKey === "last_ping_at") {
+        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_ping_at))}</td>`;
+      }
+      if (columnKey === "last_cloudv2_at") {
+        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_cloudv2_at))}</td>`;
+      }
+      if (columnKey === "median") {
+        const medianReady = !!safePivot.median_ready;
+        const samples = Number(safePivot.median_sample_count || 0);
+        const medianText = medianReady
+          ? `${fmtDuration(safePivot.median_cloudv2_interval_sec)} (${samples} amostras)`
+          : `${samples} amostras (em analise)`;
+        return `<td class="pivot-table-text">${escapeHtml(medianText)}</td>`;
+      }
+      if (columnKey === "last_activity_at") {
+        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_activity_at))}</td>`;
+      }
+      if (columnKey === "signal_technology") {
+        const signalTech = `${text(cloud2.rssi)} / ${text(pivotTechnologyValue(safePivot))}`;
+        return `<td class="pivot-table-text">${escapeHtml(signalTech)}</td>`;
+      }
+      if (columnKey === "firmware") {
+        return `<td class="pivot-table-text">${escapeHtml(text(cloud2.firmware))}</td>`;
+      }
+      return `<td class="pivot-table-text">-</td>`;
+    })
+    .join("");
+
+  return `<tr class="pivot-row" data-pivot-id="${pivotId}">
+    <td class="pivot-table-open">
+      <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visao</button>
+    </td>
+    ${cells}
+  </tr>`;
+}
+
+function reorderPivotTableColumns(fromKey, toKey) {
+  const source = String(fromKey || "").trim();
+  const target = String(toKey || "").trim();
+  if (!source || !target || source === target) return false;
+  ensurePivotTableColumnOrder();
+  const current = [...state.pivotTableColumnOrder];
+  const fromIndex = current.indexOf(source);
+  const toIndex = current.indexOf(target);
+  if (fromIndex < 0 || toIndex < 0) return false;
+  current.splice(fromIndex, 1);
+  current.splice(toIndex, 0, source);
+  state.pivotTableColumnOrder = normalizePivotTableColumnOrder(current);
+  return true;
+}
+
+function clearPivotTableHeaderDragClasses() {
+  for (const el of ui.cardsGrid.querySelectorAll(".pivot-table-header-cell")) {
+    el.classList.remove("dragging");
+    el.classList.remove("drag-over");
+  }
+}
+
+function bindPivotTableHeaderDnD() {
+  const headers = [...ui.cardsGrid.querySelectorAll(".pivot-table-header-cell[data-col-key]")];
+  for (const header of headers) {
+    header.addEventListener("dragstart", (event) => {
+      const key = String(header.getAttribute("data-col-key") || "").trim();
+      if (!key) return;
+      state.pivotTableDragKey = key;
+      clearPivotTableHeaderDragClasses();
+      header.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", key);
+      }
+    });
+
+    header.addEventListener("dragover", (event) => {
+      const targetKey = String(header.getAttribute("data-col-key") || "").trim();
+      if (!state.pivotTableDragKey || !targetKey || targetKey === state.pivotTableDragKey) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      clearPivotTableHeaderDragClasses();
+      header.classList.add("drag-over");
+    });
+
+    header.addEventListener("dragleave", () => {
+      header.classList.remove("drag-over");
+    });
+
+    header.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const targetKey = String(header.getAttribute("data-col-key") || "").trim();
+      const sourceKey = String(state.pivotTableDragKey || "").trim();
+      clearPivotTableHeaderDragClasses();
+      state.pivotTableDragKey = "";
+      if (!targetKey || !sourceKey || sourceKey === targetKey) return;
+      if (!reorderPivotTableColumns(sourceKey, targetKey)) return;
+      renderCards();
+      void savePivotTableColumnPreference();
+    });
+
+    header.addEventListener("dragend", () => {
+      state.pivotTableDragKey = "";
+      clearPivotTableHeaderDragClasses();
+    });
+  }
 }
 
 function renderPivotCardsFull(pageItems, pageKey) {
-  ui.cardsGrid.innerHTML = pageItems.map((pivot) => buildPivotCardHtml(pivot)).join("");
+  const headerColumns = state.pivotTableColumnOrder
+    .map((columnKey) => {
+      const def = PIVOT_TABLE_COLUMNS.find((item) => item.key === columnKey);
+      const label = def ? def.label : columnKey;
+      return `<th scope="col" class="pivot-table-header-cell" data-col-key="${escapeHtml(columnKey)}" draggable="true">${escapeHtml(label)}</th>`;
+    })
+    .join("");
+  const rowsHtml = pageItems.map((pivot) => buildPivotCardHtml(pivot)).join("");
+  ui.cardsGrid.innerHTML = `
+    <div class="pivot-table-wrap">
+      <table class="pivot-table" aria-label="Tabela de pivos monitorados">
+        <thead>
+          <tr>
+            <th scope="col" class="pivot-table-open-head">Abrir visao</th>
+            ${headerColumns}
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+  bindPivotTableHeaderDnD();
+
   const nextSignatures = {};
   for (const pivot of pageItems) {
     const pivotId = text((pivot || {}).pivot_id, "").trim();
@@ -1278,6 +1465,7 @@ function renderPending() {
 }
 
 function renderCards() {
+  ensurePivotTableColumnOrder();
   const filtered = applyFilterSort();
   const totalPages = Math.max(1, Math.ceil(filtered.length / state.cardsPageSize));
   if (state.cardsPage > totalPages) state.cardsPage = totalPages;
@@ -1298,52 +1486,25 @@ function renderCards() {
   }
 
   const pagePivotIds = nextVisiblePivotIds;
-  const pageKey = `${state.cardsPage}|${totalPages}|${pagePivotIds.join(",")}`;
-  if (state.cardsRenderIsEmpty || state.cardsRenderPageKey !== pageKey) {
-    renderPivotCardsFull(pageItems, pageKey);
-    return;
-  }
-
-  const existingCardElements = new Map();
-  for (const card of ui.cardsGrid.querySelectorAll(".pivot-card[data-pivot-id]")) {
-    const pivotId = text(card.getAttribute("data-pivot-id"), "").trim();
-    if (!pivotId) continue;
-    existingCardElements.set(pivotId, card);
-  }
-
-  let needFullRebuild = false;
-  let changedAny = false;
+  const columnOrderSignature = state.pivotTableColumnOrder.join(",");
+  const pageKey = `${state.cardsPage}|${totalPages}|${pagePivotIds.join(",")}|${columnOrderSignature}`;
   const nextSignatures = {};
   for (const pivot of pageItems) {
     const pivotId = text((pivot || {}).pivot_id, "").trim();
     if (!pivotId) continue;
-    const signature = buildPivotCardSignature(pivot);
-    nextSignatures[pivotId] = signature;
-    if (state.cardsRenderSignaturesByPivotId[pivotId] === signature) continue;
-
-    const cardElement = existingCardElements.get(pivotId);
-    if (!cardElement) {
-      needFullRebuild = true;
-      break;
-    }
-    cardElement.outerHTML = buildPivotCardHtml(pivot);
-    changedAny = true;
+    nextSignatures[pivotId] = buildPivotCardSignature(pivot);
   }
-
   const previousPivotIds = Object.keys(state.cardsRenderSignaturesByPivotId);
-  if (!needFullRebuild && !arraysShallowEqual(previousPivotIds, pagePivotIds)) {
-    needFullRebuild = true;
-  }
-  if (needFullRebuild) {
-    renderPivotCardsFull(pageItems, pageKey);
+  const hasSamePivotSet = arraysShallowEqual(previousPivotIds, pagePivotIds);
+  const hasSameSignatures = hasSamePivotSet
+    && pagePivotIds.every((pivotId) => state.cardsRenderSignaturesByPivotId[pivotId] === nextSignatures[pivotId]);
+  const hasSamePageKey = state.cardsRenderPageKey === pageKey;
+
+  if (!(state.cardsRenderIsEmpty || !hasSamePageKey || !hasSamePivotSet || !hasSameSignatures)) {
     return;
   }
 
-  if (changedAny) {
-    state.cardsRenderSignaturesByPivotId = nextSignatures;
-  }
-  state.cardsRenderPageKey = pageKey;
-  state.cardsRenderIsEmpty = false;
+  renderPivotCardsFull(pageItems, pageKey);
 }
 
 function renderPivotMetrics(pivot, statusView = null, qualityView = null, connectivityView = null) {
@@ -3309,6 +3470,8 @@ async function boot() {
   }
   startDevAutoReload();
   await loadUiConfig();
+  ensurePivotTableColumnOrder();
+  await loadPivotTableColumnPreference();
   ui.connPreset.value = state.connPreset;
   ui.connFromWrap.hidden = true;
   ui.connToWrap.hidden = true;
@@ -3362,3 +3525,4 @@ if (typeof module !== "undefined" && module.exports) {
     },
   };
 }
+

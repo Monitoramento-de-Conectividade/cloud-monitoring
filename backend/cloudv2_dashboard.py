@@ -523,6 +523,22 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 )
                 return True
 
+            if path == "/api/user/pivot-table-columns":
+                if not auth_context:
+                    self._write_json(401, {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."})
+                    return True
+
+                user_id = (auth_context or {}).get("session_user_id")
+                columns = auth_service.get_pivot_table_columns(user_id)
+                self._write_json(
+                    200,
+                    {
+                        "ok": True,
+                        "columns": columns,
+                    },
+                )
+                return True
+
             if path == "/admin/users":
                 if not auth_context:
                     self._write_json(401, {"ok": False, "code": "auth_required", "message": "Autenticacao obrigatoria."})
@@ -761,7 +777,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
             self.send_response(204)
             self._write_cors_headers(origin)
-            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS")
             requested_headers = str(self.headers.get("Access-Control-Request-Headers", "")).strip()
             if requested_headers:
                 self.send_header("Access-Control-Allow-Headers", requested_headers)
@@ -1108,6 +1124,34 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return
 
             self._write_json(200, {"ok": True, "updated": updated})
+
+        def do_PUT(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            auth_context = self._enforce_auth(path, "PUT")
+            if auth_context is auth_blocked:
+                return
+
+            if path == "/api/user/pivot-table-columns":
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"ok": False, "error": "json invalido"})
+                    return
+
+                result = auth_service.set_pivot_table_columns(
+                    (auth_context or {}).get("session_user_id"),
+                    body.get("columns"),
+                )
+                status_code = 200 if result.get("ok") else 400
+                if result.get("code") in ("auth_required", "user_not_found"):
+                    status_code = 401
+                self._write_json(status_code, result)
+                return
+
+            self._write_json(404, {"error": "rota nao encontrada"})
+            return
 
         def log_message(self, format_text, *args):
             return
