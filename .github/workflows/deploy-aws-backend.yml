@@ -48,6 +48,34 @@ jobs:
               exit 1
             fi
           done
+          if ! printf '%s' "${AWS_EC2_SSH_KEY}" | grep -q "PRIVATE KEY"; then
+            echo "::error::AWS_EC2_SSH_KEY parece invalida. Use a chave PRIVADA completa (BEGIN ... PRIVATE KEY)."
+            exit 1
+          fi
+
+      - name: Prepare SSH private key file
+        id: sshkey
+        env:
+          AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          KEY_PATH="${RUNNER_TEMP}/ec2_deploy_key"
+          umask 077
+
+          # Aceita segredo com quebras reais de linha ou com "\n" literal.
+          if printf '%s' "${AWS_EC2_SSH_KEY}" | grep -q '\\n'; then
+            printf '%b\n' "${AWS_EC2_SSH_KEY}" > "${KEY_PATH}"
+          else
+            printf '%s\n' "${AWS_EC2_SSH_KEY}" > "${KEY_PATH}"
+          fi
+          chmod 600 "${KEY_PATH}"
+
+          if ! ssh-keygen -yf "${KEY_PATH}" >/dev/null 2>&1; then
+            echo "::error::AWS_EC2_SSH_KEY invalida ou formato nao suportado."
+            exit 1
+          fi
+
+          echo "key_path=${KEY_PATH}" >> "$GITHUB_OUTPUT"
 
       - name: Bootstrap and deploy via SSH
         env:
@@ -68,10 +96,9 @@ jobs:
         with:
           host: ${{ secrets.AWS_EC2_HOST }}
           username: ${{ secrets.AWS_EC2_USER }}
-          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          key_path: ${{ steps.sshkey.outputs.key_path }}
           port: ${{ secrets.AWS_EC2_PORT || '22' }}
           envs: BRANCH,APP_DIR,REPO_URL,FRONTEND_URL,BACKEND_URL,ADMIN_EMAIL,ADMIN_PASSWORD,BACKEND_PUBLIC_PORT,BROKER,MQTT_PORT,MQTT_AMAZON_CA_PEM_B64,MQTT_DEVICE_CRT_B64,MQTT_PRIVATE_KEY_B64
-          script_stop: true
           script: |
             set -euo pipefail
 
