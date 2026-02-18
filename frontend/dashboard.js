@@ -98,6 +98,18 @@ const ui = HAS_DOM
       probeDelayChart: document.getElementById("probeDelayChart"),
       probeDelayStartLabel: document.getElementById("probeDelayStartLabel"),
       probeDelayEndLabel: document.getElementById("probeDelayEndLabel"),
+      pivotRssiPanel: document.getElementById("pivotRssiPanel"),
+      rssiPreset: document.getElementById("rssiPreset"),
+      rssiRange: document.getElementById("rssiRange"),
+      rssiFromWrap: document.getElementById("rssiFromWrap"),
+      rssiToWrap: document.getElementById("rssiToWrap"),
+      rssiFrom: document.getElementById("rssiFrom"),
+      rssiTo: document.getElementById("rssiTo"),
+      rssiApply: document.getElementById("rssiApply"),
+      rssiHint: document.getElementById("rssiHint"),
+      rssiChart: document.getElementById("rssiChart"),
+      rssiStartLabel: document.getElementById("rssiStartLabel"),
+      rssiEndLabel: document.getElementById("rssiEndLabel"),
       timelineList: document.getElementById("timelineList"),
       timelinePrev: document.getElementById("timelinePrev"),
       timelineNext: document.getElementById("timelineNext"),
@@ -133,6 +145,9 @@ const state = {
   probeDelayPreset: "30d",
   probeDelayCustomFrom: "",
   probeDelayCustomTo: "",
+  rssiPreset: "30d",
+  rssiCustomFrom: "",
+  rssiCustomTo: "",
   timelinePage: 1,
   timelinePageSize: 25,
   refreshMs: 5000,
@@ -1622,6 +1637,81 @@ function buildProbeDelaySeries(pivot, startTs, endTs) {
   };
 }
 
+function isValidRssiValue(value) {
+  return Number.isFinite(value) && value >= 0 && value <= 31;
+}
+
+function shouldRenderRssiPanel(pivot) {
+  if (!pivot || typeof pivot !== "object") return false;
+  if (pivot.hasRssi === true) return true;
+  const series = Array.isArray(pivot.rssiSeries) ? pivot.rssiSeries : [];
+  return series.some((point) => {
+    const ts = Number((point || {}).ts || 0);
+    const rssi = Number((point || {}).rssi);
+    return Number.isFinite(ts) && ts > 0 && isValidRssiValue(rssi);
+  });
+}
+
+function normalizeRssiRange(pivot) {
+  const nowTs = resolveTimelineReferenceNowTs(pivot);
+  const points = Array.isArray((pivot || {}).rssiSeries) ? pivot.rssiSeries : [];
+  let minTs = nowTs;
+
+  for (const point of points) {
+    const ts = Number((point || {}).ts || 0);
+    const rssi = Number((point || {}).rssi);
+    if (Number.isFinite(ts) && ts > 0 && ts < minTs && isValidRssiValue(rssi)) {
+      minTs = ts;
+    }
+  }
+
+  if (minTs === nowTs) minTs = Math.max(0, nowTs - 24 * 3600);
+
+  let startTs = minTs;
+  let endTs = nowTs;
+
+  const preset = state.rssiPreset;
+  if (preset === "custom") {
+    const parsedFrom = parseDateTimeLocal(state.rssiCustomFrom);
+    const parsedTo = parseDateTimeLocal(state.rssiCustomTo);
+    if (parsedFrom !== null) startTs = parsedFrom;
+    if (parsedTo !== null) endTs = parsedTo;
+  } else if (preset !== "total") {
+    const windowSec = connectivityRangeSeconds(preset);
+    if (windowSec) startTs = nowTs - windowSec;
+  }
+
+  if (startTs < minTs) startTs = minTs;
+  if (endTs > nowTs) endTs = nowTs;
+  if (!Number.isFinite(startTs) || !Number.isFinite(endTs) || startTs >= endTs) {
+    startTs = Math.max(minTs, nowTs - 24 * 3600);
+    endTs = nowTs;
+  }
+
+  return { startTs, endTs, minTs, nowTs };
+}
+
+function buildRssiSeries(pivot, startTs, endTs) {
+  const points = (pivot.rssiSeries || [])
+    .map((point) => ({
+      ts: Number(point.ts || 0),
+      rssi: Number(point.rssi),
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.ts) &&
+        point.ts >= startTs &&
+        point.ts <= endTs &&
+        isValidRssiValue(point.rssi)
+    )
+    .sort((a, b) => a.ts - b.ts);
+
+  return {
+    points,
+    sampleCount: points.length,
+  };
+}
+
 function resolveDisconnectThresholdSec(summary, settings) {
   const safeSummary = summary || {};
   const safeSettings = settings || {};
@@ -2171,6 +2261,94 @@ function renderProbeDelayChart(pivot) {
     `Última medição: ${fmtSecondsPrecise(lastPoint.latencySec)} (${formatShortDateTime(lastPoint.ts)})`;
 }
 
+function renderRssiChart(pivot) {
+  if (!ui.pivotRssiPanel) return;
+
+  const hasRssi = shouldRenderRssiPanel(pivot);
+  ui.pivotRssiPanel.hidden = !hasRssi;
+  if (!hasRssi) return;
+
+  const range = normalizeRssiRange(pivot);
+  const startTs = range.startTs;
+  const endTs = range.endTs;
+
+  if (!state.rssiCustomFrom) {
+    state.rssiCustomFrom = toDateTimeLocal(Math.max(range.minTs, endTs - 24 * 3600));
+  }
+  if (!state.rssiCustomTo) {
+    state.rssiCustomTo = toDateTimeLocal(endTs);
+  }
+
+  ui.rssiPreset.value = state.rssiPreset;
+  ui.rssiFrom.value = state.rssiCustomFrom;
+  ui.rssiTo.value = state.rssiCustomTo;
+  const custom = state.rssiPreset === "custom";
+  ui.rssiRange.hidden = !custom;
+  ui.rssiFromWrap.hidden = !custom;
+  ui.rssiToWrap.hidden = !custom;
+
+  ui.rssiStartLabel.textContent = formatShortDateTime(startTs);
+  ui.rssiEndLabel.textContent = formatShortDateTime(endTs);
+
+  const series = buildRssiSeries(pivot, startTs, endTs);
+  const points = series.points;
+  if (!points.length) {
+    ui.rssiHint.textContent = "Nenhum dado de RSSI no periodo selecionado.";
+    ui.rssiChart.innerHTML = `<div class="empty">Nenhum dado disponivel para este periodo.</div>`;
+    return;
+  }
+
+  const width = 980;
+  const height = 250;
+  const padLeft = 52;
+  const padRight = 14;
+  const padTop = 16;
+  const padBottom = 30;
+  const innerWidth = width - padLeft - padRight;
+  const innerHeight = height - padTop - padBottom;
+  const duration = Math.max(1, endTs - startTs);
+
+  const domainMax = 31;
+  const domainSpan = domainMax;
+
+  const xForTs = (ts) => padLeft + ((ts - startTs) / duration) * innerWidth;
+  const yForRssi = (rssi) => padTop + ((domainMax - rssi) / domainSpan) * innerHeight;
+
+  const pathData = points
+    .map((point, idx) => `${idx === 0 ? "M" : "L"}${xForTs(point.ts).toFixed(2)} ${yForRssi(point.rssi).toFixed(2)}`)
+    .join(" ");
+
+  const yTicks = [31, 24, 16, 8, 0].map((value) => ({
+    value,
+    y: yForRssi(value),
+  }));
+  const lastPoint = points[points.length - 1];
+  const averageRssi = points.reduce((sum, point) => sum + point.rssi, 0) / points.length;
+
+  ui.rssiChart.innerHTML = `
+    <svg class="probe-delay-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Grafico de RSSI ao longo do tempo">
+      ${yTicks
+        .map(
+          (tick) => `
+            <line class="probe-delay-grid" x1="${padLeft}" y1="${tick.y.toFixed(2)}" x2="${(padLeft + innerWidth).toFixed(
+              2
+            )}" y2="${tick.y.toFixed(2)}"></line>
+            <text class="probe-delay-ylabel" x="${(padLeft - 8).toFixed(2)}" y="${(tick.y + 4).toFixed(2)}">${escapeHtml(
+            String(tick.value)
+          )}</text>
+          `
+        )
+        .join("")}
+      <path class="probe-delay-line" d="${pathData}"></path>
+    </svg>
+  `;
+
+  ui.rssiHint.textContent =
+    `Registros no periodo: ${series.sampleCount} | ` +
+    `RSSI medio: ${averageRssi.toFixed(2)} | ` +
+    `Ultima medicao: ${lastPoint.rssi.toFixed(0)} (${formatShortDateTime(lastPoint.ts)})`;
+}
+
 function renderTimeline(pivot) {
   const allEvents = getConnectivityEventsPanelCapped(pivot);
   const totalPages = Math.max(1, Math.ceil(allEvents.length / state.timelinePageSize));
@@ -2297,6 +2475,7 @@ function renderPivotView() {
   renderCards();
   renderPivotMetrics(pivot, displayStatus, quality, connectivitySummary);
   renderProbeDelayChart(pivot);
+  renderRssiChart(pivot);
   renderTimeline(pivot);
   renderCloud2Table(pivot);
 }
@@ -3038,6 +3217,26 @@ function wireEvents() {
     renderPivotView();
   });
 
+  ui.rssiPreset.addEventListener("change", () => {
+    state.rssiPreset = ui.rssiPreset.value || "30d";
+    const custom = state.rssiPreset === "custom";
+    ui.rssiRange.hidden = !custom;
+    ui.rssiFromWrap.hidden = !custom;
+    ui.rssiToWrap.hidden = !custom;
+    renderPivotView();
+  });
+
+  ui.rssiApply.addEventListener("click", () => {
+    state.rssiPreset = ui.rssiPreset.value || "30d";
+    state.rssiCustomFrom = ui.rssiFrom.value || "";
+    state.rssiCustomTo = ui.rssiTo.value || "";
+    const custom = state.rssiPreset === "custom";
+    ui.rssiRange.hidden = !custom;
+    ui.rssiFromWrap.hidden = !custom;
+    ui.rssiToWrap.hidden = !custom;
+    renderPivotView();
+  });
+
   ui.connTrack.addEventListener("click", (event) => {
     const segmentEl = event.target.closest(".conn-segment");
     if (!segmentEl || !ui.connTrack.contains(segmentEl)) return;
@@ -3117,6 +3316,10 @@ async function boot() {
   ui.probeDelayRange.hidden = true;
   ui.probeDelayFromWrap.hidden = true;
   ui.probeDelayToWrap.hidden = true;
+  ui.rssiPreset.value = state.rssiPreset;
+  ui.rssiRange.hidden = true;
+  ui.rssiFromWrap.hidden = true;
+  ui.rssiToWrap.hidden = true;
   const hashPivot = parseHashPivot();
   if (hashPivot) {
     state.selectedPivot = hashPivot;
@@ -3155,6 +3358,7 @@ if (typeof module !== "undefined" && module.exports) {
       buildConnectivityQualityInput,
       buildConnectivityStatus,
       computeConnectivityFromRange,
+      shouldRenderRssiPanel,
     },
   };
 }

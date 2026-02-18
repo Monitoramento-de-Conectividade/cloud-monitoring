@@ -205,3 +205,19 @@ test("quality signature: changes when session or activity changes", () => {
   assert.notEqual(sigA, sigB);
   assert.notEqual(sigA, sigC);
 });
+
+test("ui: pivot sem RSSI nao exibe o card de RSSI", () => {
+  const shouldRender = _test.shouldRenderRssiPanel({
+    hasRssi: false,
+    rssiSeries: [],
+  });
+  assert.equal(shouldRender, false);
+});
+
+test("ui: pivot com RSSI exibe o card de RSSI", () => {
+  const shouldRender = _test.shouldRenderRssiPanel({
+    hasRssi: true,
+    rssiSeries: [{ ts: 1000, rssi: 12 }],
+  });
+  assert.equal(shouldRender, true);
+});

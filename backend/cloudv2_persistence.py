@@ -1078,6 +1078,7 @@ class TelemetryPersistence:
                 conn.execute("DELETE FROM connectivity_events")
                 conn.execute("DELETE FROM probe_events")
                 conn.execute("DELETE FROM probe_delay_points")
+                conn.execute("DELETE FROM ping_rssi_points")
                 conn.execute("DELETE FROM cloud2_events")
                 conn.execute("DELETE FROM drop_events")
                 conn.execute("DELETE FROM pivot_snapshots")
@@ -1092,6 +1093,7 @@ class TelemetryPersistence:
                         'connectivity_events',
                         'probe_events',
                         'probe_delay_points',
+                        'ping_rssi_points',
                         'cloud2_events',
                         'drop_events'
                     )
@@ -1279,6 +1281,7 @@ class TelemetryPersistence:
                 "SELECT 1 FROM probe_events WHERE pivot_id = ? AND session_id = ? LIMIT 1",
                 "SELECT 1 FROM cloud2_events WHERE pivot_id = ? AND session_id = ? LIMIT 1",
                 "SELECT 1 FROM drop_events WHERE pivot_id = ? AND session_id = ? LIMIT 1",
+                "SELECT 1 FROM ping_rssi_points WHERE pivot_id = ? AND session_id = ? LIMIT 1",
             )
             for query in checks:
                 if conn.execute(query, (normalized_id, normalized_session)).fetchone() is not None:
@@ -1436,6 +1439,39 @@ class TelemetryPersistence:
                         avg_value,
                         _safe_float(median_latency_sec, None),
                         sample_value,
+                        time.time(),
+                    ),
+                )
+
+    def insert_ping_rssi_point(self, pivot_id, session_id, ts, rssi):
+        normalized_id = str(pivot_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        if not normalized_id or not normalized_session:
+            return
+
+        ts_value = _safe_float(ts, None)
+        rssi_value = _safe_int(rssi, None)
+        if ts_value is None or rssi_value is None or rssi_value < 0 or rssi_value > 31:
+            return
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO ping_rssi_points (
+                        pivot_id,
+                        session_id,
+                        ts,
+                        rssi,
+                        created_at_ts
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        normalized_id,
+                        normalized_session,
+                        ts_value,
+                        rssi_value,
                         time.time(),
                     ),
                 )
@@ -1739,6 +1775,42 @@ class TelemetryPersistence:
                     "avg_latency_sec": _safe_float(row["avg_latency_sec"], None),
                     "median_latency_sec": _safe_float(row["median_latency_sec"], None),
                     "sample_count": int(row["sample_count"]),
+                }
+            )
+        return points
+
+    def fetch_ping_rssi_points(self, pivot_id, session_id, limit=None):
+        normalized_id = str(pivot_id or "").strip()
+        normalized_session = str(session_id or "").strip()
+        if not normalized_id or not normalized_session:
+            return []
+        safe_limit = max(1, min(50000, int(limit or self.max_events_per_pivot)))
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM ping_rssi_points
+                WHERE pivot_id = ? AND session_id = ?
+                ORDER BY ts ASC, id ASC
+                LIMIT ?
+                """,
+                (normalized_id, normalized_session, safe_limit),
+            ).fetchall()
+
+        points = []
+        for row in rows:
+            ts_value = _safe_float(row["ts"], None)
+            rssi_value = _safe_int(row["rssi"], None)
+            if rssi_value is None or rssi_value < 0 or rssi_value > 31:
+                continue
+            points.append(
+                {
+                    "id": int(row["id"]),
+                    "ts": ts_value,
+                    "at": _ts_to_str(ts_value),
+                    "rssi": rssi_value,
                 }
             )
         return points
@@ -2239,12 +2311,19 @@ class TelemetryPersistence:
                 "probe_events": [],
                 "cloud2_events": [],
                 "probe_delay_points": [],
+                "hasRssi": False,
+                "rssiSeries": [],
             }
 
         timeline = self.fetch_timeline_events(normalized_id, resolved_session_id, limit=self.max_events_per_pivot)
         probe_events = self.fetch_probe_events(normalized_id, resolved_session_id, limit=self.max_events_per_pivot)
         cloud2_events = self.fetch_cloud2_events(normalized_id, resolved_session_id, limit=self.max_events_per_pivot)
         probe_delay_points = self.fetch_probe_delay_points(
+            normalized_id,
+            resolved_session_id,
+            limit=self.max_events_per_pivot,
+        )
+        rssi_series = self.fetch_ping_rssi_points(
             normalized_id,
             resolved_session_id,
             limit=self.max_events_per_pivot,
@@ -2256,6 +2335,8 @@ class TelemetryPersistence:
         payload["probe_events"] = probe_events
         payload["cloud2_events"] = cloud2_events
         payload["probe_delay_points"] = probe_delay_points
+        payload["rssiSeries"] = rssi_series
+        payload["hasRssi"] = bool(rssi_series)
         payload["session_id"] = resolved_session_id
         payload["run_id"] = resolved_run_id
         payload["session"] = self._row_to_session_dict_locked(session_row)

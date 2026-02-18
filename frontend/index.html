@@ -325,6 +325,43 @@
           </div>
         </section>
 
+        <section id="pivotRssiPanel" class="probe-delay-panel" hidden>
+          <div class="panel-head tight probe-delay-head">
+            <h3>RSSI ao longo do tempo</h3>
+            <div class="probe-delay-controls">
+              <label class="field compact">
+                <span>Período</span>
+                <select id="rssiPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </label>
+              <div class="probe-delay-range" id="rssiRange" hidden>
+                <label class="field compact conn-custom" id="rssiFromWrap" hidden>
+                  <span>De</span>
+                  <input id="rssiFrom" type="datetime-local"/>
+                </label>
+                <label class="field compact conn-custom" id="rssiToWrap" hidden>
+                  <span>Até</span>
+                  <input id="rssiTo" type="datetime-local"/>
+                </label>
+              </div>
+              <button id="rssiApply" class="ghost">Carregar</button>
+            </div>
+          </div>
+          <p id="rssiHint" class="hint"></p>
+          <div id="rssiChart" class="probe-delay-chart"></div>
+          <div class="probe-delay-axis">
+            <span id="rssiStartLabel">-</span>
+            <span id="rssiEndLabel">-</span>
+          </div>
+        </section>
+
         <section class="timeline-panel">
           <div class="panel-head tight">
             <h3>Eventos de conectividade</h3>

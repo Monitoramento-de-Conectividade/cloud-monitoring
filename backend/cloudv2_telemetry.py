@@ -182,6 +182,27 @@ def parse_device_payload(payload):
     return parsed, None
 
 
+def parse_ping_rssi(parsed):
+    if not isinstance(parsed, dict):
+        return None
+
+    if str(parsed.get("idp") or "").strip() != "8":
+        return None
+
+    parts = parsed.get("parts")
+    if not isinstance(parts, list) or len(parts) < 3:
+        return None
+
+    raw_rssi = str(parts[2] or "").strip()
+    if not raw_rssi or not re.fullmatch(r"\d+", raw_rssi):
+        return None
+
+    rssi_value = _safe_int(raw_rssi, None)
+    if rssi_value is None or rssi_value < 0 or rssi_value > 31:
+        return None
+    return rssi_value
+
+
 class TelemetryStore:
     def __init__(self, config, log_dir):
         self.log = logging.getLogger("cloudv2.telemetry")
@@ -1033,6 +1054,11 @@ class TelemetryStore:
         if len(probe_events) > self.max_events_per_pivot:
             probe_events = probe_events[-self.max_events_per_pivot :]
 
+        rssi_series = [item for item in (panel.get("rssiSeries") or []) if isinstance(item, dict)]
+        rssi_series.sort(key=lambda item: _safe_float(item.get("ts"), 0))
+        if len(rssi_series) > self.max_events_per_pivot:
+            rssi_series = rssi_series[-self.max_events_per_pivot :]
+
         first_timeline_ts = None
         for event in timeline_events:
             event_ts = _safe_float(event.get("ts"), None)
@@ -1145,6 +1171,7 @@ class TelemetryStore:
         pivot["last_cloud2"] = last_cloud2
         pivot["timeline"] = timeline_events
         pivot["cloud2_events"] = cloud2_events
+        pivot["ping_rssi_points"] = rssi_series
         pivot["drop_events"] = self._build_drop_events_from_cloud2_locked(cloud2_events)
 
         status_summary = summary.get("status") if isinstance(summary.get("status"), dict) else {}
@@ -1524,6 +1551,20 @@ class TelemetryStore:
                 continue
             self.persistence.insert_cloud2_event(pivot_id, session_id, event)
 
+        ping_rssi_points = sorted(
+            list(pivot.get("ping_rssi_points", [])),
+            key=lambda item: _safe_float(item.get("ts"), 0),
+        )
+        for point in ping_rssi_points:
+            if not isinstance(point, dict):
+                continue
+            self.persistence.insert_ping_rssi_point(
+                pivot_id,
+                session_id,
+                ts=point.get("ts"),
+                rssi=point.get("rssi"),
+            )
+
         drop_events = sorted(list(pivot.get("drop_events", [])), key=lambda item: _safe_float(item.get("ts"), 0))
         for event in drop_events:
             if not isinstance(event, dict):
@@ -1792,6 +1833,7 @@ class TelemetryStore:
             "topic_intervals_sec": {topic: [] for topic in CONNECTIVITY_TOPICS},
             "last_cloud2": None,
             "cloud2_events": [],
+            "ping_rssi_points": [],
             "drop_events": [],
             "timeline": [],
             "probe": {
@@ -2097,13 +2139,33 @@ class TelemetryStore:
 
     def _record_ping_locked(self, pivot, parsed, topic, ts, raw_payload=None):
         pivot["last_ping_ts"] = ts
+        rssi_value = parse_ping_rssi(parsed)
+        if rssi_value is not None:
+            rssi_point = {
+                "ts": ts,
+                "at": _ts_to_str(ts),
+                "rssi": rssi_value,
+            }
+            self.persistence.insert_ping_rssi_point(
+                pivot.get("pivot_id"),
+                pivot.get("session_id"),
+                ts=ts,
+                rssi=rssi_value,
+            )
+            pivot["ping_rssi_points"].append(rssi_point)
+            if len(pivot["ping_rssi_points"]) > self.max_events_per_pivot:
+                pivot["ping_rssi_points"] = pivot["ping_rssi_points"][-self.max_events_per_pivot :]
+
+        details = {"idp": parsed.get("idp")}
+        if rssi_value is not None:
+            details["rssi"] = rssi_value
         self._record_timeline_locked(
             pivot,
             event_type="ping",
             topic=topic,
             ts=ts,
             summary="Ping passivo recebido em cloudv2-ping.",
-            details={"idp": parsed.get("idp")},
+            details=details,
             source_topic=topic,
             raw_payload=raw_payload,
             parsed_payload=parsed,
@@ -2502,6 +2564,11 @@ class TelemetryStore:
         if len(cloud2_events) != len(pivot["cloud2_events"]):
             changed = True
         pivot["cloud2_events"] = cloud2_events
+
+        ping_rssi_points = [event for event in pivot["ping_rssi_points"] if _safe_float(event.get("ts"), 0) >= cutoff]
+        if len(ping_rssi_points) != len(pivot["ping_rssi_points"]):
+            changed = True
+        pivot["ping_rssi_points"] = ping_rssi_points
 
         drop_events = [event for event in pivot["drop_events"] if _safe_float(event.get("ts"), 0) >= cutoff]
         if len(drop_events) != len(pivot["drop_events"]):
@@ -3100,6 +3167,10 @@ class TelemetryStore:
             reverse=True,
         )
         probe_delay_points = self._build_probe_delay_points_locked(probe_events)
+        rssi_series = sorted(
+            list(pivot.get("ping_rssi_points", [])),
+            key=lambda item: _safe_float(item.get("ts"), 0),
+        )
         session_info = self.persistence.resolve_session(
             pivot["pivot_id"],
             session_id=pivot.get("session_id"),
@@ -3137,6 +3208,8 @@ class TelemetryStore:
             "timeline": timeline,
             "probe_events": probe_events,
             "probe_delay_points": probe_delay_points,
+            "hasRssi": bool(rssi_series),
+            "rssiSeries": rssi_series,
             "cloud2_events": sorted(
                 list(pivot.get("cloud2_events", [])),
                 key=lambda item: _safe_float(item.get("ts"), 0),
@@ -3273,7 +3346,7 @@ class TelemetryStore:
                     if isinstance(last_cloud2, dict):
                         pivot["last_cloud2"] = last_cloud2
 
-                    for list_field in ("cloud2_events", "drop_events", "timeline"):
+                    for list_field in ("cloud2_events", "ping_rssi_points", "drop_events", "timeline"):
                         raw_list = raw_pivot.get(list_field)
                         if isinstance(raw_list, list):
                             pivot[list_field] = raw_list[-self.max_events_per_pivot :]
