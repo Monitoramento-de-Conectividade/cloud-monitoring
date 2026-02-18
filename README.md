@@ -342,3 +342,22 @@ Secrets opcionais no GitHub:
   - preencha `AWS_EC2_HOST`, `AWS_EC2_USER` e `AWS_EC2_SSH_KEY`.
 - Frontend abre mas API falha por CORS:
   - em `.env.backend`, use `CORS_ALLOWED_ORIGINS` com o dominio final do Vercel (ex.: `https://cloud-monitoring.vercel.app`).
+
+## Auto-recovery da EC2 sem abrir console
+
+Para evitar reinicio manual da VM quando houver queda, configure alarmes CloudWatch com AWS CLI:
+
+- `StatusCheckFailed_System` -> `ec2:recover` (tentativa automatica de recovery da instancia)
+- `StatusCheckFailed_Instance` -> `ec2:reboot` (reboot automatico da instancia)
+
+Com a AWS CLI configurada, rode:
+
+```bash
+INSTANCE_ID=i-0123456789abcdef \
+AWS_REGION=us-east-1 \
+bash scripts/ec2-enable-auto-recovery.sh
+```
+
+Opcional:
+
+- `ALARM_PREFIX=meu-projeto` para customizar o nome dos alarmes.
