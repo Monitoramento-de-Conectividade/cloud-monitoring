@@ -7,7 +7,7 @@
   <title>Mapa de Pivos</title>
   <link rel="stylesheet" href="dashboard.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <link rel="stylesheet" href="mapa.css?v=20260219c"/>
+  <link rel="stylesheet" href="mapa.css?v=20260219d"/>
 </head>
 <body>
   <main class="layout">
@@ -30,16 +30,25 @@
       </div>
     </header>
 
-    <section id="mapFullscreenTarget" class="panel map-page-panel">
+    <section class="panel map-page-panel">
       <div class="panel-head tight">
         <h2>Mapa interativo</h2>
-        <div class="map-head-actions">
-          <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
-          <button id="mapFullscreenBtn" class="ghost map-fullscreen-btn" type="button" aria-pressed="false">Tela cheia</button>
-        </div>
+        <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
       </div>
       <p id="mapStatus" class="hint">Carregando dados...</p>
       <div id="pivotsMapWrap" class="pivots-map-wrap">
+        <button
+          id="mapFullscreenBtn"
+          class="ghost map-fullscreen-btn"
+          type="button"
+          aria-pressed="false"
+          aria-label="Ativar visualizacao em tela cheia"
+          title="Ativar visualizacao em tela cheia"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 10V4h6v2H6v4H4zm10-6h6v6h-2V6h-4V4zM6 14v4h4v2H4v-6h2zm12 4v-4h2v6h-6v-2h4z"></path>
+          </svg>
+        </button>
         <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
       </div>
     </section>
@@ -47,6 +56,6 @@
 
   <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="mapa.js?v=20260219c"></script>
+  <script src="mapa.js?v=20260219d"></script>
 </body>
 </html>

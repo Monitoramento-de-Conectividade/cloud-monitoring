@@ -54,6 +54,8 @@ const MAP_MIN_ZOOM = 3;
 const MAP_MAX_ZOOM = 18;
 const MAP_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const MAP_TILE_ATTRIBUTION = "&copy; OpenStreetMap contributors";
+const FULLSCREEN_ICON_ENTER_PATH = "M4 10V4h6v2H6v4H4zm10-6h6v6h-2V6h-4V4zM6 14v4h4v2H4v-6h2zm12 4v-4h2v6h-6v-2h4z";
+const FULLSCREEN_ICON_EXIT_PATH = "M8 4h3v2H8v3H6V4h2zm8 0h2v5h-2V6h-3V4h3zM6 15h2v3h3v2H6v-5zm10 3v-3h2v5h-5v-2h3z";
 const QUALITY_COLOR_VAR_BY_CODE = {
   green: "--green",
   calculating: "--calculating",
@@ -91,7 +93,6 @@ const ui = HAS_DOM
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
       mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
-      mapFullscreenTarget: document.getElementById("mapFullscreenTarget"),
       pivotsMapWrap: document.getElementById("pivotsMapWrap"),
       pivotsMapCanvas: document.getElementById("pivotsMapCanvas"),
     }
@@ -458,19 +459,27 @@ function setStatus(message) {
   ui.mapStatus.textContent = String(message || "").trim();
 }
 
-function applyMapFullscreenState(isActive) {
-  if (!HAS_DOM || !document.body) return;
-  state.mapFullscreenActive = !!isActive;
-  document.body.classList.toggle("map-fullscreen-active", state.mapFullscreenActive);
-  if (ui.mapFullscreenTarget) {
-    ui.mapFullscreenTarget.classList.toggle("is-fullscreen", state.mapFullscreenActive);
-  }
+function getFullscreenElement() {
+  if (!HAS_DOM) return null;
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function syncMapFullscreenUi() {
+  const active = !!(ui.pivotsMapWrap && getFullscreenElement() === ui.pivotsMapWrap);
+  state.mapFullscreenActive = active;
   if (ui.mapFullscreenBtn) {
-    ui.mapFullscreenBtn.textContent = state.mapFullscreenActive ? "Sair da tela cheia" : "Tela cheia";
-    ui.mapFullscreenBtn.setAttribute("aria-pressed", state.mapFullscreenActive ? "true" : "false");
+    const iconPath = ui.mapFullscreenBtn.querySelector("svg path");
+    if (iconPath) {
+      iconPath.setAttribute("d", active ? FULLSCREEN_ICON_EXIT_PATH : FULLSCREEN_ICON_ENTER_PATH);
+    }
+    ui.mapFullscreenBtn.setAttribute("aria-pressed", active ? "true" : "false");
     ui.mapFullscreenBtn.setAttribute(
       "aria-label",
-      state.mapFullscreenActive ? "Sair da tela cheia do mapa" : "Expandir mapa para tela cheia"
+      active ? "Sair da visualizacao em tela cheia" : "Ativar visualizacao em tela cheia"
+    );
+    ui.mapFullscreenBtn.setAttribute(
+      "title",
+      active ? "Sair da visualizacao em tela cheia (Esc)" : "Ativar visualizacao em tela cheia"
     );
   }
   window.setTimeout(() => {
@@ -479,8 +488,41 @@ function applyMapFullscreenState(isActive) {
   }, 0);
 }
 
-function toggleMapFullscreen() {
-  applyMapFullscreenState(!state.mapFullscreenActive);
+async function enterMapFullscreen() {
+  if (!ui.pivotsMapWrap) return;
+  if (typeof ui.pivotsMapWrap.requestFullscreen === "function") {
+    await ui.pivotsMapWrap.requestFullscreen();
+    return;
+  }
+  if (typeof ui.pivotsMapWrap.webkitRequestFullscreen === "function") {
+    ui.pivotsMapWrap.webkitRequestFullscreen();
+  }
+}
+
+async function exitAnyFullscreen() {
+  if (!HAS_DOM) return;
+  if (typeof document.exitFullscreen === "function") {
+    await document.exitFullscreen();
+    return;
+  }
+  if (typeof document.webkitExitFullscreen === "function") {
+    document.webkitExitFullscreen();
+  }
+}
+
+async function toggleMapFullscreen() {
+  const active = !!(ui.pivotsMapWrap && getFullscreenElement() === ui.pivotsMapWrap);
+  try {
+    if (active) {
+      await exitAnyFullscreen();
+    } else {
+      await enterMapFullscreen();
+    }
+  } catch (err) {
+    // no-op
+  } finally {
+    syncMapFullscreenUi();
+  }
 }
 
 function renderHeader(payload) {
@@ -631,7 +673,7 @@ async function boot() {
   if (!HAS_DOM) return;
   if (!(await ensureAuthenticated())) return;
   if (!ensureMapReady()) return;
-  applyMapFullscreenState(false);
+  syncMapFullscreenUi();
 
   if (ui.mapRefreshBtn) {
     ui.mapRefreshBtn.addEventListener("click", () => {
@@ -640,18 +682,15 @@ async function boot() {
   }
   if (ui.mapFullscreenBtn) {
     ui.mapFullscreenBtn.addEventListener("click", () => {
-      toggleMapFullscreen();
+      void toggleMapFullscreen();
     });
   }
+  document.addEventListener("fullscreenchange", syncMapFullscreenUi);
+  document.addEventListener("webkitfullscreenchange", syncMapFullscreenUi);
 
   window.addEventListener("resize", () => {
     if (!mapInstance) return;
     mapInstance.invalidateSize();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    if (!state.mapFullscreenActive) return;
-    applyMapFullscreenState(false);
   });
 
   await refreshMapData();
