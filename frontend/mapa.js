@@ -98,6 +98,7 @@ const state = {
   payload: null,
   pivots: [],
   refreshInFlight: false,
+  selectedRunId: null,
 };
 
 let mapInstance = null;
@@ -106,6 +107,52 @@ let markerLayer = null;
 function text(value, fallback = "-") {
   const normalized = String(value ?? "").trim();
   return normalized || String(fallback);
+}
+
+function normalizeRunId(value) {
+  return String(value || "").trim();
+}
+
+function buildStateUrl(runId = null) {
+  const normalizedRun = normalizeRunId(runId);
+  if (!normalizedRun) return "/api/state";
+  return `/api/state?run_id=${encodeURIComponent(normalizedRun)}`;
+}
+
+function buildQualityLiteUrl(runId = null) {
+  const normalizedRun = normalizeRunId(runId);
+  if (!normalizedRun) return "/api/quality-lite";
+  return `/api/quality-lite?run_id=${encodeURIComponent(normalizedRun)}`;
+}
+
+function pickBestRunIdFromRuns(runs) {
+  const list = Array.isArray(runs) ? runs : [];
+  if (!list.length) return null;
+
+  const normalized = list
+    .map((item) => {
+      const runId = normalizeRunId(item?.run_id);
+      if (!runId) return null;
+      return {
+        runId,
+        isActive: !!item?.is_active,
+        pivotCount: Number(item?.pivot_count || 0),
+      };
+    })
+    .filter(Boolean);
+
+  if (!normalized.length) return null;
+
+  const activeWithData = normalized.find((item) => item.isActive && item.pivotCount > 0);
+  if (activeWithData) return activeWithData.runId;
+
+  const latestWithData = normalized.find((item) => item.pivotCount > 0);
+  if (latestWithData) return latestWithData.runId;
+
+  const activeAny = normalized.find((item) => item.isActive);
+  if (activeAny) return activeAny.runId;
+
+  return normalized[0].runId;
 }
 
 function escapeHtml(value) {
@@ -151,14 +198,29 @@ function mapPinSizeForZoom(zoom) {
   return Math.max(14, Math.min(42, Math.round(size)));
 }
 
+function resolvePivotQuality(pivot) {
+  const safePivot = pivot && typeof pivot === "object" ? pivot : {};
+  if (safePivot._mapQuality && typeof safePivot._mapQuality === "object") {
+    return safePivot._mapQuality;
+  }
+  if (safePivot.quality && typeof safePivot.quality === "object") {
+    return safePivot.quality;
+  }
+  const summary = safePivot.summary && typeof safePivot.summary === "object" ? safePivot.summary : {};
+  if (summary.quality && typeof summary.quality === "object") {
+    return summary.quality;
+  }
+  return {};
+}
+
 function qualityCodeForPivot(pivot) {
-  const quality = pivot && typeof pivot.quality === "object" ? pivot.quality : {};
+  const quality = resolvePivotQuality(pivot);
   const code = text(quality.code, "green").trim().toLowerCase();
   return QUALITY_COLOR_VAR_BY_CODE[code] ? code : "green";
 }
 
 function qualityLabelForPivot(pivot) {
-  const quality = pivot && typeof pivot.quality === "object" ? pivot.quality : {};
+  const quality = resolvePivotQuality(pivot);
   const code = qualityCodeForPivot(pivot);
   return text(quality.label, QUALITY_LABEL_BY_CODE[code] || QUALITY_LABEL_BY_CODE.green);
 }
@@ -230,6 +292,7 @@ function hasValidPivotCoordinates(pivot) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
   if (latitude < -90 || latitude > 90) return false;
   if (longitude < -180 || longitude > 180) return false;
+  if (Math.abs(latitude) < 1e-12 || Math.abs(longitude) < 1e-12) return false;
   return true;
 }
 
@@ -465,14 +528,59 @@ async function ensureAuthenticated() {
   return false;
 }
 
+async function resolveRunIdForMap() {
+  const currentRun = normalizeRunId(state.selectedRunId);
+  if (currentRun) return currentRun;
+  try {
+    const payload = await getJson("/api/monitoring/runs?limit=200");
+    const resolved = pickBestRunIdFromRuns(payload?.runs);
+    state.selectedRunId = normalizeRunId(resolved);
+    return state.selectedRunId || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function refreshMapData() {
   if (state.refreshInFlight) return;
   state.refreshInFlight = true;
   if (ui.mapRefreshBtn) ui.mapRefreshBtn.disabled = true;
   try {
-    const payload = await getJson("/api/state");
-    state.payload = payload && typeof payload === "object" ? payload : {};
-    state.pivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
+    const requestedRunId = await resolveRunIdForMap();
+    const statePayload = await getJson(buildStateUrl(requestedRunId));
+    state.payload = statePayload && typeof statePayload === "object" ? statePayload : {};
+    const payloadRunId = normalizeRunId(state.payload.run_id);
+    if (payloadRunId) state.selectedRunId = payloadRunId;
+
+    const rawPivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
+    const qualityByPivotId = new Map();
+
+    try {
+      const qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
+      const qualityPivots = Array.isArray(qualityPayload?.pivots) ? qualityPayload.pivots : [];
+      for (const item of qualityPivots) {
+        const pivotId = text(item?.pivot_id, "").trim();
+        if (!pivotId) continue;
+        const summary = item.summary && typeof item.summary === "object" ? item.summary : {};
+        const quality = summary.quality && typeof summary.quality === "object"
+          ? summary.quality
+          : (item.quality && typeof item.quality === "object" ? item.quality : null);
+        if (quality) {
+          qualityByPivotId.set(pivotId, quality);
+        }
+      }
+    } catch (err) {
+      // fallback para qualidade do /api/state
+    }
+
+    state.pivots = rawPivots.map((pivot) => {
+      const pivotId = text((pivot || {}).pivot_id, "").trim();
+      if (!pivotId) return pivot;
+      const mappedQuality = qualityByPivotId.get(pivotId);
+      if (!mappedQuality) return pivot;
+      return { ...pivot, _mapQuality: mappedQuality };
+    });
+
     renderHeader(state.payload);
     renderMapMarkers();
   } catch (err) {
