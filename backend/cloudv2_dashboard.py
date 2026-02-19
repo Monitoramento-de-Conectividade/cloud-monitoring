@@ -173,6 +173,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
 
     page_aliases = {
         "/": "index.html",
+        "/mapa": "mapa.html",
         "/login": "login.html",
         "/register": "register.html",
         "/verify-email": "verify-email.html",
@@ -792,7 +793,7 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             parsed = urlparse(self.path)
             path = parsed.path
 
-            if path in ("/login", "/register", "/verify-email", "/forgot-password", "/reset-password", "/privacy-policy"):
+            if path in ("/mapa", "/login", "/register", "/verify-email", "/forgot-password", "/reset-password", "/privacy-policy"):
                 alias_file = page_aliases.get(path)
                 if alias_file:
                     self._write_html_headers(alias_file)

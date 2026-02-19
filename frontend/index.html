@@ -6,11 +6,6 @@
   <meta name="cloudv2-api-base-url" content=""/>
   <title>Monitoramento de Conectividade</title>
   <link rel="stylesheet" href="dashboard.css"/>
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    crossorigin=""
-  />
 </head>
 <body>
   <a class="skip-link" href="#cardsSection">Ir para lista de pivôs</a>
@@ -42,12 +37,11 @@
         </p>
       </div>
       <div class="hero-meta" role="status" aria-live="polite">
-        <button id="openMapBtn" class="chip chip-action hero-map-btn" type="button" aria-label="Abrir mapa de pivôs">
+        <a class="chip chip-action hero-map-btn hero-map-btn-icon-only" href="/mapa" aria-label="Abrir mapa de pivôs" title="Abrir mapa de pivôs">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M15.6 3.1a1 1 0 0 1 .8-.1l5 1.7a1 1 0 0 1 .7.9V19a1 1 0 0 1-.7 1l-5 1.6a1 1 0 0 1-.6 0l-7-2.2a1 1 0 0 1-.6 0L2.8 21A1 1 0 0 1 2 20V6.5a1 1 0 0 1 .7-1l5-1.6a1 1 0 0 1 .6 0L15.6 3Zm-.6 2.4-5-1.5v14l5 1.6v-14Zm-7 12.4v-14L4 5.2v14l4-1.3Zm9 1.6 3-1V6.2l-3 1v12.3Z"></path>
           </svg>
-          <span>Mapa</span>
-        </button>
+        </a>
         <span class="chip" id="updatedAt">Última atualização: -</span>
         <span class="chip" id="countsMeta">0 pivôs</span>
         <a id="adminCreateAccountLink" class="chip chip-action" href="/register" hidden>Criar conta</a>
@@ -423,21 +417,9 @@
     </section>
   </main>
 
-  <div id="pivotMapModal" class="map-modal" hidden>
-    <div class="map-modal-backdrop" id="pivotMapBackdrop"></div>
-    <section class="map-modal-card" role="dialog" aria-modal="true" aria-labelledby="pivotMapTitle">
-      <div class="map-modal-head">
-        <h2 id="pivotMapTitle">Mapa dos pivôs monitorados</h2>
-        <button id="closeMapBtn" class="ghost" type="button">Fechar</button>
-      </div>
-      <div id="pivotMapCanvas" class="pivot-map" aria-label="Mapa de pivôs"></div>
-    </section>
-  </div>
-
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
   <script src="runtime-config.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="dashboard.js?v=20260219c"></script>
+  <script src="dashboard.js?v=20260219d"></script>
 </body>
 </html>

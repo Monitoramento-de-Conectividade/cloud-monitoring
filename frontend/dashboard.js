@@ -64,11 +64,6 @@ const ui = HAS_DOM
       updatedAt: document.getElementById("updatedAt"),
       countsMeta: document.getElementById("countsMeta"),
       logoutBtn: document.getElementById("logoutBtn"),
-      openMapBtn: document.getElementById("openMapBtn"),
-      pivotMapModal: document.getElementById("pivotMapModal"),
-      pivotMapBackdrop: document.getElementById("pivotMapBackdrop"),
-      closeMapBtn: document.getElementById("closeMapBtn"),
-      pivotMapCanvas: document.getElementById("pivotMapCanvas"),
       adminCreateAccountLink: document.getElementById("adminCreateAccountLink"),
       adminUsersPanel: document.getElementById("adminUsersPanel"),
       adminUsersRefresh: document.getElementById("adminUsersRefresh"),
@@ -222,27 +217,10 @@ const state = {
   pivotTableColumnOrder: [],
   pivotTableDragKey: "",
   pivotTablePreferenceLoaded: false,
-  mapModalOpen: false,
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
 const CONNECTIVITY_EVENTS_MAX_PAGES = 3;
-const MAP_DEFAULT_CENTER = [-14.235, -51.9253];
-const MAP_DEFAULT_ZOOM = 4;
-const MAP_MIN_ZOOM = 3;
-const MAP_MAX_ZOOM = 18;
-const MAP_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const MAP_TILE_ATTRIBUTION = "&copy; OpenStreetMap contributors";
-const MAP_COLOR_VAR_BY_QUALITY_CODE = {
-  green: "--green",
-  calculating: "--calculating",
-  yellow: "--yellow",
-  critical: "--critical",
-};
-
-let pivotMapInstance = null;
-let pivotMapMarkerLayer = null;
-let pivotMapZoomBound = false;
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -710,226 +688,6 @@ function parsePivotCoordinatesInput(value) {
     return { ok: false, error: "Longitude deve estar entre -180 e 180." };
   }
   return { ok: true, latitude, longitude };
-}
-
-function hasValidPivotCoordinates(pivot) {
-  const coordinates = extractPivotCoordinates(pivot);
-  const latitude = Number(coordinates.latitude);
-  const longitude = Number(coordinates.longitude);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
-  if (latitude < -90 || latitude > 90) return false;
-  if (longitude < -180 || longitude > 180) return false;
-  return true;
-}
-
-function mapPinSizeForZoom(zoom) {
-  const parsedZoom = Number(zoom);
-  if (!Number.isFinite(parsedZoom)) return 38;
-  const size = 38 - ((parsedZoom - MAP_DEFAULT_ZOOM) * 2.4);
-  return Math.max(14, Math.min(42, Math.round(size)));
-}
-
-function resolveCssVarColor(variableName, fallbackColor) {
-  if (!HAS_WINDOW || !variableName) return fallbackColor;
-  const root = window.getComputedStyle(document.documentElement);
-  const value = String(root.getPropertyValue(variableName) || "").trim();
-  return value || fallbackColor;
-}
-
-function mapPinColorForQualityCode(qualityCode) {
-  const normalizedCode = text(qualityCode, "green").trim().toLowerCase();
-  const variableName = MAP_COLOR_VAR_BY_QUALITY_CODE[normalizedCode] || MAP_COLOR_VAR_BY_QUALITY_CODE.green;
-  return resolveCssVarColor(variableName, "#2a7e4c");
-}
-
-function buildMapPinIcon(qualityCode, zoomLevel) {
-  if (!HAS_WINDOW || !window.L) return null;
-  const pinSize = mapPinSizeForZoom(zoomLevel);
-  const iconHeight = pinSize + 12;
-  const color = mapPinColorForQualityCode(qualityCode);
-  const iconHtml = `
-    <span class="map-pin-wrap" style="--map-pin-size:${pinSize}px;--map-pin-color:${color};">
-      <span class="map-pin-shape"></span>
-    </span>
-  `;
-  return window.L.divIcon({
-    className: "map-pin-icon",
-    html: iconHtml,
-    iconSize: [pinSize, iconHeight],
-    iconAnchor: [Math.round(pinSize / 2), iconHeight - 2],
-    popupAnchor: [0, -Math.round(pinSize * 0.62)],
-  });
-}
-
-function mapPopupValueHtml(pivot, columnKey) {
-  const safePivot = pivot || {};
-  const status = getDisplayStatus(safePivot);
-  const quality = getDisplayQuality(safePivot);
-  const cloud2 = safePivot.last_cloud2 || {};
-
-  if (columnKey === "pivot_id") {
-    return escapeHtml(text(safePivot.pivot_id, "-"));
-  }
-  if (columnKey === "status") {
-    return `<span class="badge ${escapeHtml(text(status.code, "gray"))}">${escapeHtml(text(status.label, "Inicial"))}</span>`;
-  }
-  if (columnKey === "connectivity") {
-    return `<span class="badge ${escapeHtml(text(quality.code, "green"))}">${escapeHtml(text(quality.label, "Estavel"))}</span>`;
-  }
-  if (columnKey === "timeline") {
-    return buildTimelineMiniHtml(safePivot);
-  }
-  if (columnKey === "last_cloudv2_at") {
-    return escapeHtml(text(safePivot.last_cloudv2_at));
-  }
-  if (columnKey === "median") {
-    const medianReady = !!safePivot.median_ready;
-    const samples = Number(safePivot.median_sample_count || 0);
-    const medianText = medianReady
-      ? `${fmtDuration(safePivot.median_cloudv2_interval_sec)} (${samples} amostras)`
-      : `${samples} amostras (em analise)`;
-    return escapeHtml(medianText);
-  }
-  if (columnKey === "last_activity_at") {
-    return escapeHtml(text(safePivot.last_activity_at));
-  }
-  if (columnKey === "signal") {
-    return escapeHtml(text(pivotSignalValue(safePivot)));
-  }
-  if (columnKey === "technology") {
-    return escapeHtml(text(pivotTechnologyColumnValue(safePivot)));
-  }
-  if (columnKey === "firmware") {
-    return escapeHtml(text(cloud2.firmware));
-  }
-
-  return "-";
-}
-
-function buildPivotMapPopupHtml(pivot) {
-  const safePivot = pivot || {};
-  ensurePivotTableColumnOrder();
-  const rows = state.pivotTableColumnOrder
-    .map((columnKey) => {
-      const columnDef = PIVOT_TABLE_COLUMNS.find((column) => column.key === columnKey);
-      const label = columnDef ? columnDef.label : columnKey;
-      const valueHtml = mapPopupValueHtml(safePivot, columnKey);
-      return `
-        <div class="map-popup-row">
-          <span class="map-popup-label">${escapeHtml(label)}</span>
-          <span class="map-popup-value">${valueHtml}</span>
-        </div>
-      `;
-    })
-    .join("");
-  return `<div class="map-popup">${rows}</div>`;
-}
-
-function ensurePivotMapReady() {
-  if (!HAS_WINDOW || !HAS_DOM || !ui.pivotMapCanvas) return false;
-  if (!window.L || typeof window.L.map !== "function") return false;
-
-  if (!pivotMapInstance) {
-    pivotMapInstance = window.L.map(ui.pivotMapCanvas, {
-      minZoom: MAP_MIN_ZOOM,
-      maxZoom: MAP_MAX_ZOOM,
-      zoomControl: true,
-      worldCopyJump: true,
-    });
-    window.L.tileLayer(MAP_TILE_URL, { attribution: MAP_TILE_ATTRIBUTION }).addTo(pivotMapInstance);
-    pivotMapMarkerLayer = window.L.layerGroup().addTo(pivotMapInstance);
-    pivotMapInstance.setView(MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM);
-  }
-
-  if (!pivotMapZoomBound) {
-    pivotMapInstance.on("zoomend", () => {
-      if (!state.mapModalOpen) return;
-      renderPivotMapPins();
-    });
-    pivotMapZoomBound = true;
-  }
-  return true;
-}
-
-function mapPivotsSource() {
-  try {
-    const filtered = applyFilterSort();
-    if (Array.isArray(filtered)) return filtered;
-  } catch (err) {
-    // no-op
-  }
-  return Array.isArray(state.pivots) ? state.pivots : [];
-}
-
-function renderPivotMapPins() {
-  if (!state.mapModalOpen) return;
-  if (!ensurePivotMapReady()) return;
-  if (!pivotMapInstance || !pivotMapMarkerLayer || !window.L) return;
-
-  const zoomLevel = Number(pivotMapInstance.getZoom() || MAP_DEFAULT_ZOOM);
-  const pivots = mapPivotsSource();
-  pivotMapMarkerLayer.clearLayers();
-
-  for (const pivot of pivots) {
-    if (!hasValidPivotCoordinates(pivot)) continue;
-    const coordinates = extractPivotCoordinates(pivot);
-    const latitude = Number(coordinates.latitude);
-    const longitude = Number(coordinates.longitude);
-    const quality = getDisplayQuality(pivot);
-    const qualityCode = text(quality.code, "green").trim().toLowerCase();
-    const pinIcon = buildMapPinIcon(qualityCode, zoomLevel);
-    if (!pinIcon) continue;
-
-    const marker = window.L.marker([latitude, longitude], {
-      icon: pinIcon,
-      keyboard: true,
-      title: text((pivot || {}).pivot_id, "pivo"),
-    });
-    marker.bindPopup(buildPivotMapPopupHtml(pivot), {
-      maxWidth: 360,
-      closeButton: false,
-      autoPan: true,
-      className: "pivot-map-popup",
-    });
-    marker.on("mouseover", () => marker.openPopup());
-    marker.addTo(pivotMapMarkerLayer);
-  }
-}
-
-function refreshPivotMapIfOpen() {
-  if (!state.mapModalOpen) return;
-  renderPivotMapPins();
-}
-
-function openPivotMapModal() {
-  if (!ui.pivotMapModal) return;
-  if (!ensurePivotMapReady()) {
-    showToast("Nao foi possivel carregar o mapa agora.", "error", 3600);
-    return;
-  }
-
-  state.mapModalOpen = true;
-  ui.pivotMapModal.hidden = false;
-  document.body.classList.add("map-modal-open");
-  if (pivotMapInstance) {
-    pivotMapInstance.setView(MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM);
-    window.setTimeout(() => {
-      if (!state.mapModalOpen || !pivotMapInstance) return;
-      pivotMapInstance.invalidateSize();
-      renderPivotMapPins();
-    }, 0);
-  }
-}
-
-function closePivotMapModal() {
-  state.mapModalOpen = false;
-  if (ui.pivotMapModal) {
-    ui.pivotMapModal.hidden = true;
-  }
-  document.body.classList.remove("map-modal-open");
-  if (pivotMapInstance) {
-    pivotMapInstance.closePopup();
-  }
 }
 
 function escapeHtml(value) {
@@ -2031,7 +1789,6 @@ function renderCards() {
       state.cardsRenderPageKey = "empty";
       state.cardsRenderSignaturesByPivotId = {};
     }
-    refreshPivotMapIfOpen();
     return;
   }
 
@@ -2051,12 +1808,10 @@ function renderCards() {
   const hasSamePageKey = state.cardsRenderPageKey === pageKey;
 
   if (!(state.cardsRenderIsEmpty || !hasSamePageKey || !hasSamePivotSet || !hasSameSignatures)) {
-    refreshPivotMapIfOpen();
     return;
   }
 
   renderPivotCardsFull(pageItems, pageKey);
-  refreshPivotMapIfOpen();
 }
 
 function renderPivotMetrics(pivot, statusView = null, qualityView = null, connectivityView = null) {
@@ -3953,15 +3708,6 @@ function wireEvents() {
   if (ui.logoutBtn) {
     ui.logoutBtn.addEventListener("click", logoutDashboard);
   }
-  if (ui.openMapBtn) {
-    ui.openMapBtn.addEventListener("click", openPivotMapModal);
-  }
-  if (ui.closeMapBtn) {
-    ui.closeMapBtn.addEventListener("click", closePivotMapModal);
-  }
-  if (ui.pivotMapBackdrop) {
-    ui.pivotMapBackdrop.addEventListener("click", closePivotMapModal);
-  }
 
   if (ui.adminUsersRefresh) {
     ui.adminUsersRefresh.addEventListener("click", refreshAdminUsers);
@@ -4135,12 +3881,6 @@ function wireEvents() {
       return;
     }
     positionConnectivitySegmentCard(selectedEl);
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.mapModalOpen) {
-      closePivotMapModal();
-    }
   });
 }
 
