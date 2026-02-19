@@ -141,6 +141,34 @@ test("sorting: pivots with more samples come first", () => {
   assert.ok(compare > 0);
 });
 
+test("sorting: % conectado ordena do maior para o menor com desempate por pivô", () => {
+  const pivots = [
+    { pivot_id: "B", connected_pct: 70 },
+    { pivot_id: "A", connected_pct: 70 },
+    { pivot_id: "C", connected_pct: 90 },
+  ];
+
+  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b));
+  assert.deepEqual(
+    ordered.map((item) => item.pivot_id),
+    ["C", "A", "B"]
+  );
+});
+
+test("sorting: % desconectado usa fallback 0 sem quebrar o desempate", () => {
+  const pivots = [
+    { pivot_id: "B" },
+    { pivot_id: "A", disconnected_pct: 10 },
+    { pivot_id: "C", disconnected_pct: null },
+  ];
+
+  const ordered = [...pivots].sort((a, b) => _test.compareByDisconnectedPctDesc(a, b));
+  assert.deepEqual(
+    ordered.map((item) => item.pivot_id),
+    ["A", "B", "C"]
+  );
+});
+
 test("sorting: sample count fallback reads nested summary", () => {
   const value = _test.pivotSampleCount({ summary: { median_sample_count: 7 } });
   assert.equal(value, 7);

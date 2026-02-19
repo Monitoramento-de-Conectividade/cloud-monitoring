@@ -1002,6 +1002,8 @@ function applyFilterSort() {
     }
     if (state.sort === "pivot_asc") return ap.localeCompare(bp);
     if (state.sort === "samples_desc") return compareBySamplesDesc(a, b, ap, bp, aActivity, bActivity);
+    if (state.sort === "connected_pct_desc") return compareByConnectedPctDesc(a, b, ap, bp);
+    if (state.sort === "disconnected_pct_desc") return compareByDisconnectedPctDesc(a, b, ap, bp);
 
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
     if (state.sort === "activity_asc") return aActivity - bActivity || ap.localeCompare(bp);
@@ -1097,6 +1099,56 @@ function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(
   const bAct = Number.isFinite(Number(bActivity)) ? Number(bActivity) : Number(b?.last_activity_ts || 0);
   if (aAct !== bAct) return bAct - aAct;
 
+  return ap.localeCompare(bp);
+}
+
+function pivotConnectedPct(item) {
+  const direct = Number((item || {}).connected_pct);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+
+  const nested = Number((((item || {}).summary || {}).connected_pct));
+  if (Number.isFinite(nested) && nested >= 0) return nested;
+
+  return 0;
+}
+
+function pivotDisconnectedPct(item) {
+  const direct = Number((item || {}).disconnected_pct);
+  if (Number.isFinite(direct) && direct >= 0) return direct;
+
+  const directAttention = Number((item || {}).attention_disconnected_pct);
+  if (Number.isFinite(directAttention) && directAttention >= 0) return directAttention;
+
+  const nested = Number((((item || {}).summary || {}).disconnected_pct));
+  if (Number.isFinite(nested) && nested >= 0) return nested;
+
+  const nestedAttention = Number((((item || {}).summary || {}).attention_disconnected_pct));
+  if (Number.isFinite(nestedAttention) && nestedAttention >= 0) return nestedAttention;
+
+  return 0;
+}
+
+function compareByConnectedPctDesc(
+  a,
+  b,
+  ap = String(a?.pivot_id || ""),
+  bp = String(b?.pivot_id || "")
+) {
+  const aPct = pivotConnectedPct(a);
+  const bPct = pivotConnectedPct(b);
+  if (aPct !== bPct) return bPct - aPct;
+  return ap.localeCompare(bp);
+}
+
+function compareByDisconnectedPctDesc(
+  a,
+  b,
+  ap = String(a?.pivot_id || ""),
+  bp = String(b?.pivot_id || "")
+) {
+  const aPct = pivotDisconnectedPct(a);
+  const bPct = pivotDisconnectedPct(b);
+  if (aPct !== bPct) return bPct - aPct;
   return ap.localeCompare(bp);
 }
 
@@ -3631,6 +3683,10 @@ if (typeof module !== "undefined" && module.exports) {
     _test: {
       pivotSampleCount,
       compareBySamplesDesc,
+      pivotConnectedPct,
+      pivotDisconnectedPct,
+      compareByConnectedPctDesc,
+      compareByDisconnectedPctDesc,
       isProbeMonitoringEnabled,
       pivotProbeResponseRatioPct,
       compareByProbeResponseRatioDesc,
