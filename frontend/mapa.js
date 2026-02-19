@@ -90,6 +90,8 @@ const ui = HAS_DOM
       mapCountsMeta: document.getElementById("mapCountsMeta"),
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
+      mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
+      pivotsMapWrap: document.getElementById("pivotsMapWrap"),
       pivotsMapCanvas: document.getElementById("pivotsMapCanvas"),
     }
   : {};
@@ -99,6 +101,7 @@ const state = {
   pivots: [],
   refreshInFlight: false,
   selectedRunId: null,
+  mapFullscreenActive: false,
 };
 
 let mapInstance = null;
@@ -454,6 +457,28 @@ function setStatus(message) {
   ui.mapStatus.textContent = String(message || "").trim();
 }
 
+function applyMapFullscreenState(isActive) {
+  if (!HAS_DOM || !document.body || !ui.pivotsMapWrap) return;
+  state.mapFullscreenActive = !!isActive;
+  document.body.classList.toggle("map-fullscreen-active", state.mapFullscreenActive);
+  if (ui.mapFullscreenBtn) {
+    ui.mapFullscreenBtn.textContent = state.mapFullscreenActive ? "Sair da tela cheia" : "Tela cheia";
+    ui.mapFullscreenBtn.setAttribute("aria-pressed", state.mapFullscreenActive ? "true" : "false");
+    ui.mapFullscreenBtn.setAttribute(
+      "aria-label",
+      state.mapFullscreenActive ? "Sair da tela cheia do mapa" : "Expandir mapa para tela cheia"
+    );
+  }
+  window.setTimeout(() => {
+    if (!mapInstance) return;
+    mapInstance.invalidateSize();
+  }, 0);
+}
+
+function toggleMapFullscreen() {
+  applyMapFullscreenState(!state.mapFullscreenActive);
+}
+
 function renderHeader(payload) {
   const safePayload = payload && typeof payload === "object" ? payload : {};
   const counts = safePayload.counts && typeof safePayload.counts === "object" ? safePayload.counts : {};
@@ -602,16 +627,27 @@ async function boot() {
   if (!HAS_DOM) return;
   if (!(await ensureAuthenticated())) return;
   if (!ensureMapReady()) return;
+  applyMapFullscreenState(false);
 
   if (ui.mapRefreshBtn) {
     ui.mapRefreshBtn.addEventListener("click", () => {
       void refreshMapData();
     });
   }
+  if (ui.mapFullscreenBtn) {
+    ui.mapFullscreenBtn.addEventListener("click", () => {
+      toggleMapFullscreen();
+    });
+  }
 
   window.addEventListener("resize", () => {
     if (!mapInstance) return;
     mapInstance.invalidateSize();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!state.mapFullscreenActive) return;
+    applyMapFullscreenState(false);
   });
 
   await refreshMapData();

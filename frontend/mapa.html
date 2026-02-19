@@ -36,12 +36,15 @@
         <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
       </div>
       <p id="mapStatus" class="hint">Carregando dados...</p>
-      <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
+      <div id="pivotsMapWrap" class="pivots-map-wrap">
+        <button id="mapFullscreenBtn" class="ghost map-fullscreen-btn" type="button" aria-pressed="false">Tela cheia</button>
+        <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
+      </div>
     </section>
   </main>
 
   <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="mapa.js?v=20260219a"></script>
+  <script src="mapa.js?v=20260219b"></script>
 </body>
 </html>
