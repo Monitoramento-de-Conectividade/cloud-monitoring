@@ -568,6 +568,54 @@ class TelemetryPersistence:
             parsed = bool(_safe_int(row["is_concentrator"], 0) or 0)
         return bool(parsed)
 
+    def set_pivot_coordinates(self, pivot_id, latitude, longitude, pivot_slug=None, seen_ts=None):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return {"latitude": None, "longitude": None}
+
+        normalized_slug = str(pivot_slug or slugify(normalized_id))
+        lat_value = _safe_float(latitude, None)
+        lon_value = _safe_float(longitude, None)
+        with self._lock:
+            conn = self._require_conn_locked()
+            self._upsert_pivot_locked(conn, normalized_id, normalized_slug, seen_ts=seen_ts)
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE pivots
+                    SET
+                        latitude = ?,
+                        longitude = ?,
+                        updated_at_ts = ?
+                    WHERE pivot_id = ?
+                    """,
+                    (lat_value, lon_value, time.time(), normalized_id),
+                )
+        return {"latitude": lat_value, "longitude": lon_value}
+
+    def get_pivot_coordinates(self, pivot_id):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return {"latitude": None, "longitude": None}
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            row = conn.execute(
+                """
+                SELECT latitude, longitude
+                FROM pivots
+                WHERE pivot_id = ?
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+        if row is None:
+            return {"latitude": None, "longitude": None}
+        return {
+            "latitude": _safe_float(row["latitude"], None),
+            "longitude": _safe_float(row["longitude"], None),
+        }
+
     def _query_run_row_locked(self, conn, run_id=None):
         normalized_run = str(run_id or "").strip()
         if normalized_run:
@@ -2226,6 +2274,8 @@ class TelemetryPersistence:
             "session_id": str(session_id or ""),
             "run_id": str(run_id or ""),
             "is_concentrator": False,
+            "latitude": None,
+            "longitude": None,
             "status": {
                 "code": "gray",
                 "label": "Inicial",
@@ -2305,6 +2355,16 @@ class TelemetryPersistence:
             item.pop("is_concentrator", None)
         else:
             item["is_concentrator"] = parsed
+        parsed = _safe_float(item.get("latitude"), None)
+        if parsed is None:
+            item.pop("latitude", None)
+        else:
+            item["latitude"] = parsed
+        parsed = _safe_float(item.get("longitude"), None)
+        if parsed is None:
+            item.pop("longitude", None)
+        else:
+            item["longitude"] = parsed
 
         parsed = _safe_bool(item.get("median_ready"), None)
         if parsed is None:
@@ -2349,6 +2409,12 @@ class TelemetryPersistence:
             if parsed is None:
                 parsed = bool(_safe_int(row["pivot_is_concentrator"], 0) or 0)
             item["is_concentrator"] = bool(parsed)
+        if "pivot_latitude" in row_keys:
+            parsed = _safe_float(row["pivot_latitude"], None)
+            item["latitude"] = parsed
+        if "pivot_longitude" in row_keys:
+            parsed = _safe_float(row["pivot_longitude"], None)
+            item["longitude"] = parsed
 
         if "median_ready" not in item:
             item["median_ready"] = False
@@ -2356,6 +2422,10 @@ class TelemetryPersistence:
             item["median_sample_count"] = 0
         if "is_concentrator" not in item:
             item["is_concentrator"] = False
+        if "latitude" not in item:
+            item["latitude"] = None
+        if "longitude" not in item:
+            item["longitude"] = None
 
         if not isinstance(item.get("status"), dict):
             item["status"] = {
@@ -2402,6 +2472,8 @@ class TelemetryPersistence:
                     sessions.session_id,
                     sessions.updated_at_ts AS session_updated_at_ts,
                     COALESCE(pivots.is_concentrator, 0) AS pivot_is_concentrator,
+                    pivots.latitude AS pivot_latitude,
+                    pivots.longitude AS pivot_longitude,
                     snapshots.snapshot_json,
                     snapshots.median_ready AS snapshot_median_ready,
                     snapshots.median_sample_count AS snapshot_median_sample_count,
@@ -2494,6 +2566,8 @@ class TelemetryPersistence:
                     sessions.session_id,
                     sessions.updated_at_ts AS session_updated_at_ts,
                     COALESCE(pivots.is_concentrator, 0) AS pivot_is_concentrator,
+                    pivots.latitude AS pivot_latitude,
+                    pivots.longitude AS pivot_longitude,
                     snapshots.snapshot_json,
                     snapshots.median_ready AS snapshot_median_ready,
                     snapshots.median_sample_count AS snapshot_median_sample_count,
@@ -2598,7 +2672,10 @@ class TelemetryPersistence:
             ).fetchone()
             pivot_row = conn.execute(
                 """
-                SELECT COALESCE(is_concentrator, 0) AS is_concentrator
+                SELECT
+                    COALESCE(is_concentrator, 0) AS is_concentrator,
+                    latitude,
+                    longitude
                 FROM pivots
                 WHERE pivot_id = ?
                 LIMIT 1
@@ -2606,11 +2683,15 @@ class TelemetryPersistence:
                 (normalized_id,),
             ).fetchone()
             pivot_is_concentrator = False
+            pivot_latitude = None
+            pivot_longitude = None
             if pivot_row is not None:
                 parsed = _safe_bool(pivot_row["is_concentrator"], None)
                 if parsed is None:
                     parsed = bool(_safe_int(pivot_row["is_concentrator"], 0) or 0)
                 pivot_is_concentrator = bool(parsed)
+                pivot_latitude = _safe_float(pivot_row["latitude"], None)
+                pivot_longitude = _safe_float(pivot_row["longitude"], None)
 
         payload = {}
         if snapshot_row is not None:
@@ -2684,6 +2765,10 @@ class TelemetryPersistence:
         )
         summary["probe"] = probe_summary
         summary["is_concentrator"] = bool(pivot_is_concentrator)
+        summary["latitude"] = pivot_latitude
+        summary["longitude"] = pivot_longitude
         payload["summary"] = summary
         payload["is_concentrator"] = bool(pivot_is_concentrator)
+        payload["latitude"] = pivot_latitude
+        payload["longitude"] = pivot_longitude
         return payload

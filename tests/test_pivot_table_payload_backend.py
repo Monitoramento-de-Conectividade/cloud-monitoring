@@ -6,6 +6,67 @@ from backend.cloudv2_persistence import TelemetryPersistence
 
 
 class PivotTablePayloadTests(unittest.TestCase):
+    def test_coordinates_are_persisted_and_exposed_in_state_and_panel(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                pivot_id = "PivotCoords_1"
+                base_ts = 1_700_200_000.0
+
+                run = persistence.get_or_create_active_run(now_ts=base_ts, source="test")
+                session = persistence.get_or_create_active_session(
+                    pivot_id,
+                    pivot_slug="pivotcoords-1",
+                    now_ts=base_ts,
+                    source="test",
+                    run_id=run["run_id"],
+                )
+                session_id = session["session_id"]
+
+                persistence.upsert_snapshot(
+                    pivot_id,
+                    session_id,
+                    {
+                        "pivot_id": pivot_id,
+                        "session_id": session_id,
+                        "run_id": run["run_id"],
+                        "updated_at_ts": base_ts + 1,
+                        "summary": {
+                            "status": {"code": "green"},
+                            "quality": {"code": "green"},
+                        },
+                    },
+                    updated_at_ts=base_ts + 1,
+                )
+
+                persistence.set_pivot_coordinates(
+                    pivot_id,
+                    latitude=-22.254261055861843,
+                    longitude=-45.71657037699047,
+                    pivot_slug="pivotcoords-1",
+                    seen_ts=base_ts,
+                )
+
+                state_payload = persistence.get_run_state_payload(run_id=run["run_id"])
+                self.assertIsNotNone(state_payload)
+                self.assertEqual(len(state_payload["pivots"]), 1)
+                state_item = state_payload["pivots"][0]
+                self.assertAlmostEqual(float(state_item["latitude"]), -22.254261055861843)
+                self.assertAlmostEqual(float(state_item["longitude"]), -45.71657037699047)
+
+                panel_payload = persistence.get_panel_payload(
+                    pivot_id,
+                    session_id=session_id,
+                    run_id=run["run_id"],
+                )
+                self.assertIsNotNone(panel_payload)
+                self.assertAlmostEqual(float(panel_payload["summary"]["latitude"]), -22.254261055861843)
+                self.assertAlmostEqual(float(panel_payload["summary"]["longitude"]), -45.71657037699047)
+            finally:
+                persistence.stop()
+
     def test_run_state_payload_exposes_signal_technology_and_timeline_mini(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "telemetry.sqlite3")

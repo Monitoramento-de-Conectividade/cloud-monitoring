@@ -90,8 +90,12 @@ const ui = HAS_DOM
       pivotQuality: document.getElementById("pivotQuality"),
       deletePivotBtn: document.getElementById("deletePivotBtn"),
       pivotAdminTech: document.getElementById("pivotAdminTech"),
+      pivotTechControls: document.getElementById("pivotTechControls"),
       pivotConcentratorToggle: document.getElementById("pivotConcentratorToggle"),
       savePivotTechnologyBtn: document.getElementById("savePivotTechnologyBtn"),
+      pivotLocationInput: document.getElementById("pivotLocationInput"),
+      savePivotLocationBtn: document.getElementById("savePivotLocationBtn"),
+      pivotLocationHint: document.getElementById("pivotLocationHint"),
       pivotTechnologyHint: document.getElementById("pivotTechnologyHint"),
       pivotMoreInfoBtn: document.getElementById("pivotMoreInfoBtn"),
       pivotMetrics: document.getElementById("pivotMetrics"),
@@ -629,6 +633,61 @@ function formatDateTimeValue(value) {
     second: "2-digit",
     hour12: false,
   });
+}
+
+function extractPivotCoordinates(pivot) {
+  const safePivot = pivot || {};
+  const summary = safePivot.summary && typeof safePivot.summary === "object" ? safePivot.summary : {};
+  const latitudeCandidates = [summary.latitude, safePivot.latitude];
+  const longitudeCandidates = [summary.longitude, safePivot.longitude];
+
+  let latitude = null;
+  let longitude = null;
+  for (const candidate of latitudeCandidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed)) {
+      latitude = parsed;
+      break;
+    }
+  }
+  for (const candidate of longitudeCandidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed)) {
+      longitude = parsed;
+      break;
+    }
+  }
+  return { latitude, longitude };
+}
+
+function formatPivotCoordinates(latitude, longitude) {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return "";
+  return `${lat}, ${lon}`;
+}
+
+function parsePivotCoordinatesInput(value) {
+  const textValue = String(value || "").trim();
+  if (!textValue) {
+    return { ok: false, error: "Informe latitude e longitude no formato: latitude, longitude." };
+  }
+  const parts = textValue.split(",");
+  if (parts.length !== 2) {
+    return { ok: false, error: "Formato inválido. Use: latitude, longitude." };
+  }
+  const latitude = Number(parts[0].trim());
+  const longitude = Number(parts[1].trim());
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return { ok: false, error: "Latitude/longitude inválidas." };
+  }
+  if (latitude < -90 || latitude > 90) {
+    return { ok: false, error: "Latitude deve estar entre -90 e 90." };
+  }
+  if (longitude < -180 || longitude > 180) {
+    return { ok: false, error: "Longitude deve estar entre -180 e 180." };
+  }
+  return { ok: true, latitude, longitude };
 }
 
 function escapeHtml(value) {
@@ -2883,6 +2942,14 @@ function renderPivotView() {
   if (ui.pivotConcentratorToggle) {
     ui.pivotConcentratorToggle.checked = isPivotConcentrator(pivot);
   }
+  const coordinates = extractPivotCoordinates(pivot);
+  const coordinatesText = formatPivotCoordinates(coordinates.latitude, coordinates.longitude);
+  if (ui.pivotLocationInput) {
+    ui.pivotLocationInput.value = coordinatesText;
+  }
+  if (ui.pivotLocationHint) {
+    ui.pivotLocationHint.textContent = coordinatesText ? "" : "Localização não configurada.";
+  }
   if (ui.pivotTechnologyHint) {
     ui.pivotTechnologyHint.textContent = "";
   }
@@ -3236,15 +3303,36 @@ function canCurrentUserManagePivotTechnology() {
 }
 
 function syncPivotTechnologyControl() {
-  if (!ui.pivotAdminTech || !ui.pivotConcentratorToggle || !ui.savePivotTechnologyBtn) return;
+  if (!ui.pivotAdminTech) return;
   const allowed = canCurrentUserManagePivotTechnology();
   const hasPivotSelected = !!String(state.selectedPivot || "").trim();
-  ui.pivotAdminTech.hidden = !allowed || !hasPivotSelected;
-  const disableControl = !allowed || !hasPivotSelected;
-  ui.pivotConcentratorToggle.disabled = disableControl;
-  ui.savePivotTechnologyBtn.disabled = disableControl;
-  if (ui.pivotTechnologyHint && disableControl) {
+  ui.pivotAdminTech.hidden = !hasPivotSelected;
+
+  const disableTechControl = !allowed || !hasPivotSelected;
+  if (ui.pivotTechControls) {
+    ui.pivotTechControls.hidden = !allowed;
+  }
+  if (ui.pivotConcentratorToggle) {
+    ui.pivotConcentratorToggle.disabled = disableTechControl;
+  }
+  if (ui.savePivotTechnologyBtn) {
+    ui.savePivotTechnologyBtn.disabled = disableTechControl;
+  }
+
+  if (ui.pivotLocationInput) {
+    ui.pivotLocationInput.disabled = !hasPivotSelected;
+    ui.pivotLocationInput.readOnly = !allowed;
+  }
+  if (ui.savePivotLocationBtn) {
+    ui.savePivotLocationBtn.hidden = !allowed;
+    ui.savePivotLocationBtn.disabled = !allowed || !hasPivotSelected;
+  }
+
+  if (ui.pivotTechnologyHint && disableTechControl) {
     ui.pivotTechnologyHint.textContent = "";
+  }
+  if (ui.pivotLocationHint && !hasPivotSelected) {
+    ui.pivotLocationHint.textContent = "";
   }
 }
 
@@ -3285,6 +3373,54 @@ async function savePivotTechnologySetting() {
     showToast("Não foi possível salvar a tecnologia do pivô.", "error", 4200);
   } finally {
     if (ui.savePivotTechnologyBtn) ui.savePivotTechnologyBtn.disabled = false;
+  }
+}
+
+async function savePivotLocationSetting() {
+  if (!canCurrentUserManagePivotTechnology()) {
+    syncPivotTechnologyControl();
+    showToast("Apenas o administrador principal pode alterar a localização do pivô.", "error", 3800);
+    return;
+  }
+
+  const pivotId = String(state.selectedPivot || "").trim();
+  if (!pivotId || !ui.pivotLocationInput) return;
+
+  const parsed = parsePivotCoordinatesInput(ui.pivotLocationInput.value);
+  if (!parsed.ok) {
+    if (ui.pivotLocationHint) ui.pivotLocationHint.textContent = parsed.error;
+    showToast(parsed.error, "error", 3800);
+    return;
+  }
+
+  if (ui.savePivotLocationBtn) ui.savePivotLocationBtn.disabled = true;
+  try {
+    const response = await fetch(buildApiUrl("/api/pivot-location"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_id: pivotId,
+        latitude: parsed.latitude,
+        longitude: parsed.longitude,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+    if (ui.pivotLocationHint) {
+      ui.pivotLocationHint.textContent = "Localização atualizada com sucesso.";
+    }
+    showToast("Localização do pivô salva com sucesso.", "success", 3200);
+    await refreshAll();
+  } catch (err) {
+    if (ui.pivotLocationHint) {
+      ui.pivotLocationHint.textContent = "Não foi possível salvar a localização. Tente novamente.";
+    }
+    showToast("Não foi possível salvar a localização do pivô.", "error", 4200);
+  } finally {
+    if (ui.savePivotLocationBtn) ui.savePivotLocationBtn.disabled = false;
   }
 }
 
@@ -3620,6 +3756,9 @@ function wireEvents() {
   }
   if (ui.savePivotTechnologyBtn) {
     ui.savePivotTechnologyBtn.addEventListener("click", savePivotTechnologySetting);
+  }
+  if (ui.savePivotLocationBtn) {
+    ui.savePivotLocationBtn.addEventListener("click", savePivotLocationSetting);
   }
   ui.saveProbe.addEventListener("click", saveProbeSetting);
 

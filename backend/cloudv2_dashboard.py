@@ -1097,6 +1097,41 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"ok": True, "updated": updated})
                 return
 
+            if path == "/api/pivot-location":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode alterar a localizacao do pivo.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                pivot_id = str(body.get("pivot_id", "")).strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+
+                try:
+                    updated = telemetry_store.update_pivot_coordinates(
+                        pivot_id,
+                        latitude=body.get("latitude"),
+                        longitude=body.get("longitude"),
+                    )
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                self._write_json(200, {"ok": True, "updated": updated})
+                return
+
             if path != "/api/probe-config":
                 self._write_json(404, {"error": "rota nao encontrada"})
                 return

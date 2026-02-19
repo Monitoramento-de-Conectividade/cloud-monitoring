@@ -1721,6 +1721,53 @@ class TelemetryStore:
             "is_concentrator": bool(persisted_flag),
         }
 
+    def update_pivot_coordinates(self, pivot_id, latitude, longitude):
+        normalized_pivot = str(pivot_id or "").strip()
+        if not normalized_pivot:
+            raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized_pivot):
+            raise ValueError("pivot_id invalido")
+
+        normalized_lat = _safe_float(latitude, None)
+        normalized_lon = _safe_float(longitude, None)
+        if normalized_lat is None or normalized_lon is None:
+            raise ValueError("latitude e longitude obrigatorias")
+        if normalized_lat < -90 or normalized_lat > 90:
+            raise ValueError("latitude invalida")
+        if normalized_lon < -180 or normalized_lon > 180:
+            raise ValueError("longitude invalida")
+
+        with self._lock:
+            persisted = self.persistence.set_pivot_coordinates(
+                normalized_pivot,
+                normalized_lat,
+                normalized_lon,
+                pivot_slug=slugify(normalized_pivot),
+                seen_ts=time.time(),
+            )
+            pivot = self.pivots.get(normalized_pivot)
+            if pivot is not None:
+                pivot["latitude"] = _safe_float(persisted.get("latitude"), None)
+                pivot["longitude"] = _safe_float(persisted.get("longitude"), None)
+                now_ts = time.time()
+                self._refresh_status_locked(pivot, now_ts)
+                self._persist_pivot_snapshot_locked(pivot, now_ts)
+
+            self._dirty = True
+            self._invalidate_api_caches_locked()
+
+        self.log.info(
+            "Coordenadas atualizadas: pivot_id=%s latitude=%s longitude=%s",
+            normalized_pivot,
+            normalized_lat,
+            normalized_lon,
+        )
+        return {
+            "pivot_id": normalized_pivot,
+            "latitude": _safe_float(persisted.get("latitude"), None),
+            "longitude": _safe_float(persisted.get("longitude"), None),
+        }
+
     def _background_loop(self):
         while not self._stop_event.is_set():
             now = time.time()
@@ -1834,7 +1881,16 @@ class TelemetryStore:
             "total_sample_count": len(cleaned),
         }
 
-    def _new_pivot_state(self, pivot_id, discovered_ts, session_id=None, run_id=None, is_concentrator=False):
+    def _new_pivot_state(
+        self,
+        pivot_id,
+        discovered_ts,
+        session_id=None,
+        run_id=None,
+        is_concentrator=False,
+        latitude=None,
+        longitude=None,
+    ):
         probe_setting = self._probe_settings.get(pivot_id, {})
         probe_enabled = bool(probe_setting.get("enabled", False))
         probe_interval = _safe_int(probe_setting.get("interval_sec"), self.probe_default_interval_sec)
@@ -1849,6 +1905,8 @@ class TelemetryStore:
             "session_id": session_id,
             "run_id": run_id,
             "is_concentrator": bool(is_concentrator),
+            "latitude": _safe_float(latitude, None),
+            "longitude": _safe_float(longitude, None),
             "discovered_at_ts": discovered_ts,
             "last_seen_ts": discovered_ts,
             "last_ping_ts": None,
@@ -1906,6 +1964,15 @@ class TelemetryStore:
             if parsed_flag is not None and bool(pivot.get("is_concentrator")) != bool(parsed_flag):
                 pivot["is_concentrator"] = bool(parsed_flag)
                 changed = True
+
+        baseline_latitude = _safe_float(summary.get("latitude"), None)
+        baseline_longitude = _safe_float(summary.get("longitude"), None)
+        if baseline_latitude is not None and _safe_float(pivot.get("latitude"), None) is None:
+            pivot["latitude"] = baseline_latitude
+            changed = True
+        if baseline_longitude is not None and _safe_float(pivot.get("longitude"), None) is None:
+            pivot["longitude"] = baseline_longitude
+            changed = True
 
         baseline_last_ping_ts = _safe_float(summary.get("last_ping_ts"), None)
         baseline_last_cloudv2_ts = _safe_float(summary.get("last_cloudv2_ts"), None)
@@ -2069,6 +2136,21 @@ class TelemetryStore:
         except RuntimeError:
             return False
 
+    def _load_pivot_coordinates_locked(self, pivot_id):
+        normalized_pivot_id = str(pivot_id or "").strip()
+        if not normalized_pivot_id:
+            return {"latitude": None, "longitude": None}
+        try:
+            coordinates = self.persistence.get_pivot_coordinates(normalized_pivot_id)
+        except RuntimeError:
+            coordinates = None
+        if not isinstance(coordinates, dict):
+            return {"latitude": None, "longitude": None}
+        return {
+            "latitude": _safe_float(coordinates.get("latitude"), None),
+            "longitude": _safe_float(coordinates.get("longitude"), None),
+        }
+
     def _get_or_create_pivot_locked(self, pivot_id, ts):
         pivot = self.pivots.get(pivot_id)
         if pivot is not None:
@@ -2078,16 +2160,27 @@ class TelemetryStore:
                 pivot["run_id"] = self._active_run_id
             if "is_concentrator" not in pivot:
                 pivot["is_concentrator"] = self._load_pivot_concentrator_flag_locked(pivot_id)
+            missing_latitude = "latitude" not in pivot or _safe_float(pivot.get("latitude"), None) is None
+            missing_longitude = "longitude" not in pivot or _safe_float(pivot.get("longitude"), None) is None
+            if missing_latitude or missing_longitude:
+                coordinates = self._load_pivot_coordinates_locked(pivot_id)
+                if missing_latitude:
+                    pivot["latitude"] = coordinates["latitude"]
+                if missing_longitude:
+                    pivot["longitude"] = coordinates["longitude"]
             return pivot
 
         session_id = self._ensure_active_session_locked(pivot_id, ts, source="auto_discovery")
         is_concentrator = self._load_pivot_concentrator_flag_locked(pivot_id)
+        coordinates = self._load_pivot_coordinates_locked(pivot_id)
         pivot = self._new_pivot_state(
             pivot_id,
             ts,
             session_id=session_id,
             run_id=self._active_run_id,
             is_concentrator=is_concentrator,
+            latitude=coordinates["latitude"],
+            longitude=coordinates["longitude"],
         )
         baseline_summary = self._load_pivot_baseline_from_persistence_locked(pivot_id)
         if isinstance(baseline_summary, dict):
@@ -3281,6 +3374,8 @@ class TelemetryStore:
             "session_id": pivot.get("session_id"),
             "run_id": pivot.get("run_id"),
             "is_concentrator": is_concentrator,
+            "latitude": _safe_float(pivot.get("latitude"), None),
+            "longitude": _safe_float(pivot.get("longitude"), None),
             "flags": {
                 "online": status["online"],
                 "offline": status["offline"],
@@ -3506,6 +3601,19 @@ class TelemetryStore:
                             pivot["is_concentrator"] = True
                         elif normalized_flag in ("0", "false", "no", "nao", "não"):
                             pivot["is_concentrator"] = False
+
+                    raw_latitude = _safe_float(raw_pivot.get("latitude"), None)
+                    raw_longitude = _safe_float(raw_pivot.get("longitude"), None)
+                    if raw_latitude is not None:
+                        pivot["latitude"] = raw_latitude
+                    if raw_longitude is not None:
+                        pivot["longitude"] = raw_longitude
+                    if raw_latitude is None or raw_longitude is None:
+                        persisted_coordinates = self._load_pivot_coordinates_locked(normalized_pivot_id)
+                        if raw_latitude is None:
+                            pivot["latitude"] = persisted_coordinates["latitude"]
+                        if raw_longitude is None:
+                            pivot["longitude"] = persisted_coordinates["longitude"]
 
                     for field in (
                         "last_seen_ts",

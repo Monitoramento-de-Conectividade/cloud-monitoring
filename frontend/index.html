@@ -183,11 +183,24 @@
       </div>
 
       <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
-        <label class="toggle">
-          <input id="pivotConcentratorToggle" type="checkbox"/>
-          <span>Marcar este pivô como concentrador</span>
+        <div class="pivot-tech-controls" id="pivotTechControls">
+          <label class="toggle">
+            <input id="pivotConcentratorToggle" type="checkbox"/>
+            <span>Marcar este pivô como concentrador</span>
+          </label>
+          <button id="savePivotTechnologyBtn" class="primary" type="button">Salvar tecnologia</button>
+        </div>
+        <label class="field compact pivot-location-field">
+          <span>Latitude, Longitude</span>
+          <input
+            id="pivotLocationInput"
+            type="text"
+            placeholder="Ex.: -22.254261055861843, -45.71657037699047"
+            autocomplete="off"
+          />
         </label>
-        <button id="savePivotTechnologyBtn" class="primary" type="button">Salvar tecnologia</button>
+        <button id="savePivotLocationBtn" class="primary" type="button">Salvar localização</button>
+        <span id="pivotLocationHint" class="hint-text" aria-live="polite"></span>
         <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
       </div>
 
@@ -402,6 +415,6 @@
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
   <script src="runtime-config.js"></script>
-  <script src="dashboard.js?v=20260219a"></script>
+  <script src="dashboard.js?v=20260219b"></script>
 </body>
 </html>

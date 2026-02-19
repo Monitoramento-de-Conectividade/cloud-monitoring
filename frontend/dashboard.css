@@ -816,6 +816,17 @@ a:focus {
   gap: 10px;
 }
 
+.pivot-tech-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.pivot-location-field {
+  min-width: min(100%, 420px);
+}
+
 .hint-text {
   color: var(--muted);
   font-size: 12px;
