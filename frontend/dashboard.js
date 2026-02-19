@@ -187,6 +187,7 @@ const state = {
   statusOverridesByPivotId: {},
   qualitySourceSignatureByPivotId: {},
   connectivitySummaryByPivotId: {},
+  connectivityMiniSegmentsByPivotId: {},
   qualityOverridesLastRefreshMs: 0,
   qualityOverrideRefreshIntervalMs: 45000,
   qualityOverrideMaxConcurrency: 3,
@@ -420,9 +421,46 @@ function normalizeTimelineMiniSegments(rawSegments) {
   }));
 }
 
-function buildTimelineMiniHtml(item) {
+function buildTimelineMiniSegmentsFromConnectivity(segments, durationSec) {
+  const safeDurationSec = Math.max(1, Number(durationSec || 0));
+  const raw = [];
+  for (const segment of segments || []) {
+    if (!segment || typeof segment !== "object") continue;
+    const state = segment.state === "connected" ? "online" : "offline";
+    const duration = Math.max(0, Number(segment.duration || 0));
+    if (!Number.isFinite(duration) || duration <= 0) continue;
+    const ratio = duration / safeDurationSec;
+    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+    raw.push({ state, ratio });
+  }
+  if (!raw.length) return [];
+
+  const merged = [];
+  for (const segment of raw) {
+    const last = merged[merged.length - 1];
+    if (last && last.state === segment.state) {
+      last.ratio += segment.ratio;
+    } else {
+      merged.push({ state: segment.state, ratio: segment.ratio });
+    }
+  }
+  return normalizeTimelineMiniSegments(merged);
+}
+
+function resolvePivotTimelineMiniSegments(item) {
   const safePivot = item || {};
-  const segments = normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini);
+  const pivotId = text(safePivot.pivot_id, "").trim();
+  if (pivotId) {
+    const computed = state.connectivityMiniSegmentsByPivotId[pivotId];
+    if (Array.isArray(computed) && computed.length) {
+      return normalizeTimelineMiniSegments(computed);
+    }
+  }
+  return normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini);
+}
+
+function buildTimelineMiniHtml(item) {
+  const segments = resolvePivotTimelineMiniSegments(item);
   if (!segments.length) {
     return `
       <div class="pivot-timeline-mini empty" aria-hidden="true">
@@ -1323,7 +1361,7 @@ function buildPivotCardSignature(pivot) {
   const status = getDisplayStatus(safePivot);
   const quality = getDisplayQuality(safePivot);
   const cloud2 = safePivot.last_cloud2 || {};
-  const timelineSegments = normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini)
+  const timelineSegments = resolvePivotTimelineMiniSegments(safePivot)
     .map((segment) => `${segment.state}:${segment.ratio.toFixed(4)}`)
     .join(",");
   return [
@@ -2816,6 +2854,10 @@ function renderPivotView() {
       connectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.connectedPct || 0)))),
       disconnectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.disconnectedPct || 0)))),
     };
+    state.connectivityMiniSegmentsByPivotId[pivotId] = buildTimelineMiniSegmentsFromConnectivity(
+      connectivityView.segments,
+      connectivityView.durationSec
+    );
   }
 
   ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivô");
@@ -2905,6 +2947,11 @@ async function refreshState(options = {}) {
       delete state.connectivitySummaryByPivotId[pivotId];
     }
   }
+  for (const pivotId of Object.keys(state.connectivityMiniSegmentsByPivotId)) {
+    if (!currentPivotIds.has(pivotId)) {
+      delete state.connectivityMiniSegmentsByPivotId[pivotId];
+    }
+  }
   if (Array.isArray(state.visiblePivotIds) && state.visiblePivotIds.length) {
     state.visiblePivotIds = state.visiblePivotIds.filter((pivotId) => currentPivotIds.has(String(pivotId || "").trim()));
   }
@@ -2973,6 +3020,7 @@ async function refreshQualityOverrides(options = {}) {
     state.statusOverridesByPivotId = {};
     state.qualitySourceSignatureByPivotId = {};
     state.connectivitySummaryByPivotId = {};
+    state.connectivityMiniSegmentsByPivotId = {};
     state.qualityOverridesLastRefreshMs = Date.now();
     return;
   }
@@ -2990,11 +3038,12 @@ async function refreshQualityOverrides(options = {}) {
     const hasQuality = Object.prototype.hasOwnProperty.call(state.qualityOverridesByPivotId, pivotId);
     const hasStatus = Object.prototype.hasOwnProperty.call(state.statusOverridesByPivotId, pivotId);
     const hasConnectivity = Object.prototype.hasOwnProperty.call(state.connectivitySummaryByPivotId, pivotId);
+    const hasMiniTimeline = Object.prototype.hasOwnProperty.call(state.connectivityMiniSegmentsByPivotId, pivotId);
     const previousSignature = state.qualitySourceSignatureByPivotId[pivotId];
     pivotMetaById.set(pivotId, {
       signature,
       changed: signature !== previousSignature,
-      missing: !(hasQuality && hasStatus && hasConnectivity),
+      missing: !(hasQuality && hasStatus && hasConnectivity && hasMiniTimeline),
     });
   }
 
@@ -3045,6 +3094,7 @@ async function refreshQualityOverrides(options = {}) {
   const nextStatusOverrides = { ...state.statusOverridesByPivotId };
   const nextSignatures = { ...state.qualitySourceSignatureByPivotId };
   const nextConnectivitySummaryByPivotId = { ...state.connectivitySummaryByPivotId };
+  const nextConnectivityMiniSegmentsByPivotId = { ...state.connectivityMiniSegmentsByPivotId };
   let qualityPayload = null;
   try {
     qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
@@ -3079,6 +3129,10 @@ async function refreshQualityOverrides(options = {}) {
       connectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.connectedPct || 0)))),
       disconnectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.disconnectedPct || 0)))),
     };
+    nextConnectivityMiniSegmentsByPivotId[pivotId] = buildTimelineMiniSegmentsFromConnectivity(
+      view.segments,
+      view.durationSec
+    );
     const meta = pivotMetaById.get(pivotId);
     if (meta) {
       nextSignatures[pivotId] = meta.signature;
@@ -3091,6 +3145,7 @@ async function refreshQualityOverrides(options = {}) {
   state.statusOverridesByPivotId = nextStatusOverrides;
   state.qualitySourceSignatureByPivotId = nextSignatures;
   state.connectivitySummaryByPivotId = nextConnectivitySummaryByPivotId;
+  state.connectivityMiniSegmentsByPivotId = nextConnectivityMiniSegmentsByPivotId;
   state.qualityOverridesLastRefreshMs = nowMs;
   if (!skipRender) {
     renderStatusSummary();
@@ -3751,6 +3806,7 @@ if (typeof module !== "undefined" && module.exports) {
       pivotSignalValue,
       pivotTechnologyColumnValue,
       normalizeTimelineMiniSegments,
+      buildTimelineMiniSegmentsFromConnectivity,
       normalizePivotTableColumnOrder,
       expandPivotTableColumnOrderKey,
       buildQualitySourceSignature,

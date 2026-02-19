@@ -323,3 +323,19 @@ test("ui: timeline mini normaliza segmentos inválidos e mantém soma positiva",
   const total = segments.reduce((acc, item) => acc + item.ratio, 0);
   assert.ok(total > 0.99 && total < 1.01);
 });
+
+test("ui: timeline mini derivada da conectividade espelha segmentos connected/disconnected", () => {
+  const segments = _test.buildTimelineMiniSegmentsFromConnectivity(
+    [
+      { state: "connected", duration: 30 },
+      { state: "connected", duration: 10 },
+      { state: "disconnected", duration: 60 },
+    ],
+    100
+  );
+
+  assert.deepEqual(segments, [
+    { state: "online", ratio: 0.4 },
+    { state: "offline", ratio: 0.6 },
+  ]);
+});
