@@ -704,10 +704,9 @@ function renderMapMarkers() {
     });
     marker.bindPopup(buildPopupHtml(pivot), {
       maxWidth: 360,
-      closeButton: false,
+      closeButton: true,
       autoPan: true,
     });
-    marker.on("mouseover", () => marker.openPopup());
     marker.addTo(markerLayer);
     markerCount += 1;
   }

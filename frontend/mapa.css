@@ -213,6 +213,15 @@
   margin: 10px 12px;
 }
 
+.leaflet-popup-close-button {
+  width: 18px !important;
+  height: 18px !important;
+  padding: 0 3px !important;
+  font-size: 16px !important;
+  line-height: 18px !important;
+  color: #567767 !important;
+}
+
 .map-popup {
   min-width: 250px;
   max-width: 330px;
