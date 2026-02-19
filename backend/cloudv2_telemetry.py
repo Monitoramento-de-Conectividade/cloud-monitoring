@@ -827,7 +827,7 @@ class TelemetryStore:
         try:
             payload = self.persistence.get_quality_cards_payload(
                 run_id=normalized_run,
-                timeline_limit=self.max_events_per_pivot_list,
+                timeline_limit=self.max_events_per_pivot_panel,
             )
         except RuntimeError:
             payload = None
@@ -867,7 +867,7 @@ class TelemetryStore:
                                 }
                                 for event in (pivot_payload.get("timeline") or [])
                                 if isinstance(event, dict)
-                            ][-self.max_events_per_pivot_list :]
+                            ][-self.max_events_per_pivot_panel :]
                         ),
                     }
                 )

@@ -186,6 +186,7 @@ const state = {
   qualityOverridesByPivotId: {},
   statusOverridesByPivotId: {},
   qualitySourceSignatureByPivotId: {},
+  connectivitySummaryByPivotId: {},
   qualityOverridesLastRefreshMs: 0,
   qualityOverrideRefreshIntervalMs: 45000,
   qualityOverrideMaxConcurrency: 3,
@@ -1002,8 +1003,12 @@ function applyFilterSort() {
     }
     if (state.sort === "pivot_asc") return ap.localeCompare(bp);
     if (state.sort === "samples_desc") return compareBySamplesDesc(a, b, ap, bp, aActivity, bActivity);
-    if (state.sort === "connected_pct_desc") return compareByConnectedPctDesc(a, b, ap, bp);
-    if (state.sort === "disconnected_pct_desc") return compareByDisconnectedPctDesc(a, b, ap, bp);
+    if (state.sort === "connected_pct_desc") {
+      return compareByConnectedPctDesc(a, b, ap, bp, state.connectivitySummaryByPivotId);
+    }
+    if (state.sort === "disconnected_pct_desc") {
+      return compareByDisconnectedPctDesc(a, b, ap, bp, state.connectivitySummaryByPivotId);
+    }
 
     if (state.sort === "activity_desc") return bActivity - aActivity || ap.localeCompare(bp);
     if (state.sort === "activity_asc") return aActivity - bActivity || ap.localeCompare(bp);
@@ -1115,10 +1120,23 @@ function parseSortablePct(value) {
   return null;
 }
 
-function pivotConnectedPct(item) {
+function resolveConnectivitySummaryForPivot(item, connectivitySummaryByPivotId = null) {
+  const pivotId = text((item || {}).pivot_id, "").trim();
+  if (!pivotId) return null;
+  const source =
+    connectivitySummaryByPivotId && typeof connectivitySummaryByPivotId === "object"
+      ? connectivitySummaryByPivotId
+      : state.connectivitySummaryByPivotId;
+  if (!source || typeof source !== "object") return null;
+  const entry = source[pivotId];
+  return entry && typeof entry === "object" ? entry : null;
+}
+
+function pivotConnectedPct(item, connectivitySummaryByPivotId = null) {
+  const summary = resolveConnectivitySummaryForPivot(item, connectivitySummaryByPivotId);
   const candidates = [
-    (item || {}).connected_pct,
-    (((item || {}).summary || {}).connected_pct),
+    summary ? summary.connectedPct : null,
+    summary ? summary.connected_pct : null,
   ];
   for (const candidate of candidates) {
     const parsed = parseSortablePct(candidate);
@@ -1128,12 +1146,13 @@ function pivotConnectedPct(item) {
   return 0;
 }
 
-function pivotDisconnectedPct(item) {
+function pivotDisconnectedPct(item, connectivitySummaryByPivotId = null) {
+  const summary = resolveConnectivitySummaryForPivot(item, connectivitySummaryByPivotId);
   const candidates = [
-    (item || {}).disconnected_pct,
-    (item || {}).attention_disconnected_pct,
-    (((item || {}).summary || {}).disconnected_pct),
-    (((item || {}).summary || {}).attention_disconnected_pct),
+    summary ? summary.disconnectedPct : null,
+    summary ? summary.disconnected_pct : null,
+    summary ? summary.attentionDisconnectedPct : null,
+    summary ? summary.attention_disconnected_pct : null,
   ];
   for (const candidate of candidates) {
     const parsed = parseSortablePct(candidate);
@@ -1147,10 +1166,11 @@ function compareByConnectedPctDesc(
   a,
   b,
   ap = String(a?.pivot_id || ""),
-  bp = String(b?.pivot_id || "")
+  bp = String(b?.pivot_id || ""),
+  connectivitySummaryByPivotId = null
 ) {
-  const aPct = pivotConnectedPct(a);
-  const bPct = pivotConnectedPct(b);
+  const aPct = pivotConnectedPct(a, connectivitySummaryByPivotId);
+  const bPct = pivotConnectedPct(b, connectivitySummaryByPivotId);
   if (aPct !== bPct) return bPct - aPct;
   return ap.localeCompare(bp);
 }
@@ -1159,10 +1179,11 @@ function compareByDisconnectedPctDesc(
   a,
   b,
   ap = String(a?.pivot_id || ""),
-  bp = String(b?.pivot_id || "")
+  bp = String(b?.pivot_id || ""),
+  connectivitySummaryByPivotId = null
 ) {
-  const aPct = pivotDisconnectedPct(a);
-  const bPct = pivotDisconnectedPct(b);
+  const aPct = pivotDisconnectedPct(a, connectivitySummaryByPivotId);
+  const bPct = pivotDisconnectedPct(b, connectivitySummaryByPivotId);
   if (aPct !== bPct) return bPct - aPct;
   return ap.localeCompare(bp);
 }
@@ -2791,6 +2812,10 @@ function renderPivotView() {
       reason: text(displayStatus.reason, ""),
       rank: Number(displayStatus.rank ?? 99),
     };
+    state.connectivitySummaryByPivotId[pivotId] = {
+      connectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.connectedPct || 0)))),
+      disconnectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.disconnectedPct || 0)))),
+    };
   }
 
   ui.pivotTitle.textContent = text(pivot.pivot_id, "Pivô");
@@ -2875,6 +2900,11 @@ async function refreshState(options = {}) {
       delete state.qualitySourceSignatureByPivotId[pivotId];
     }
   }
+  for (const pivotId of Object.keys(state.connectivitySummaryByPivotId)) {
+    if (!currentPivotIds.has(pivotId)) {
+      delete state.connectivitySummaryByPivotId[pivotId];
+    }
+  }
   if (Array.isArray(state.visiblePivotIds) && state.visiblePivotIds.length) {
     state.visiblePivotIds = state.visiblePivotIds.filter((pivotId) => currentPivotIds.has(String(pivotId || "").trim()));
   }
@@ -2942,6 +2972,7 @@ async function refreshQualityOverrides(options = {}) {
     state.qualityOverridesByPivotId = {};
     state.statusOverridesByPivotId = {};
     state.qualitySourceSignatureByPivotId = {};
+    state.connectivitySummaryByPivotId = {};
     state.qualityOverridesLastRefreshMs = Date.now();
     return;
   }
@@ -2958,11 +2989,12 @@ async function refreshQualityOverrides(options = {}) {
     const signature = buildQualitySourceSignature(pivot);
     const hasQuality = Object.prototype.hasOwnProperty.call(state.qualityOverridesByPivotId, pivotId);
     const hasStatus = Object.prototype.hasOwnProperty.call(state.statusOverridesByPivotId, pivotId);
+    const hasConnectivity = Object.prototype.hasOwnProperty.call(state.connectivitySummaryByPivotId, pivotId);
     const previousSignature = state.qualitySourceSignatureByPivotId[pivotId];
     pivotMetaById.set(pivotId, {
       signature,
       changed: signature !== previousSignature,
-      missing: !(hasQuality && hasStatus),
+      missing: !(hasQuality && hasStatus && hasConnectivity),
     });
   }
 
@@ -3012,6 +3044,7 @@ async function refreshQualityOverrides(options = {}) {
   const nextOverrides = { ...state.qualityOverridesByPivotId };
   const nextStatusOverrides = { ...state.statusOverridesByPivotId };
   const nextSignatures = { ...state.qualitySourceSignatureByPivotId };
+  const nextConnectivitySummaryByPivotId = { ...state.connectivitySummaryByPivotId };
   let qualityPayload = null;
   try {
     qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
@@ -3032,6 +3065,7 @@ async function refreshQualityOverrides(options = {}) {
     if (!pivotData) continue;
 
     const view = computeConnectivityView(pivotData);
+    const connectivitySummary = view.connectivityQualityInput || {};
     const quality = buildQualityFromConnectivity(pivotData, view.connectivityQualityInput);
     nextOverrides[pivotId] = quality;
     const detailStatus = view.status || {};
@@ -3040,6 +3074,10 @@ async function refreshQualityOverrides(options = {}) {
       label: text(detailStatus.label, "Inicial"),
       reason: text(detailStatus.reason, ""),
       rank: Number(detailStatus.rank ?? 99),
+    };
+    nextConnectivitySummaryByPivotId[pivotId] = {
+      connectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.connectedPct || 0)))),
+      disconnectedPct: Math.max(0, Math.min(100, Math.round(Number(connectivitySummary.disconnectedPct || 0)))),
     };
     const meta = pivotMetaById.get(pivotId);
     if (meta) {
@@ -3052,6 +3090,7 @@ async function refreshQualityOverrides(options = {}) {
   state.qualityOverridesByPivotId = nextOverrides;
   state.statusOverridesByPivotId = nextStatusOverrides;
   state.qualitySourceSignatureByPivotId = nextSignatures;
+  state.connectivitySummaryByPivotId = nextConnectivitySummaryByPivotId;
   state.qualityOverridesLastRefreshMs = nowMs;
   if (!skipRender) {
     renderStatusSummary();
@@ -3538,6 +3577,7 @@ function wireEvents() {
     ui.connFromWrap.hidden = !custom;
     ui.connToWrap.hidden = !custom;
     renderPivotView();
+    void refreshQualityOverrides({ force: true });
   });
 
   ui.connApply.addEventListener("click", () => {
@@ -3548,6 +3588,7 @@ function wireEvents() {
     ui.connFromWrap.hidden = !custom;
     ui.connToWrap.hidden = !custom;
     renderPivotView();
+    void refreshQualityOverrides({ force: true });
   });
 
   ui.probeDelayPreset.addEventListener("change", () => {

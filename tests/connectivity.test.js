@@ -143,12 +143,17 @@ test("sorting: pivots with more samples come first", () => {
 
 test("sorting: % conectado ordena do maior para o menor com desempate por pivô", () => {
   const pivots = [
-    { pivot_id: "B", connected_pct: 70 },
-    { pivot_id: "A", connected_pct: 70 },
-    { pivot_id: "C", connected_pct: 90 },
+    { pivot_id: "B" },
+    { pivot_id: "A" },
+    { pivot_id: "C" },
   ];
+  const summaryByPivotId = {
+    A: { connectedPct: 70 },
+    B: { connectedPct: 70 },
+    C: { connectedPct: 90 },
+  };
 
-  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b));
+  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b, undefined, undefined, summaryByPivotId));
   assert.deepEqual(
     ordered.map((item) => item.pivot_id),
     ["C", "A", "B"]
@@ -158,11 +163,14 @@ test("sorting: % conectado ordena do maior para o menor com desempate por pivô"
 test("sorting: % desconectado usa fallback 0 sem quebrar o desempate", () => {
   const pivots = [
     { pivot_id: "B" },
-    { pivot_id: "A", disconnected_pct: 10 },
-    { pivot_id: "C", disconnected_pct: null },
+    { pivot_id: "A" },
+    { pivot_id: "C" },
   ];
+  const summaryByPivotId = {
+    A: { disconnectedPct: 10 },
+  };
 
-  const ordered = [...pivots].sort((a, b) => _test.compareByDisconnectedPctDesc(a, b));
+  const ordered = [...pivots].sort((a, b) => _test.compareByDisconnectedPctDesc(a, b, undefined, undefined, summaryByPivotId));
   assert.deepEqual(
     ordered.map((item) => item.pivot_id),
     ["A", "B", "C"]
@@ -171,12 +179,17 @@ test("sorting: % desconectado usa fallback 0 sem quebrar o desempate", () => {
 
 test("sorting: percentuais em string com % também ordenam corretamente", () => {
   const pivots = [
-    { pivot_id: "B", connected_pct: "12%" },
-    { pivot_id: "A", connected_pct: "87,5%" },
-    { pivot_id: "C", connected_pct: "3%" },
+    { pivot_id: "B" },
+    { pivot_id: "A" },
+    { pivot_id: "C" },
   ];
+  const summaryByPivotId = {
+    A: { connectedPct: "87,5%" },
+    B: { connectedPct: "12%" },
+    C: { connectedPct: "3%" },
+  };
 
-  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b));
+  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b, undefined, undefined, summaryByPivotId));
   assert.deepEqual(
     ordered.map((item) => item.pivot_id),
     ["A", "B", "C"]
