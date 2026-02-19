@@ -812,7 +812,7 @@ a:focus {
 .pivot-admin-tech {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
 }
 
@@ -825,7 +825,6 @@ a:focus {
 
 .pivot-location-field {
   min-width: min(100%, 420px);
-  align-self: flex-end;
 }
 
 .hint-text {
