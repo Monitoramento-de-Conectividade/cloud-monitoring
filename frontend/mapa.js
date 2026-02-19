@@ -119,12 +119,6 @@ function buildStateUrl(runId = null) {
   return `/api/state?run_id=${encodeURIComponent(normalizedRun)}`;
 }
 
-function buildQualityLiteUrl(runId = null) {
-  const normalizedRun = normalizeRunId(runId);
-  if (!normalizedRun) return "/api/quality-lite";
-  return `/api/quality-lite?run_id=${encodeURIComponent(normalizedRun)}`;
-}
-
 function pickBestRunIdFromRuns(runs) {
   const list = Array.isArray(runs) ? runs : [];
   if (!list.length) return null;
@@ -198,29 +192,70 @@ function mapPinSizeForZoom(zoom) {
   return Math.max(14, Math.min(42, Math.round(size)));
 }
 
-function resolvePivotQuality(pivot) {
+function resolveMapQuality(pivot) {
   const safePivot = pivot && typeof pivot === "object" ? pivot : {};
-  if (safePivot._mapQuality && typeof safePivot._mapQuality === "object") {
-    return safePivot._mapQuality;
-  }
-  if (safePivot.quality && typeof safePivot.quality === "object") {
-    return safePivot.quality;
-  }
   const summary = safePivot.summary && typeof safePivot.summary === "object" ? safePivot.summary : {};
-  if (summary.quality && typeof summary.quality === "object") {
-    return summary.quality;
+  const settings = state.payload && typeof state.payload.settings === "object" ? state.payload.settings : {};
+  const status = summary.status && typeof summary.status === "object"
+    ? summary.status
+    : (safePivot.status && typeof safePivot.status === "object" ? safePivot.status : {});
+  const fallbackQuality = summary.quality && typeof summary.quality === "object"
+    ? summary.quality
+    : (safePivot.quality && typeof safePivot.quality === "object" ? safePivot.quality : {});
+
+  const minSamplesRaw = Number(settings.cloudv2_min_samples ?? 5);
+  const minSamples = Number.isFinite(minSamplesRaw) && minSamplesRaw >= 1 ? Math.round(minSamplesRaw) : 5;
+  const sampleCount = Math.max(0, Number(summary.median_sample_count ?? safePivot.median_sample_count ?? 0));
+  const medianReady = !!(summary.median_ready ?? safePivot.median_ready) && sampleCount >= minSamples;
+  const statusCode = text(status.code, "gray").trim().toLowerCase();
+
+  if (!medianReady || statusCode === "gray") {
+    return { code: "calculating", label: QUALITY_LABEL_BY_CODE.calculating };
   }
-  return {};
+
+  const attentionThresholdRaw = Number(
+    summary.attention_disconnected_pct_threshold ?? settings.attention_disconnected_pct_threshold ?? 20
+  );
+  const attentionThreshold = Number.isFinite(attentionThresholdRaw)
+    ? Math.max(0, Math.min(100, attentionThresholdRaw))
+    : 20;
+  const criticalThresholdRaw = Number(
+    summary.critical_disconnected_pct_threshold ?? settings.critical_disconnected_pct_threshold ?? 50
+  );
+  const criticalThreshold = Number.isFinite(criticalThresholdRaw)
+    ? Math.max(attentionThreshold, Math.min(100, criticalThresholdRaw))
+    : 50;
+
+  const segments = normalizeTimelineMiniSegments(
+    Array.isArray(safePivot.timeline_mini) ? safePivot.timeline_mini : summary.timeline_mini
+  );
+  if (segments.length) {
+    const disconnectedRatio = segments
+      .filter((segment) => segment.state === "offline")
+      .reduce((total, segment) => total + Number(segment.ratio || 0), 0);
+    const disconnectedPct = Math.max(0, Math.min(100, Math.round(disconnectedRatio * 100)));
+    let code = "green";
+    if (disconnectedPct > criticalThreshold) code = "critical";
+    else if (disconnectedPct > attentionThreshold) code = "yellow";
+    return { code, label: QUALITY_LABEL_BY_CODE[code] || QUALITY_LABEL_BY_CODE.green };
+  }
+
+  const fallbackCodeRaw = text(fallbackQuality.code, "green").trim().toLowerCase();
+  const fallbackCode = QUALITY_COLOR_VAR_BY_CODE[fallbackCodeRaw] ? fallbackCodeRaw : "green";
+  return {
+    code: fallbackCode,
+    label: text(fallbackQuality.label, QUALITY_LABEL_BY_CODE[fallbackCode] || QUALITY_LABEL_BY_CODE.green),
+  };
 }
 
 function qualityCodeForPivot(pivot) {
-  const quality = resolvePivotQuality(pivot);
+  const quality = resolveMapQuality(pivot);
   const code = text(quality.code, "green").trim().toLowerCase();
   return QUALITY_COLOR_VAR_BY_CODE[code] ? code : "green";
 }
 
 function qualityLabelForPivot(pivot) {
-  const quality = resolvePivotQuality(pivot);
+  const quality = resolveMapQuality(pivot);
   const code = qualityCodeForPivot(pivot);
   return text(quality.label, QUALITY_LABEL_BY_CODE[code] || QUALITY_LABEL_BY_CODE.green);
 }
@@ -551,35 +586,7 @@ async function refreshMapData() {
     state.payload = statePayload && typeof statePayload === "object" ? statePayload : {};
     const payloadRunId = normalizeRunId(state.payload.run_id);
     if (payloadRunId) state.selectedRunId = payloadRunId;
-
-    const rawPivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
-    const qualityByPivotId = new Map();
-
-    try {
-      const qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
-      const qualityPivots = Array.isArray(qualityPayload?.pivots) ? qualityPayload.pivots : [];
-      for (const item of qualityPivots) {
-        const pivotId = text(item?.pivot_id, "").trim();
-        if (!pivotId) continue;
-        const summary = item.summary && typeof item.summary === "object" ? item.summary : {};
-        const quality = summary.quality && typeof summary.quality === "object"
-          ? summary.quality
-          : (item.quality && typeof item.quality === "object" ? item.quality : null);
-        if (quality) {
-          qualityByPivotId.set(pivotId, quality);
-        }
-      }
-    } catch (err) {
-      // fallback para qualidade do /api/state
-    }
-
-    state.pivots = rawPivots.map((pivot) => {
-      const pivotId = text((pivot || {}).pivot_id, "").trim();
-      if (!pivotId) return pivot;
-      const mappedQuality = qualityByPivotId.get(pivotId);
-      if (!mappedQuality) return pivot;
-      return { ...pivot, _mapQuality: mappedQuality };
-    });
+    state.pivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
 
     renderHeader(state.payload);
     renderMapMarkers();
