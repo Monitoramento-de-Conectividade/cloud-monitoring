@@ -62,6 +62,8 @@
           <span>Ordenar por</span>
           <select id="sortSelect">
             <option value="critical">Prioridade (Status + Conectividade)</option>
+            <option value="connected_pct_desc">% Conectado (maior primeiro)</option>
+            <option value="disconnected_pct_desc">% Desconectado (maior primeiro)</option>
             <option value="activity_desc">Última atualização (mais recente)</option>
             <option value="activity_asc">Última atualização (mais antiga)</option>
             <option value="pivot_asc">Pivô (A-Z)</option>
@@ -282,6 +284,6 @@
 
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
-  <script src="dashboard.js"></script>
+  <script src="dashboard.js?v=20260219a"></script>
 </body>
 </html>

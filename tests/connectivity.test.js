@@ -169,6 +169,20 @@ test("sorting: % desconectado usa fallback 0 sem quebrar o desempate", () => {
   );
 });
 
+test("sorting: percentuais em string com % também ordenam corretamente", () => {
+  const pivots = [
+    { pivot_id: "B", connected_pct: "12%" },
+    { pivot_id: "A", connected_pct: "87,5%" },
+    { pivot_id: "C", connected_pct: "3%" },
+  ];
+
+  const ordered = [...pivots].sort((a, b) => _test.compareByConnectedPctDesc(a, b));
+  assert.deepEqual(
+    ordered.map((item) => item.pivot_id),
+    ["A", "B", "C"]
+  );
+});
+
 test("sorting: sample count fallback reads nested summary", () => {
   const value = _test.pivotSampleCount({ summary: { median_sample_count: 7 } });
   assert.equal(value, 7);

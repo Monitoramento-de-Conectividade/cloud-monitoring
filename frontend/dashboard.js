@@ -1102,28 +1102,43 @@ function compareBySamplesDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(
   return ap.localeCompare(bp);
 }
 
-function pivotConnectedPct(item) {
-  const direct = Number((item || {}).connected_pct);
-  if (Number.isFinite(direct) && direct >= 0) return direct;
+function parseSortablePct(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) return numeric;
 
-  const nested = Number((((item || {}).summary || {}).connected_pct));
-  if (Number.isFinite(nested) && nested >= 0) return nested;
+  if (typeof value === "string") {
+    const normalized = value.trim().replace("%", "").replace(",", ".");
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+
+  return null;
+}
+
+function pivotConnectedPct(item) {
+  const candidates = [
+    (item || {}).connected_pct,
+    (((item || {}).summary || {}).connected_pct),
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseSortablePct(candidate);
+    if (parsed !== null) return parsed;
+  }
 
   return 0;
 }
 
 function pivotDisconnectedPct(item) {
-  const direct = Number((item || {}).disconnected_pct);
-  if (Number.isFinite(direct) && direct >= 0) return direct;
-
-  const directAttention = Number((item || {}).attention_disconnected_pct);
-  if (Number.isFinite(directAttention) && directAttention >= 0) return directAttention;
-
-  const nested = Number((((item || {}).summary || {}).disconnected_pct));
-  if (Number.isFinite(nested) && nested >= 0) return nested;
-
-  const nestedAttention = Number((((item || {}).summary || {}).attention_disconnected_pct));
-  if (Number.isFinite(nestedAttention) && nestedAttention >= 0) return nestedAttention;
+  const candidates = [
+    (item || {}).disconnected_pct,
+    (item || {}).attention_disconnected_pct,
+    (((item || {}).summary || {}).disconnected_pct),
+    (((item || {}).summary || {}).attention_disconnected_pct),
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseSortablePct(candidate);
+    if (parsed !== null) return parsed;
+  }
 
   return 0;
 }
@@ -3683,6 +3698,7 @@ if (typeof module !== "undefined" && module.exports) {
     _test: {
       pivotSampleCount,
       compareBySamplesDesc,
+      parseSortablePct,
       pivotConnectedPct,
       pivotDisconnectedPct,
       compareByConnectedPctDesc,

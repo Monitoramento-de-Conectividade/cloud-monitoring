@@ -605,6 +605,61 @@ function startDevAutoReload() {
   setInterval(pollReloadToken, 1500);
 }
 
+function parseSortablePct(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) return numeric;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().replace("%", "").replace(",", ".");
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+
+  return null;
+}
+
+function pivotConnectedPct(item) {
+  const candidates = [
+    (item || {}).connected_pct,
+    (((item || {}).summary || {}).connected_pct),
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseSortablePct(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  return 0;
+}
+
+function pivotDisconnectedPct(item) {
+  const candidates = [
+    (item || {}).disconnected_pct,
+    (item || {}).attention_disconnected_pct,
+    (((item || {}).summary || {}).disconnected_pct),
+    (((item || {}).summary || {}).attention_disconnected_pct),
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseSortablePct(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  return 0;
+}
+
+function compareByConnectedPctDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(b?.pivot_id || "")) {
+  const aPct = pivotConnectedPct(a);
+  const bPct = pivotConnectedPct(b);
+  if (aPct !== bPct) return bPct - aPct;
+  return ap.localeCompare(bp);
+}
+
+function compareByDisconnectedPctDesc(a, b, ap = String(a?.pivot_id || ""), bp = String(b?.pivot_id || "")) {
+  const aPct = pivotDisconnectedPct(a);
+  const bPct = pivotDisconnectedPct(b);
+  if (aPct !== bPct) return bPct - aPct;
+  return ap.localeCompare(bp);
+}
+
 function applyFilterSort() {
   const list = [...state.pivots];
   const needle = state.search.trim().toLowerCase();
@@ -637,6 +692,8 @@ function applyFilterSort() {
     const ap = String(a.pivot_id || "");
     const bp = String(b.pivot_id || "");
     if (state.sort === "pivot_asc") return ap.localeCompare(bp);
+    if (state.sort === "connected_pct_desc") return compareByConnectedPctDesc(a, b, ap, bp);
+    if (state.sort === "disconnected_pct_desc") return compareByDisconnectedPctDesc(a, b, ap, bp);
 
     const aActivity = Number(a.last_activity_ts || 0);
     const bActivity = Number(b.last_activity_ts || 0);
