@@ -450,13 +450,10 @@ function buildTimelineMiniSegmentsFromConnectivity(segments, durationSec) {
 function resolvePivotTimelineMiniSegments(item) {
   const safePivot = item || {};
   const pivotId = text(safePivot.pivot_id, "").trim();
-  if (pivotId) {
-    const computed = state.connectivityMiniSegmentsByPivotId[pivotId];
-    if (Array.isArray(computed) && computed.length) {
-      return normalizeTimelineMiniSegments(computed);
-    }
-  }
-  return normalizeTimelineMiniSegments(safePivot.timeline_mini || safePivot.timelineMini);
+  if (!pivotId) return [];
+  const computed = state.connectivityMiniSegmentsByPivotId[pivotId];
+  if (!Array.isArray(computed) || !computed.length) return [];
+  return normalizeTimelineMiniSegments(computed);
 }
 
 function buildTimelineMiniHtml(item) {
