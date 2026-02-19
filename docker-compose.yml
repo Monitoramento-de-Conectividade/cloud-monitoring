@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cloud-monitoring-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PUBLIC_PORT:-8008}:8008"
+    env_file:
+      - .env.backend
+    environment:
+      DASHBOARD_HOST: "0.0.0.0"
+      DASHBOARD_PORT: "8008"
+      CLOUDV2_DEV_HOT_RELOAD: "0"
+      REQUIRE_APPLY_TO_START: "0"
+      HISTORY_MODE: "merge"
+      SQLITE_DB_PATH: "/data/telemetry.sqlite3"
+      CA_CERT_PATH: "/app/certs/amazon_ca.pem"
+      CLIENT_CERT_PATH: "/app/certs/device.pem.crt"
+      CLIENT_KEY_PATH: "/app/certs/private.pem.key"
+    volumes:
+      - cloud_monitoring_data:/data
+      - ./cloudv2-config.json:/app/cloudv2-config.json:ro
+      - ./certs:/app/certs:ro
+      - ./logs_mqtt:/app/logs_mqtt
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8008/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  cloud_monitoring_data:

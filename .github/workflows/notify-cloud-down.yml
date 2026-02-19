@@ -1,0 +1,105 @@
+name: Notify Cloud Down (Telegram)
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cloud_healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required secrets
+        env:
+          CLOUD_HEALTHCHECK_URL: ${{ secrets.CLOUD_HEALTHCHECK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          for name in CLOUD_HEALTHCHECK_URL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret obrigatorio ausente: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Check cloud health endpoint
+        id: health
+        env:
+          CLOUD_HEALTHCHECK_URL: ${{ secrets.CLOUD_HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+
+          CHECKED_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          HTTP_CODE=""
+          CURL_EXIT=0
+          BODY_FILE="$(mktemp)"
+
+          set +e
+          HTTP_CODE="$(curl -A "cloud-monitoring-healthcheck/1.0" -m 15 -sS -o "${BODY_FILE}" -w "%{http_code}" "${CLOUD_HEALTHCHECK_URL}")"
+          CURL_EXIT=$?
+          set -e
+
+          if [ "${CURL_EXIT}" -eq 0 ] && [[ "${HTTP_CODE}" =~ ^[0-9]{3}$ ]] && [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 400 ]; then
+            echo "is_down=false" >> "$GITHUB_OUTPUT"
+            echo "http_code=${HTTP_CODE}" >> "$GITHUB_OUTPUT"
+            echo "error=none" >> "$GITHUB_OUTPUT"
+            echo "checked_at_utc=${CHECKED_AT_UTC}" >> "$GITHUB_OUTPUT"
+            echo "Cloud OK (HTTP ${HTTP_CODE})"
+          else
+            if [ "${CURL_EXIT}" -ne 0 ]; then
+              ERROR_REASON="curl_exit_${CURL_EXIT}"
+            else
+              ERROR_REASON="http_${HTTP_CODE:-000}"
+            fi
+            echo "is_down=true" >> "$GITHUB_OUTPUT"
+            echo "http_code=${HTTP_CODE:-000}" >> "$GITHUB_OUTPUT"
+            echo "error=${ERROR_REASON}" >> "$GITHUB_OUTPUT"
+            echo "checked_at_utc=${CHECKED_AT_UTC}" >> "$GITHUB_OUTPUT"
+            echo "Cloud DOWN (${ERROR_REASON})"
+          fi
+
+          rm -f "${BODY_FILE}"
+
+      - name: Notify Telegram when cloud is down
+        if: steps.health.outputs.is_down == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUD_HEALTHCHECK_URL: ${{ secrets.CLOUD_HEALTHCHECK_URL }}
+          HTTP_CODE: ${{ steps.health.outputs.http_code }}
+          ERROR_REASON: ${{ steps.health.outputs.error }}
+          CHECKED_AT_UTC: ${{ steps.health.outputs.checked_at_utc }}
+        run: |
+          set -euo pipefail
+
+          esc() {
+            sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+          }
+
+          CLOUD_HEALTHCHECK_URL_ESCAPED="$(printf '%s' "${CLOUD_HEALTHCHECK_URL}" | esc)"
+          HTTP_CODE_ESCAPED="$(printf '%s' "${HTTP_CODE}" | esc)"
+          ERROR_REASON_ESCAPED="$(printf '%s' "${ERROR_REASON}" | esc)"
+          CHECKED_AT_UTC_ESCAPED="$(printf '%s' "${CHECKED_AT_UTC}" | esc)"
+
+          MESSAGE="🚨<b>ALERTA: CLOUD OFFLINE</b>🚨
+==============================
+<b>Endpoint:</b> ${CLOUD_HEALTHCHECK_URL_ESCAPED}
+<b>HTTP:</b> ${HTTP_CODE_ESCAPED}
+<b>Erro:</b> ${ERROR_REASON_ESCAPED}
+<b>Momento (UTC):</b> ${CHECKED_AT_UTC_ESCAPED}"
+
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode=HTML \
+            -d text="${MESSAGE}"
+
+      - name: Mark workflow as failed when cloud is down
+        if: steps.health.outputs.is_down == 'true'
+        run: |
+          echo "::error::Cloud indisponivel. Alerta enviado ao Telegram."
+          exit 1
+

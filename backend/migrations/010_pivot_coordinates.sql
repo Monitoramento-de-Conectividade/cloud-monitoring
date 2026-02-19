@@ -1,0 +1,2 @@
+ALTER TABLE pivots ADD COLUMN latitude REAL;
+ALTER TABLE pivots ADD COLUMN longitude REAL;

@@ -1,0 +1,41 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="cloudv2-api-base-url" content=""/>
+  <title>Login - Cloud Monitoring</title>
+  <link rel="stylesheet" href="auth.css"/>
+</head>
+<body data-auth-page="login">
+  <main>
+    <h1>Login</h1>
+    <p>Acesse o monitoramento com seu e-mail e senha.</p>
+
+    <form id="loginForm" novalidate>
+      <label>
+        E-mail
+        <input id="email" type="email" autocomplete="email" required/>
+      </label>
+      <label>
+        Senha
+        <input id="password" type="password" autocomplete="current-password" required/>
+      </label>
+      <button type="submit">Entrar</button>
+    </form>
+
+    <div id="statusMessage" class="status"> </div>
+
+    <div class="links">
+      <a href="/forgot-password">Esqueci minha senha</a>
+    </div>
+
+    <p class="muted-small">
+      Ao continuar, voce concorda com a
+      <a href="/privacy-policy">Politica de Privacidade</a>.
+    </p>
+  </main>
+  <script src="runtime-config.js"></script>
+  <script src="auth.js"></script>
+</body>
+</html>

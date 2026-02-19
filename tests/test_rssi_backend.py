@@ -1,0 +1,69 @@
+import os
+import tempfile
+import unittest
+
+from backend.cloudv2_persistence import TelemetryPersistence
+
+
+class RssiPanelPayloadTests(unittest.TestCase):
+    def test_panel_payload_returns_only_valid_rssi_series(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                pivot_id = "PivotA_1"
+                base_ts = 1_700_000_000.0
+
+                run = persistence.get_or_create_active_run(now_ts=base_ts, source="test")
+                session = persistence.get_or_create_active_session(
+                    pivot_id,
+                    pivot_slug="pivota-1",
+                    now_ts=base_ts,
+                    source="test",
+                    run_id=run["run_id"],
+                )
+                session_id = session["session_id"]
+
+                persistence.upsert_snapshot(
+                    pivot_id,
+                    session_id,
+                    {
+                        "pivot_id": pivot_id,
+                        "session_id": session_id,
+                        "run_id": run["run_id"],
+                        "updated_at_ts": base_ts + 1,
+                        "summary": {
+                            "status": {"code": "green"},
+                            "quality": {"code": "green"},
+                        },
+                    },
+                    updated_at_ts=base_ts + 1,
+                )
+
+                persistence.insert_ping_rssi_point(pivot_id, session_id, ts=base_ts + 10, rssi=12)
+                persistence.insert_ping_rssi_point(pivot_id, session_id, ts=base_ts + 11, rssi=-1)
+                persistence.insert_ping_rssi_point(pivot_id, session_id, ts=base_ts + 12, rssi=99)
+                persistence.insert_ping_rssi_point(pivot_id, session_id, ts=base_ts + 13, rssi=31)
+
+                payload = persistence.get_panel_payload(
+                    pivot_id,
+                    session_id=session_id,
+                    run_id=run["run_id"],
+                )
+
+                self.assertIsNotNone(payload)
+                self.assertTrue(payload["hasRssi"])
+                self.assertEqual(
+                    [(item["ts"], item["rssi"]) for item in payload["rssiSeries"]],
+                    [
+                        (base_ts + 10, 12),
+                        (base_ts + 13, 31),
+                    ],
+                )
+            finally:
+                persistence.stop()
+
+
+if __name__ == "__main__":
+    unittest.main()

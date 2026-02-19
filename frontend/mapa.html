@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="cloudv2-api-base-url" content=""/>
+  <title>Mapa de Pivos</title>
+  <link rel="stylesheet" href="dashboard.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <link rel="stylesheet" href="mapa.css"/>
+</head>
+<body>
+  <main class="layout">
+    <header class="hero">
+      <div class="hero-main">
+        <div class="hero-top">
+          <a class="hero-logout" href="/index.html" aria-label="Voltar ao painel" title="Voltar ao painel">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M15.78 6.22a.75.75 0 0 1 0 1.06L11.06 12l4.72 4.72a.75.75 0 1 1-1.06 1.06l-5.25-5.25a.75.75 0 0 1 0-1.06l5.25-5.25a.75.75 0 0 1 1.06 0Z"></path>
+            </svg>
+          </a>
+          <p class="kicker">MONITORAMENTO DE CONECTIVIDADE</p>
+        </div>
+        <h1>Mapa dos pivôs monitorados</h1>
+        <p class="subtitle">Visualizacao geografica com pins coloridos pela conectividade atual.</p>
+      </div>
+      <div class="hero-meta" role="status" aria-live="polite">
+        <span class="chip" id="mapUpdatedAt">Ultima atualizacao: -</span>
+        <span class="chip" id="mapCountsMeta">0 pivôs</span>
+      </div>
+    </header>
+
+    <section class="panel map-page-panel">
+      <div class="panel-head tight">
+        <h2>Mapa interativo</h2>
+        <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
+      </div>
+      <p id="mapStatus" class="hint">Carregando dados...</p>
+      <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
+    </section>
+  </main>
+
+  <script src="runtime-config.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="mapa.js?v=20260219a"></script>
+</body>
+</html>

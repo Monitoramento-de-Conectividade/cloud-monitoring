@@ -1,0 +1,423 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="cloudv2-api-base-url" content=""/>
+  <title>Monitoramento de Conectividade</title>
+  <link rel="stylesheet" href="dashboard.css"/>
+</head>
+<body>
+  <a class="skip-link" href="#cardsSection">Ir para lista de pivôs</a>
+  <div class="bg-shape shape-a"></div>
+  <div class="bg-shape shape-b"></div>
+  <div id="initialLoadingOverlay" class="initial-loading-overlay" role="status" aria-live="polite">
+    <div class="initial-loading-card">
+      <span class="initial-loading-spinner" aria-hidden="true"></span>
+      <h2>Carregando painel</h2>
+      <p id="initialLoadingText">Buscando pivôs e calculando conectividade inicial...</p>
+    </div>
+  </div>
+
+  <main class="layout">
+    <header class="hero">
+      <div class="hero-main">
+        <div class="hero-top">
+          <button id="logoutBtn" class="hero-logout" type="button" aria-label="Logout" title="Logout">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M14.25 3a.75.75 0 0 0 0 1.5h3a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75h-3a.75.75 0 0 0 0 1.5h3a2.25 2.25 0 0 0 2.25-2.25V5.25A2.25 2.25 0 0 0 17.25 3h-3Z"></path>
+              <path d="M11.03 7.47a.75.75 0 0 1 0 1.06L8.56 11h7.94a.75.75 0 0 1 0 1.5H8.56l2.47 2.47a.75.75 0 1 1-1.06 1.06l-3.75-3.75a.75.75 0 0 1 0-1.06l3.75-3.75a.75.75 0 0 1 1.06 0Z"></path>
+            </svg>
+          </button>
+          <p class="kicker">MONITORAMENTO DE CONECTIVIDADE</p>
+        </div>
+        <h1>Painel de Conectividade dos Pivôs</h1>
+        <p class="subtitle">
+          Status em tempo real e histórico de conexão dos pivôs.
+        </p>
+      </div>
+      <div class="hero-meta" role="status" aria-live="polite">
+        <a class="chip chip-action hero-map-btn" href="/mapa" aria-label="Abrir mapa de pivôs" title="Abrir mapa de pivôs">
+          Mapa
+        </a>
+        <span class="chip" id="updatedAt">Última atualização: -</span>
+        <span class="chip" id="countsMeta">0 pivôs</span>
+        <a id="adminCreateAccountLink" class="chip chip-action" href="/register" hidden>Criar conta</a>
+      </div>
+      <div class="hero-session">
+        <p class="hero-session-hint" id="sessionHint">
+          Este painel exibe automaticamente os dados mais recentes.
+        </p>
+      </div>
+    </header>
+
+    <section id="adminUsersPanel" class="panel admin-users-panel" hidden>
+      <div class="panel-head block">
+        <div>
+          <h2>Gerenciar contas</h2>
+          <p class="section-copy">Somente o administrador pode listar e deletar contas de usuario.</p>
+        </div>
+        <button id="adminUsersRefresh" class="ghost" type="button">Atualizar lista</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-users-table">
+          <thead>
+            <tr>
+              <th>E-mail</th>
+              <th>Nome</th>
+              <th>Perfil</th>
+              <th>Status</th>
+              <th>Ultimo login</th>
+              <th>Acao</th>
+            </tr>
+          </thead>
+          <tbody id="adminUsersTable"></tbody>
+        </table>
+      </div>
+      <p id="adminUsersEmpty" class="hint" hidden>Nenhuma conta de usuario encontrada.</p>
+    </section>
+
+    <section id="overviewSection" class="panel controls">
+      <div class="panel-head block">
+        <div>
+          <h2>Visão geral e filtros</h2>
+          <p class="section-copy">Filtre por status, busque por pivô e ordene por prioridade ou atividade.</p>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="field">
+          <span>Buscar pivô</span>
+          <input id="searchInput" type="search" placeholder="Ex.: PioneiraLEM_2" autocomplete="off"/>
+        </label>
+        <label class="field">
+          <span>Ordenar por</span>
+          <select id="sortSelect">
+            <option value="critical">Prioridade (Status + Conectividade)</option>
+            <option value="probe_active_response_ratio_desc">Latência ativa (maior respostas/solicitações)</option>
+            <option value="samples_desc">Amostras (maior primeiro)</option>
+            <option value="connected_pct_desc">% Conectado (maior primeiro)</option>
+            <option value="disconnected_pct_desc">% Desconectado (maior primeiro)</option>
+            <option value="activity_desc">Última atualização (mais recente)</option>
+            <option value="activity_asc">Última atualização (mais antiga)</option>
+            <option value="pivot_asc">Pivô (A-Z)</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="control-row">
+        <label class="field">
+          <span>Tecnologia de rede</span>
+          <select id="technologyFilter">
+            <option value="all">Todas tecnologias</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Versão do firmware</span>
+          <select id="firmwareFilter">
+            <option value="all">Todos firmwares</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="control-row">
+        <label class="field">
+          <span>Status</span>
+          <select id="statusFilterSelect">
+            <option value="all">Todos status</option>
+            <option value="green">Conectado</option>
+            <option value="red">Desconectado</option>
+            <option value="gray">Inicial</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Conectividade</span>
+          <select id="connectivityFilterSelect">
+            <option value="all">Todas conectividades</option>
+            <option value="green">Estável</option>
+            <option value="calculating">Em análise</option>
+            <option value="yellow">Instável</option>
+            <option value="critical">Crítico</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="control-actions">
+        <button id="clearFilters" class="ghost" type="button">Limpar todos os filtros</button>
+      </div>
+
+      <div class="status-summary" id="statusSummary"></div>
+    </section>
+
+    <section class="panel" id="pendingPanel" hidden>
+      <div class="panel-head tight">
+        <h2>Pivôs com atividade inicial</h2>
+      </div>
+      <div id="pendingList" class="list"></div>
+    </section>
+
+    <section id="cardsSection" class="panel cards-wrap">
+      <div class="panel-head tight">
+        <div>
+          <h2>Pivôs monitorados</h2>
+          <p class="section-copy">Selecione um pivô para ver conectividade, histórico e latência.</p>
+        </div>
+        <div class="pager">
+          <button id="cardsPrev" class="ghost">Anterior</button>
+          <span id="cardsPageInfo">Página 1/1</span>
+          <button id="cardsNext" class="ghost">Próxima</button>
+        </div>
+      </div>
+      <div id="cardsGrid" class="cards-grid"></div>
+    </section>
+
+    <section id="pivotView" class="panel pivot-view" hidden>
+        <div class="panel-head">
+          <div class="pivot-title-wrap">
+            <button id="closePivot" class="ghost">Fechar visão</button>
+            <h2 id="pivotTitle">Pivô</h2>
+            <span id="pivotStatus" class="badge gray">Status: Inicial</span>
+            <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
+          </div>
+        </div>
+
+      <div class="pivot-danger">
+        <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+      </div>
+
+      <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
+        <div class="pivot-tech-controls" id="pivotTechControls">
+          <label class="toggle">
+            <input id="pivotConcentratorToggle" type="checkbox"/>
+            <span>Marcar este pivô como concentrador</span>
+          </label>
+          <button id="savePivotTechnologyBtn" class="primary" type="button">Salvar tecnologia</button>
+        </div>
+        <label class="field compact pivot-location-field">
+          <span>Latitude, Longitude</span>
+          <input
+            id="pivotLocationInput"
+            type="text"
+            placeholder="Ex.: -22.254261055861843, -45.71657037699047"
+            autocomplete="off"
+          />
+        </label>
+        <button id="savePivotLocationBtn" class="primary" type="button">Salvar localização</button>
+        <span id="pivotLocationHint" class="hint-text" aria-live="polite"></span>
+        <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
+      </div>
+
+      <div class="pivot-metrics-toggle">
+        <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
+          Mais informações
+        </button>
+      </div>
+
+      <div class="metrics-grid" id="pivotMetrics"></div>
+
+      <div class="pivot-sections">
+        <section class="connectivity-panel">
+          <div class="panel-head tight">
+            <h3>Linha do tempo de conectividade</h3>
+            <div class="conn-controls">
+              <label class="field compact">
+                <span>Período</span>
+                <select id="connPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </label>
+              <label class="field compact conn-custom" id="connFromWrap" hidden>
+                <span>De</span>
+                <input id="connFrom" type="datetime-local"/>
+              </label>
+              <label class="field compact conn-custom" id="connToWrap" hidden>
+                <span>Até</span>
+                <input id="connTo" type="datetime-local"/>
+              </label>
+              <button id="connApply" class="ghost">Carregar</button>
+            </div>
+          </div>
+          <div class="conn-summary" id="connSummary"></div>
+          <div class="conn-track-wrap">
+            <div id="connTrack" class="conn-track"></div>
+            <div id="connSegmentCard" class="conn-segment-card" hidden></div>
+          </div>
+          <div class="conn-axis">
+            <span id="connStartLabel">-</span>
+            <span id="connEndLabel">-</span>
+          </div>
+        </section>
+
+        <section class="probe-panel">
+          <h3>Monitoramento de latência</h3>
+          <div class="probe-controls">
+            <label class="toggle">
+              <input id="probeEnabled" type="checkbox"/>
+              <span>Ativar monitoramento de latência para este pivô</span>
+            </label>
+            <label class="field compact">
+              <span>Intervalo (segundos)</span>
+              <input id="probeInterval" type="number" min="10" step="1"/>
+            </label>
+            <button id="saveProbe" class="primary">Salvar configuração</button>
+          </div>
+          <div class="probe-stats">
+            <table class="probe-stats-table" aria-label="Resumo do monitoramento de latência">
+              <thead>
+                <tr>
+                  <th scope="col">Campo</th>
+                  <th scope="col">Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Última solicitação</th>
+                  <td id="probeStatLastSent">-</td>
+                </tr>
+                <tr>
+                  <th scope="row">Última resposta</th>
+                  <td id="probeStatLastResponse">-</td>
+                </tr>
+                <tr>
+                  <th scope="row">Falhas consecutivas</th>
+                  <td id="probeStatTimeoutStreak">0</td>
+                </tr>
+                <tr>
+                  <th scope="row">Respostas/solicitações</th>
+                  <td id="probeStatResponseRatio">0/0</td>
+                </tr>
+                <tr>
+                  <th scope="row">Latência da última resposta</th>
+                  <td id="probeStatDelayLast">0.000s</td>
+                </tr>
+                <tr>
+                  <th scope="row">Latência média</th>
+                  <td id="probeStatDelayAvg">0.000s</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p id="probeHint" class="hint" aria-live="polite"></p>
+        </section>
+
+        <section class="probe-delay-panel">
+          <div class="panel-head tight probe-delay-head">
+            <h3>Latência ao longo do tempo</h3>
+            <div class="probe-delay-controls">
+              <label class="field compact">
+                <span>Período</span>
+                <select id="probeDelayPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </label>
+              <div class="probe-delay-range" id="probeDelayRange" hidden>
+                <label class="field compact conn-custom" id="probeDelayFromWrap" hidden>
+                  <span>De</span>
+                  <input id="probeDelayFrom" type="datetime-local"/>
+                </label>
+                <label class="field compact conn-custom" id="probeDelayToWrap" hidden>
+                  <span>Até</span>
+                  <input id="probeDelayTo" type="datetime-local"/>
+                </label>
+              </div>
+              <button id="probeDelayApply" class="ghost">Carregar</button>
+            </div>
+          </div>
+          <p id="probeDelayHint" class="hint"></p>
+          <div id="probeDelayChart" class="probe-delay-chart"></div>
+          <div class="probe-delay-axis">
+            <span id="probeDelayStartLabel">-</span>
+            <span id="probeDelayEndLabel">-</span>
+          </div>
+        </section>
+
+        <section id="pivotRssiPanel" class="probe-delay-panel" hidden>
+          <div class="panel-head tight probe-delay-head">
+            <h3>RSSI ao longo do tempo</h3>
+            <div class="probe-delay-controls">
+              <label class="field compact">
+                <span>Período</span>
+                <select id="rssiPreset">
+                  <option value="total">Total</option>
+                  <option value="24h">Últimas 24h</option>
+                  <option value="48h">Últimas 48h</option>
+                  <option value="7d">Últimos 7 dias</option>
+                  <option value="15d">Últimos 15 dias</option>
+                  <option value="30d" selected>Últimos 30 dias</option>
+                  <option value="custom">Personalizado</option>
+                </select>
+              </label>
+              <div class="probe-delay-range" id="rssiRange" hidden>
+                <label class="field compact conn-custom" id="rssiFromWrap" hidden>
+                  <span>De</span>
+                  <input id="rssiFrom" type="datetime-local"/>
+                </label>
+                <label class="field compact conn-custom" id="rssiToWrap" hidden>
+                  <span>Até</span>
+                  <input id="rssiTo" type="datetime-local"/>
+                </label>
+              </div>
+              <button id="rssiApply" class="ghost">Carregar</button>
+            </div>
+          </div>
+          <p id="rssiHint" class="hint"></p>
+          <div id="rssiChart" class="probe-delay-chart"></div>
+          <div class="probe-delay-axis">
+            <span id="rssiStartLabel">-</span>
+            <span id="rssiEndLabel">-</span>
+          </div>
+        </section>
+
+        <section class="timeline-panel">
+          <div class="panel-head tight">
+            <h3>Eventos de conectividade</h3>
+            <div class="pager">
+              <button id="timelinePrev" class="ghost">Anterior</button>
+              <span id="timelinePageInfo">Página 1/1</span>
+              <button id="timelineNext" class="ghost">Próxima</button>
+            </div>
+          </div>
+          <div id="timelineList" class="timeline"></div>
+        </section>
+
+        <section class="table-panel">
+          <div class="panel-head tight">
+            <h3>Histórico recente de sinal e rede</h3>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data/hora</th>
+                  <th>Sinal (RSSI)</th>
+                  <th>Tecnologia de rede</th>
+                  <th>Duração da queda</th>
+                  <th>Versão do firmware</th>
+                </tr>
+              </thead>
+              <tbody id="cloud2Table"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="runtime-config.js"></script>
+  <script src="dashboard.js?v=20260219d"></script>
+</body>
+</html>

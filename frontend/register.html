@@ -1,0 +1,55 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="cloudv2-api-base-url" content=""/>
+  <title>Cadastro - Cloud Monitoring</title>
+  <link rel="stylesheet" href="auth.css"/>
+</head>
+<body data-auth-page="register">
+  <main>
+    <h1>Criar conta (Admin)</h1>
+    <p>Somente o administrador autenticado pode criar novas contas.</p>
+
+    <form id="registerForm" novalidate>
+      <label>
+        Nome (opcional)
+        <input id="name" type="text" autocomplete="name" maxlength="120"/>
+      </label>
+      <label>
+        E-mail
+        <input id="email" type="email" autocomplete="email" required/>
+      </label>
+      <label>
+        Senha
+        <input id="password" type="password" autocomplete="new-password" required/>
+      </label>
+      <label>
+        Confirmar senha
+        <input id="passwordConfirm" type="password" autocomplete="new-password" required/>
+      </label>
+
+      <label class="checkbox-row">
+        <input id="privacyAccepted" type="checkbox" required/>
+        <span>Li e aceito a <a href="/privacy-policy">Politica de Privacidade</a>.</span>
+      </label>
+
+      <button type="submit">Cadastrar</button>
+    </form>
+
+    <div id="statusMessage" class="status"> </div>
+
+    <div class="links">
+      <a href="/login">Ja tenho conta</a>
+      <a href="/forgot-password">Esqueci minha senha</a>
+    </div>
+
+    <p class="muted-small">
+      Requisito minimo de senha: 8+ caracteres.
+    </p>
+  </main>
+  <script src="runtime-config.js"></script>
+  <script src="auth.js"></script>
+</body>
+</html>

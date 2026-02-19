@@ -1,0 +1,40 @@
+{
+  "broker": "a19mijesri84u2-ats.iot.us-east-1.amazonaws.com",
+  "port": 8883,
+  "monitor_topics": [
+    "cloudv2",
+    "cloudv2-ping",
+    "cloud2",
+    "cloudv2-network",
+    "cloudv2-info"
+  ],
+  "ping_interval_minutes": 3,
+  "tolerance_factor": 1.5,
+  "attention_disconnected_pct_threshold": 20.0,
+  "critical_disconnected_pct_threshold": 50.0,
+  "attention_disconnected_window_hours": 24,
+  "cloudv2_median_window": 20,
+  "cloudv2_min_samples": 5,
+  "dedupe_window_sec": 8,
+  "history_mode": "merge",
+  "history_retention_hours": 24,
+  "dashboard_enabled": true,
+  "dashboard_port": 8008,
+  "dashboard_refresh_sec": 5,
+  "show_pending_ping_pivots": false,
+  "probe_default_interval_sec": 300,
+  "probe_min_interval_sec": 60,
+  "probe_timeout_factor": 1.25,
+  "probe_timeout_streak_alert": 2,
+  "max_events_per_pivot": 5000,
+  "probe_settings": {
+    "PioneiraLEM_2": {
+      "enabled": true,
+      "interval_sec": 300
+    },
+    "NovaBahia_6": {
+      "enabled": false,
+      "interval_sec": 300
+    }
+  }
+}
