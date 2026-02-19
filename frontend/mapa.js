@@ -91,6 +91,7 @@ const ui = HAS_DOM
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
       mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
+      mapFullscreenTarget: document.getElementById("mapFullscreenTarget"),
       pivotsMapWrap: document.getElementById("pivotsMapWrap"),
       pivotsMapCanvas: document.getElementById("pivotsMapCanvas"),
     }
@@ -458,9 +459,12 @@ function setStatus(message) {
 }
 
 function applyMapFullscreenState(isActive) {
-  if (!HAS_DOM || !document.body || !ui.pivotsMapWrap) return;
+  if (!HAS_DOM || !document.body) return;
   state.mapFullscreenActive = !!isActive;
   document.body.classList.toggle("map-fullscreen-active", state.mapFullscreenActive);
+  if (ui.mapFullscreenTarget) {
+    ui.mapFullscreenTarget.classList.toggle("is-fullscreen", state.mapFullscreenActive);
+  }
   if (ui.mapFullscreenBtn) {
     ui.mapFullscreenBtn.textContent = state.mapFullscreenActive ? "Sair da tela cheia" : "Tela cheia";
     ui.mapFullscreenBtn.setAttribute("aria-pressed", state.mapFullscreenActive ? "true" : "false");
