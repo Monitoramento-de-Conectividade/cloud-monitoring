@@ -56,6 +56,8 @@ const MAP_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const MAP_TILE_ATTRIBUTION = "&copy; OpenStreetMap contributors";
 const FULLSCREEN_ICON_ENTER_PATH = "M4 10V4h6v2H6v4H4zm10-6h6v6h-2V6h-4V4zM6 14v4h4v2H4v-6h2zm12 4v-4h2v6h-6v-2h4z";
 const FULLSCREEN_ICON_EXIT_PATH = "M8 4h3v2H8v3H6V4h2zm8 0h2v5h-2V6h-3V4h3zM6 15h2v3h3v2H6v-5zm10 3v-3h2v5h-5v-2h3z";
+const MAP_STATUS_FILTER_CODES = ["green", "red", "gray"];
+const MAP_QUALITY_FILTER_CODES = ["green", "calculating", "yellow", "critical"];
 const QUALITY_COLOR_VAR_BY_CODE = {
   green: "--green",
   calculating: "--calculating",
@@ -93,6 +95,10 @@ const ui = HAS_DOM
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
       mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
+      mapSearchInput: document.getElementById("mapSearchInput"),
+      mapFiltersClearBtn: document.getElementById("mapFiltersClearBtn"),
+      mapStatusFilters: document.getElementById("mapStatusFilters"),
+      mapQualityFilters: document.getElementById("mapQualityFilters"),
       pivotsMapWrap: document.getElementById("pivotsMapWrap"),
       pivotsMapCanvas: document.getElementById("pivotsMapCanvas"),
     }
@@ -104,6 +110,9 @@ const state = {
   refreshInFlight: false,
   selectedRunId: null,
   mapFullscreenActive: false,
+  mapSearchTerm: "",
+  mapStatusFilter: "",
+  mapQualityFilter: "",
 };
 
 let mapInstance = null;
@@ -281,6 +290,124 @@ function pinColorForPivot(pivot) {
   const qualityCode = qualityCodeForPivot(pivot);
   const variableName = QUALITY_COLOR_VAR_BY_CODE[qualityCode] || QUALITY_COLOR_VAR_BY_CODE.green;
   return resolveCssVarColor(variableName, "#2a7e4c");
+}
+
+function normalizeMapSearchTerm(value) {
+  return text(value, "").trim().toLowerCase();
+}
+
+function pivotIdForSearch(pivot) {
+  return text((pivot || {}).pivot_id, "").trim().toLowerCase();
+}
+
+function pivotMatchesMapSearch(pivot) {
+  const searchTerm = normalizeMapSearchTerm(state.mapSearchTerm);
+  if (!searchTerm) return true;
+  return pivotIdForSearch(pivot).includes(searchTerm);
+}
+
+function pivotMatchesMapFilters(pivot) {
+  if (!pivotMatchesMapSearch(pivot)) return false;
+  if (state.mapStatusFilter) {
+    const statusCode = statusCodeForPivot(pivot);
+    if (statusCode !== state.mapStatusFilter) return false;
+  }
+  if (state.mapQualityFilter) {
+    const qualityCode = qualityCodeForPivot(pivot);
+    if (qualityCode !== state.mapQualityFilter) return false;
+  }
+  return true;
+}
+
+function countPivotsByMapFilters(pivots) {
+  const source = Array.isArray(pivots) ? pivots : [];
+  const counts = {
+    status: { green: 0, red: 0, gray: 0 },
+    quality: { green: 0, calculating: 0, yellow: 0, critical: 0 },
+  };
+  for (const pivot of source) {
+    const statusCode = statusCodeForPivot(pivot);
+    if (Object.prototype.hasOwnProperty.call(counts.status, statusCode)) {
+      counts.status[statusCode] += 1;
+    }
+    const qualityCode = qualityCodeForPivot(pivot);
+    if (Object.prototype.hasOwnProperty.call(counts.quality, qualityCode)) {
+      counts.quality[qualityCode] += 1;
+    }
+  }
+  return counts;
+}
+
+function setMapFilterCount(container, groupName, code, value) {
+  if (!container) return;
+  const selector = `[data-filter-count="${groupName}:${code}"]`;
+  const target = container.querySelector(selector);
+  if (!target) return;
+  target.textContent = String(Number(value || 0));
+}
+
+function updateMapFilterButtonsState() {
+  if (!HAS_DOM) return;
+  const chips = [];
+  if (ui.mapStatusFilters) {
+    chips.push(...ui.mapStatusFilters.querySelectorAll(".map-filter-chip[data-filter-group][data-filter-code]"));
+  }
+  if (ui.mapQualityFilters) {
+    chips.push(...ui.mapQualityFilters.querySelectorAll(".map-filter-chip[data-filter-group][data-filter-code]"));
+  }
+  chips.forEach((chip) => {
+    const group = text(chip.dataset.filterGroup, "");
+    const code = text(chip.dataset.filterCode, "");
+    let active = false;
+    if (group === "status") active = state.mapStatusFilter === code;
+    if (group === "quality") active = state.mapQualityFilter === code;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function updateMapFilterCounters() {
+  if (!ui.mapStatusFilters && !ui.mapQualityFilters) return;
+  const pivotsBySearch = state.pivots.filter((pivot) => pivotMatchesMapSearch(pivot));
+  const counts = countPivotsByMapFilters(pivotsBySearch);
+  for (const code of MAP_STATUS_FILTER_CODES) {
+    setMapFilterCount(ui.mapStatusFilters, "status", code, counts.status[code] || 0);
+  }
+  for (const code of MAP_QUALITY_FILTER_CODES) {
+    setMapFilterCount(ui.mapQualityFilters, "quality", code, counts.quality[code] || 0);
+  }
+}
+
+function updateMapFilterUi() {
+  updateMapFilterButtonsState();
+  updateMapFilterCounters();
+}
+
+function clearMapFilters() {
+  state.mapSearchTerm = "";
+  state.mapStatusFilter = "";
+  state.mapQualityFilter = "";
+  if (ui.mapSearchInput) ui.mapSearchInput.value = "";
+  updateMapFilterUi();
+  renderMapMarkers();
+}
+
+function handleMapFilterChipClick(event) {
+  const target = event?.target;
+  const chip = target && typeof target.closest === "function"
+    ? target.closest(".map-filter-chip[data-filter-group][data-filter-code]")
+    : null;
+  if (!chip) return;
+  const group = text(chip.dataset.filterGroup, "");
+  const code = text(chip.dataset.filterCode, "");
+  if (!group || !code) return;
+  if (group === "status") {
+    state.mapStatusFilter = state.mapStatusFilter === code ? "" : code;
+  } else if (group === "quality") {
+    state.mapQualityFilter = state.mapQualityFilter === code ? "" : code;
+  }
+  updateMapFilterUi();
+  renderMapMarkers();
 }
 
 function buildPinIcon(pivot, zoomLevel) {
@@ -561,9 +688,10 @@ function renderMapMarkers() {
   if (!mapInstance || !markerLayer || !window.L) return;
   markerLayer.clearLayers();
 
+  const filteredPivots = state.pivots.filter((pivot) => pivotMatchesMapFilters(pivot));
   const zoomLevel = Number(mapInstance.getZoom() || MAP_DEFAULT_ZOOM);
   let markerCount = 0;
-  for (const pivot of state.pivots) {
+  for (const pivot of filteredPivots) {
     if (!hasValidPivotCoordinates(pivot)) continue;
     const { latitude, longitude } = extractPivotCoordinates(pivot);
     const icon = buildPinIcon(pivot, zoomLevel);
@@ -584,11 +712,15 @@ function renderMapMarkers() {
     markerCount += 1;
   }
 
-  if (!markerCount) {
-    setStatus("Nenhum pivo com latitude/longitude valida para exibir no mapa.");
+  if (!filteredPivots.length) {
+    setStatus("Nenhum pivo encontrado com os filtros atuais.");
     return;
   }
-  setStatus(`${markerCount} pivo(s) com coordenadas validas no mapa.`);
+  if (!markerCount) {
+    setStatus("Nenhum pivo com latitude/longitude valida para os filtros atuais.");
+    return;
+  }
+  setStatus(`${markerCount} pivo(s) exibido(s) no mapa (${filteredPivots.length} apos filtros).`);
 }
 
 async function getJson(url) {
@@ -660,6 +792,7 @@ async function refreshMapData() {
     state.pivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
 
     renderHeader(state.payload);
+    updateMapFilterUi();
     renderMapMarkers();
   } catch (err) {
     setStatus("Nao foi possivel carregar os dados do mapa.");
@@ -675,6 +808,8 @@ async function boot() {
   if (!ensureMapReady()) return;
   syncMapFullscreenUi();
 
+  updateMapFilterUi();
+
   if (ui.mapRefreshBtn) {
     ui.mapRefreshBtn.addEventListener("click", () => {
       void refreshMapData();
@@ -684,6 +819,24 @@ async function boot() {
     ui.mapFullscreenBtn.addEventListener("click", () => {
       void toggleMapFullscreen();
     });
+  }
+  if (ui.mapSearchInput) {
+    ui.mapSearchInput.addEventListener("input", () => {
+      state.mapSearchTerm = normalizeMapSearchTerm(ui.mapSearchInput.value);
+      updateMapFilterUi();
+      renderMapMarkers();
+    });
+  }
+  if (ui.mapFiltersClearBtn) {
+    ui.mapFiltersClearBtn.addEventListener("click", () => {
+      clearMapFilters();
+    });
+  }
+  if (ui.mapStatusFilters) {
+    ui.mapStatusFilters.addEventListener("click", handleMapFilterChipClick);
+  }
+  if (ui.mapQualityFilters) {
+    ui.mapQualityFilters.addEventListener("click", handleMapFilterChipClick);
   }
   document.addEventListener("fullscreenchange", syncMapFullscreenUi);
   document.addEventListener("webkitfullscreenchange", syncMapFullscreenUi);
