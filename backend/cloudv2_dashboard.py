@@ -1134,16 +1134,6 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return
 
             if path == "/api/pivot-reset-modem":
-                if not self._can_delete_pivots(auth_context):
-                    self._write_json(
-                        403,
-                        {
-                            "ok": False,
-                            "code": "fixed_admin_required",
-                            "message": "Apenas o administrador principal pode resetar o modem do pivo.",
-                        },
-                    )
-                    return
                 try:
                     body = self._read_json_body()
                 except json.JSONDecodeError:

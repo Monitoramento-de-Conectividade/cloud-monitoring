@@ -3396,8 +3396,8 @@ function syncPivotTechnologyControl() {
     ui.savePivotLocationBtn.disabled = !allowed || !hasPivotSelected;
   }
   if (ui.resetPivotModemBtn) {
-    ui.resetPivotModemBtn.hidden = !allowed;
-    ui.resetPivotModemBtn.disabled = !allowed || !hasPivotSelected;
+    ui.resetPivotModemBtn.hidden = !hasPivotSelected;
+    ui.resetPivotModemBtn.disabled = !hasPivotSelected;
   }
 
   if (ui.pivotTechnologyHint && disableTechControl) {
@@ -3497,12 +3497,6 @@ async function savePivotLocationSetting() {
 }
 
 async function resetSelectedPivotModem() {
-  if (!canCurrentUserManagePivotTechnology()) {
-    syncPivotTechnologyControl();
-    showToast("Apenas o administrador principal pode resetar o modem do pivô.", "error", 3800);
-    return;
-  }
-
   const pivotId = String(state.selectedPivot || "").trim();
   if (!pivotId) return;
 
@@ -3546,9 +3540,8 @@ async function resetSelectedPivotModem() {
     showToast("Não foi possível enviar o reset do modem.", "error", 4200);
   } finally {
     if (ui.resetPivotModemBtn) {
-      const allowed = canCurrentUserManagePivotTechnology();
       const hasPivotSelected = !!String(state.selectedPivot || "").trim();
-      ui.resetPivotModemBtn.disabled = !(allowed && hasPivotSelected);
+      ui.resetPivotModemBtn.disabled = !hasPivotSelected;
     }
   }
 }
