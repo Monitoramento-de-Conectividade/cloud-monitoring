@@ -307,6 +307,7 @@ class TelemetryStore:
         self._last_write_ts = 0.0
         self._event_seq = 0
         self._probe_sender = None
+        self._modem_reset_sender = None
         self._api_cache_generation = 0
         self._state_snapshot_cache = {}
         self._quality_cards_cache = {}
@@ -440,6 +441,9 @@ class TelemetryStore:
     def set_probe_sender(self, sender_fn):
         self._probe_sender = sender_fn
 
+    def set_modem_reset_sender(self, sender_fn):
+        self._modem_reset_sender = sender_fn
+
     def _api_cache_key(self, run_id):
         normalized_run = str(run_id or "").strip()
         return normalized_run or "__default__"
@@ -508,6 +512,10 @@ class TelemetryStore:
                     "reason": "monitoramento aguardando aplicacao",
                     "mode": self._monitoring_mode,
                 }
+
+            modem_reset_ack = self._record_modem_reset_ack_if_applicable_locked(topic, payload_text, ts)
+            if modem_reset_ack is not None:
+                return modem_reset_ack
 
             if topic not in self.monitor_topics:
                 self.log.warning("Mensagem em topico nao monitorado descartada: topic=%s", topic)
@@ -583,6 +591,69 @@ class TelemetryStore:
                 "event": topic,
                 "session_id": pivot.get("session_id"),
             }
+
+    def _record_modem_reset_ack_if_applicable_locked(self, topic, payload_text, ts):
+        if not topic or not payload_text:
+            return None
+        if not payload_text.startswith("#92-") or not payload_text.endswith("-reset_system$"):
+            return None
+
+        parsed, parse_error = parse_device_payload(payload_text)
+        if parse_error or not isinstance(parsed, dict):
+            return None
+
+        if str(parsed.get("idp") or "").strip() != "92":
+            return None
+
+        parts = parsed.get("parts")
+        if not isinstance(parts, list) or len(parts) < 3:
+            return None
+        if str(parts[2] or "").strip().lower() != "reset_system":
+            return None
+
+        pivot_id = str(parsed.get("pivot_id") or "").strip()
+        if not pivot_id:
+            return None
+        if topic != pivot_id:
+            self.log.warning(
+                "ACK de reset descartado por topico divergente: topic=%s pivot_id=%s payload=%s",
+                topic,
+                pivot_id,
+                payload_text,
+            )
+            return {"accepted": False, "reason": "ack reset em topico divergente", "pivot_id": pivot_id}
+
+        pivot = self.pivots.get(pivot_id)
+        if pivot is None:
+            self.log.info(
+                "ACK de reset descartado para pivot nao descoberto: pivot_id=%s topic=%s",
+                pivot_id,
+                topic,
+            )
+            return {"accepted": False, "reason": "ack reset para pivot nao descoberto", "pivot_id": pivot_id}
+
+        modem_reset = pivot.get("modem_reset")
+        if not isinstance(modem_reset, dict):
+            modem_reset = {}
+            pivot["modem_reset"] = modem_reset
+
+        modem_reset["last_ack_ts"] = ts
+        modem_reset["last_ack_topic"] = topic
+        modem_reset["last_ack_payload"] = payload_text
+        modem_reset["last_ack_idp"] = str(parsed.get("idp") or "")
+        modem_reset["ack_count"] = int(modem_reset.get("ack_count") or 0) + 1
+
+        self._persist_pivot_snapshot_locked(pivot, ts)
+        self._dirty = True
+        self._invalidate_api_caches_locked()
+
+        self.log.info("ACK de reset registrado: pivot_id=%s topic=%s payload=%s", pivot_id, topic, payload_text)
+        return {
+            "accepted": True,
+            "pivot_id": pivot_id,
+            "event": "modem_reset_ack",
+            "session_id": pivot.get("session_id"),
+        }
 
     def tick(self, now=None):
         now = float(now if now is not None else time.time())
@@ -1768,6 +1839,51 @@ class TelemetryStore:
             "longitude": _safe_float(persisted.get("longitude"), None),
         }
 
+    def send_modem_reset_command(self, pivot_id):
+        normalized_pivot = str(pivot_id or "").strip()
+        if not normalized_pivot:
+            raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized_pivot):
+            raise ValueError("pivot_id invalido")
+
+        sender = self._modem_reset_sender
+        if sender is None:
+            raise RuntimeError("envio de reset nao configurado")
+
+        with self._lock:
+            pivot = self.pivots.get(normalized_pivot)
+            if pivot is None:
+                raise ValueError("pivot nao encontrado")
+
+        payload = "#92$"
+        command_ts = time.time()
+        sent_ok = bool(sender(normalized_pivot, payload))
+        if not sent_ok:
+            raise RuntimeError("falha ao enviar comando de reset")
+        with self._lock:
+            pivot = self.pivots.get(normalized_pivot)
+            if pivot is not None:
+                modem_reset = pivot.get("modem_reset")
+                if not isinstance(modem_reset, dict):
+                    modem_reset = {}
+                    pivot["modem_reset"] = modem_reset
+                modem_reset["last_command_ts"] = command_ts
+                modem_reset["last_command_topic"] = normalized_pivot
+                modem_reset["last_command_payload"] = payload
+                modem_reset["command_count"] = int(modem_reset.get("command_count") or 0) + 1
+                self._persist_pivot_snapshot_locked(pivot, command_ts)
+                self._dirty = True
+                self._invalidate_api_caches_locked()
+
+        self.log.info("Comando de reset #92$ enviado para pivot_id=%s", normalized_pivot)
+        return {
+            "pivot_id": normalized_pivot,
+            "topic": normalized_pivot,
+            "payload": payload,
+            "command_ts": command_ts,
+            "command_at": _ts_to_str(command_ts),
+        }
+
     def _background_loop(self):
         while not self._stop_event.is_set():
             now = time.time()
@@ -1933,6 +2049,17 @@ class TelemetryStore:
                 "timeout_streak": 0,
                 "last_result": None,
                 "events": [],
+            },
+            "modem_reset": {
+                "last_command_ts": None,
+                "last_command_topic": None,
+                "last_command_payload": None,
+                "last_ack_ts": None,
+                "last_ack_topic": None,
+                "last_ack_payload": None,
+                "last_ack_idp": None,
+                "command_count": 0,
+                "ack_count": 0,
             },
             "status_cache": {
                 "code": "gray",
@@ -3330,6 +3457,9 @@ class TelemetryStore:
         status = self._compute_status_locked(pivot, now)
         probe = pivot["probe"]
         probe_stats = self._summarize_probe_stats_locked(probe)
+        modem_reset = pivot.get("modem_reset")
+        if not isinstance(modem_reset, dict):
+            modem_reset = {}
         is_concentrator = bool(pivot.get("is_concentrator"))
         source_last_cloud2 = pivot.get("last_cloud2")
         last_cloud2 = dict(source_last_cloud2) if isinstance(source_last_cloud2, dict) else {}
@@ -3451,6 +3581,18 @@ class TelemetryStore:
                 "latency_median_sec": probe_stats["latency_median_sec"],
                 "latency_min_sec": probe_stats["latency_min_sec"],
                 "latency_max_sec": probe_stats["latency_max_sec"],
+            },
+            "modem_reset": {
+                "last_command_ts": _safe_float(modem_reset.get("last_command_ts"), None),
+                "last_command_at": _ts_to_str(modem_reset.get("last_command_ts")),
+                "last_command_topic": _normalize_text(modem_reset.get("last_command_topic")),
+                "last_command_payload": _normalize_text(modem_reset.get("last_command_payload")),
+                "last_ack_ts": _safe_float(modem_reset.get("last_ack_ts"), None),
+                "last_ack_at": _ts_to_str(modem_reset.get("last_ack_ts")),
+                "last_ack_topic": _normalize_text(modem_reset.get("last_ack_topic")),
+                "last_ack_payload": _normalize_text(modem_reset.get("last_ack_payload")),
+                "command_count": int(modem_reset.get("command_count") or 0),
+                "ack_count": int(modem_reset.get("ack_count") or 0),
             },
         }
 
@@ -3691,6 +3833,22 @@ class TelemetryStore:
                         probe["last_result"] = raw_probe.get("last_result")
                         if isinstance(raw_probe.get("events"), list):
                             probe["events"] = raw_probe.get("events")[-self.max_events_per_pivot :]
+
+                    raw_modem_reset = raw_pivot.get("modem_reset")
+                    if isinstance(raw_modem_reset, dict):
+                        modem_reset = pivot.get("modem_reset")
+                        if not isinstance(modem_reset, dict):
+                            modem_reset = {}
+                            pivot["modem_reset"] = modem_reset
+                        modem_reset["last_command_ts"] = _safe_float(raw_modem_reset.get("last_command_ts"), None)
+                        modem_reset["last_command_topic"] = raw_modem_reset.get("last_command_topic")
+                        modem_reset["last_command_payload"] = raw_modem_reset.get("last_command_payload")
+                        modem_reset["last_ack_ts"] = _safe_float(raw_modem_reset.get("last_ack_ts"), None)
+                        modem_reset["last_ack_topic"] = raw_modem_reset.get("last_ack_topic")
+                        modem_reset["last_ack_payload"] = raw_modem_reset.get("last_ack_payload")
+                        modem_reset["last_ack_idp"] = raw_modem_reset.get("last_ack_idp")
+                        modem_reset["command_count"] = _safe_int(raw_modem_reset.get("command_count"), 0) or 0
+                        modem_reset["ack_count"] = _safe_int(raw_modem_reset.get("ack_count"), 0) or 0
 
                     raw_status = raw_pivot.get("status_cache")
                     if isinstance(raw_status, dict):
