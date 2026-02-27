@@ -2726,6 +2726,15 @@ class TelemetryStore:
         raw_payload=None,
         parsed_payload=None,
     ):
+        event_details = dict(details or {})
+        normalized_source_topic = str(source_topic or "").strip()
+        if normalized_source_topic and "source_topic" not in event_details:
+            event_details["source_topic"] = normalized_source_topic
+        if raw_payload not in (None, "") and "raw_payload" not in event_details:
+            event_details["raw_payload"] = str(raw_payload)
+        if isinstance(parsed_payload, dict) and parsed_payload and "parsed_payload" not in event_details:
+            event_details["parsed_payload"] = parsed_payload
+
         self._event_seq += 1
         event = {
             "id": self._event_seq,
@@ -2734,7 +2743,7 @@ class TelemetryStore:
             "type": event_type,
             "topic": topic,
             "summary": summary,
-            "details": details or {},
+            "details": event_details,
         }
         pivot["timeline"].append(event)
         if len(pivot["timeline"]) > self.max_events_per_pivot:

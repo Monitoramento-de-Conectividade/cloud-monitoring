@@ -222,7 +222,7 @@ const state = {
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
-const CONNECTIVITY_EVENTS_MAX_PAGES = 3;
+const CONNECTIVITY_EVENTS_MAX_PAGES = 5;
 const MODEM_RESET_ACK_MIN_FIRMWARE = [2, 8, 4];
 const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
 const DASHBOARD_DATETIME_UTC_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
@@ -857,6 +857,52 @@ function buildEventDetailsText(event) {
   }
 
   return lines.length ? lines.join("\n") : "Sem detalhes adicionais.";
+}
+
+function resolveConnectivityEventSourceTopic(event) {
+  const details = (event || {}).details;
+  const detailsObj = details && typeof details === "object" ? details : {};
+  const sourceTopic = text(detailsObj.source_topic, "").trim();
+  if (sourceTopic) return sourceTopic;
+  const topic = text((event || {}).topic, "").trim();
+  if (topic) return topic;
+  return "-";
+}
+
+function resolveConnectivityEventRawPayload(event) {
+  const details = (event || {}).details;
+  const detailsObj = details && typeof details === "object" ? details : {};
+  const rawPayload = text(detailsObj.raw_payload, "").trim();
+  if (rawPayload) return rawPayload;
+  const parsedPayload = detailsObj.parsed_payload;
+  if (parsedPayload && typeof parsedPayload === "object") {
+    const rawFromParsed = text(parsedPayload.raw, "").trim();
+    if (rawFromParsed) return rawFromParsed;
+  }
+  return "";
+}
+
+function buildConnectivityEventTitle(event) {
+  const sourceTopic = resolveConnectivityEventSourceTopic(event);
+  if (sourceTopic && sourceTopic !== "-") return `Mensagem Recebida de ${sourceTopic}`;
+  return "Mensagem recebida";
+}
+
+function buildConnectivityEventDetailsText(event) {
+  const sourceTopic = resolveConnectivityEventSourceTopic(event);
+  const rawPayload = resolveConnectivityEventRawPayload(event);
+  const detailsText = buildEventDetailsText(event);
+  const lines = [];
+  if (sourceTopic && sourceTopic !== "-") {
+    lines.push(`Origem: ${sourceTopic}`);
+  }
+  if (rawPayload) {
+    lines.push(`Payload:\n${rawPayload}`);
+  }
+  if (detailsText && detailsText !== "Sem detalhes adicionais.") {
+    lines.push(detailsText);
+  }
+  return lines.length ? lines.join("\n\n") : "Sem detalhes adicionais.";
 }
 
 function getDisplayQuality(item) {
@@ -2936,17 +2982,19 @@ function renderTimeline(pivot) {
     ui.timelineList.innerHTML = pageEvents
       .map((event) => {
         const type = text(event.type, "event");
-        const title = EVENT_LABEL[type] || "Evento";
-        const summaryText = buildEventSummary(event);
-        const detailsText = buildEventDetailsText(event);
+        const title = buildConnectivityEventTitle(event);
+        const sourceTopic = resolveConnectivityEventSourceTopic(event);
+        const rawPayload = resolveConnectivityEventRawPayload(event);
+        const detailsText = buildConnectivityEventDetailsText(event);
+        const payloadText = rawPayload || "Payload nao disponivel para este evento.";
         return `
           <article class="event ${escapeHtml(type)}">
             <div class="event-head">
               <div class="event-title">${escapeHtml(title)}</div>
               <div class="event-time">${escapeHtml(text(event.at))}</div>
             </div>
-            <div class="event-topic">Categoria: Evento de conectividade</div>
-            <div>${escapeHtml(summaryText)}</div>
+            <div class="event-topic">Origem: ${escapeHtml(sourceTopic)}</div>
+            <div>${escapeHtml(payloadText)}</div>
             <details class="event-details">
               <summary>Informações adicionais</summary>
               <pre>${escapeHtml(detailsText)}</pre>
