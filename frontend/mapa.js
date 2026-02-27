@@ -54,6 +54,10 @@ const MAP_MIN_ZOOM = 3;
 const MAP_MAX_ZOOM = 18;
 const MAP_TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 const MAP_TILE_ATTRIBUTION = "&copy; OpenStreetMap contributors";
+const FULLSCREEN_ICON_ENTER_PATH = "M4 10V4h6v2H6v4H4zm10-6h6v6h-2V6h-4V4zM6 14v4h4v2H4v-6h2zm12 4v-4h2v6h-6v-2h4z";
+const FULLSCREEN_ICON_EXIT_PATH = "M8 4h3v2H8v3H6V4h2zm8 0h2v5h-2V6h-3V4h3zM6 15h2v3h3v2H6v-5zm10 3v-3h2v5h-5v-2h3z";
+const MAP_STATUS_FILTER_CODES = ["green", "red", "gray"];
+const MAP_QUALITY_FILTER_CODES = ["green", "calculating", "yellow", "critical"];
 const QUALITY_COLOR_VAR_BY_CODE = {
   green: "--green",
   calculating: "--calculating",
@@ -90,6 +94,15 @@ const ui = HAS_DOM
       mapCountsMeta: document.getElementById("mapCountsMeta"),
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
+      mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
+      mapFiltersPanel: document.getElementById("mapFiltersPanel"),
+      mapFiltersMinimizeBtn: document.getElementById("mapFiltersMinimizeBtn"),
+      mapFiltersRestoreBtn: document.getElementById("mapFiltersRestoreBtn"),
+      mapSearchInput: document.getElementById("mapSearchInput"),
+      mapFiltersClearBtn: document.getElementById("mapFiltersClearBtn"),
+      mapStatusFilters: document.getElementById("mapStatusFilters"),
+      mapQualityFilters: document.getElementById("mapQualityFilters"),
+      pivotsMapWrap: document.getElementById("pivotsMapWrap"),
       pivotsMapCanvas: document.getElementById("pivotsMapCanvas"),
     }
   : {};
@@ -99,6 +112,11 @@ const state = {
   pivots: [],
   refreshInFlight: false,
   selectedRunId: null,
+  mapFullscreenActive: false,
+  mapSearchTerm: "",
+  mapStatusFilter: "",
+  mapQualityFilter: "",
+  mapFiltersMinimized: false,
 };
 
 let mapInstance = null;
@@ -278,6 +296,144 @@ function pinColorForPivot(pivot) {
   return resolveCssVarColor(variableName, "#2a7e4c");
 }
 
+function normalizeMapSearchTerm(value) {
+  return text(value, "").trim().toLowerCase();
+}
+
+function pivotIdForSearch(pivot) {
+  return text((pivot || {}).pivot_id, "").trim().toLowerCase();
+}
+
+function pivotMatchesMapSearch(pivot) {
+  const searchTerm = normalizeMapSearchTerm(state.mapSearchTerm);
+  if (!searchTerm) return true;
+  return pivotIdForSearch(pivot).includes(searchTerm);
+}
+
+function pivotMatchesMapFilters(pivot) {
+  if (!pivotMatchesMapSearch(pivot)) return false;
+  if (state.mapStatusFilter) {
+    const statusCode = statusCodeForPivot(pivot);
+    if (statusCode !== state.mapStatusFilter) return false;
+  }
+  if (state.mapQualityFilter) {
+    const qualityCode = qualityCodeForPivot(pivot);
+    if (qualityCode !== state.mapQualityFilter) return false;
+  }
+  return true;
+}
+
+function countPivotsByMapFilters(pivots) {
+  const source = Array.isArray(pivots) ? pivots : [];
+  const counts = {
+    status: { green: 0, red: 0, gray: 0 },
+    quality: { green: 0, calculating: 0, yellow: 0, critical: 0 },
+  };
+  for (const pivot of source) {
+    const statusCode = statusCodeForPivot(pivot);
+    if (Object.prototype.hasOwnProperty.call(counts.status, statusCode)) {
+      counts.status[statusCode] += 1;
+    }
+    const qualityCode = qualityCodeForPivot(pivot);
+    if (Object.prototype.hasOwnProperty.call(counts.quality, qualityCode)) {
+      counts.quality[qualityCode] += 1;
+    }
+  }
+  return counts;
+}
+
+function setMapFilterCount(container, groupName, code, value) {
+  if (!container) return;
+  const selector = `[data-filter-count="${groupName}:${code}"]`;
+  const target = container.querySelector(selector);
+  if (!target) return;
+  target.textContent = String(Number(value || 0));
+}
+
+function updateMapFilterButtonsState() {
+  if (!HAS_DOM) return;
+  const chips = [];
+  if (ui.mapStatusFilters) {
+    chips.push(...ui.mapStatusFilters.querySelectorAll(".map-filter-chip[data-filter-group][data-filter-code]"));
+  }
+  if (ui.mapQualityFilters) {
+    chips.push(...ui.mapQualityFilters.querySelectorAll(".map-filter-chip[data-filter-group][data-filter-code]"));
+  }
+  chips.forEach((chip) => {
+    const group = text(chip.dataset.filterGroup, "");
+    const code = text(chip.dataset.filterCode, "");
+    let active = false;
+    if (group === "status") active = state.mapStatusFilter === code;
+    if (group === "quality") active = state.mapQualityFilter === code;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function updateMapFilterCounters() {
+  if (!ui.mapStatusFilters && !ui.mapQualityFilters) return;
+  const pivotsBySearch = state.pivots.filter((pivot) => pivotMatchesMapSearch(pivot));
+  const counts = countPivotsByMapFilters(pivotsBySearch);
+  for (const code of MAP_STATUS_FILTER_CODES) {
+    setMapFilterCount(ui.mapStatusFilters, "status", code, counts.status[code] || 0);
+  }
+  for (const code of MAP_QUALITY_FILTER_CODES) {
+    setMapFilterCount(ui.mapQualityFilters, "quality", code, counts.quality[code] || 0);
+  }
+}
+
+function updateMapFilterUi() {
+  updateMapFilterButtonsState();
+  updateMapFilterCounters();
+}
+
+function applyMapFiltersPanelVisibility() {
+  const minimized = !!state.mapFiltersMinimized;
+  if (ui.mapFiltersPanel) {
+    ui.mapFiltersPanel.hidden = minimized;
+  }
+  if (ui.mapFiltersRestoreBtn) {
+    ui.mapFiltersRestoreBtn.hidden = !minimized;
+  }
+}
+
+function minimizeMapFiltersPanel() {
+  state.mapFiltersMinimized = true;
+  applyMapFiltersPanelVisibility();
+}
+
+function restoreMapFiltersPanel() {
+  state.mapFiltersMinimized = false;
+  applyMapFiltersPanelVisibility();
+}
+
+function clearMapFilters() {
+  state.mapSearchTerm = "";
+  state.mapStatusFilter = "";
+  state.mapQualityFilter = "";
+  if (ui.mapSearchInput) ui.mapSearchInput.value = "";
+  updateMapFilterUi();
+  renderMapMarkers();
+}
+
+function handleMapFilterChipClick(event) {
+  const target = event?.target;
+  const chip = target && typeof target.closest === "function"
+    ? target.closest(".map-filter-chip[data-filter-group][data-filter-code]")
+    : null;
+  if (!chip) return;
+  const group = text(chip.dataset.filterGroup, "");
+  const code = text(chip.dataset.filterCode, "");
+  if (!group || !code) return;
+  if (group === "status") {
+    state.mapStatusFilter = state.mapStatusFilter === code ? "" : code;
+  } else if (group === "quality") {
+    state.mapQualityFilter = state.mapQualityFilter === code ? "" : code;
+  }
+  updateMapFilterUi();
+  renderMapMarkers();
+}
+
 function buildPinIcon(pivot, zoomLevel) {
   if (!HAS_WINDOW || !window.L) return null;
   const pinSize = mapPinSizeForZoom(zoomLevel);
@@ -454,6 +610,72 @@ function setStatus(message) {
   ui.mapStatus.textContent = String(message || "").trim();
 }
 
+function getFullscreenElement() {
+  if (!HAS_DOM) return null;
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function syncMapFullscreenUi() {
+  const active = !!(ui.pivotsMapWrap && getFullscreenElement() === ui.pivotsMapWrap);
+  state.mapFullscreenActive = active;
+  if (ui.mapFullscreenBtn) {
+    const iconPath = ui.mapFullscreenBtn.querySelector("svg path");
+    if (iconPath) {
+      iconPath.setAttribute("d", active ? FULLSCREEN_ICON_EXIT_PATH : FULLSCREEN_ICON_ENTER_PATH);
+    }
+    ui.mapFullscreenBtn.setAttribute("aria-pressed", active ? "true" : "false");
+    ui.mapFullscreenBtn.setAttribute(
+      "aria-label",
+      active ? "Sair da visualizacao em tela cheia" : "Ativar visualizacao em tela cheia"
+    );
+    ui.mapFullscreenBtn.setAttribute(
+      "title",
+      active ? "Sair da visualizacao em tela cheia (Esc)" : "Ativar visualizacao em tela cheia"
+    );
+  }
+  window.setTimeout(() => {
+    if (!mapInstance) return;
+    mapInstance.invalidateSize();
+  }, 0);
+}
+
+async function enterMapFullscreen() {
+  if (!ui.pivotsMapWrap) return;
+  if (typeof ui.pivotsMapWrap.requestFullscreen === "function") {
+    await ui.pivotsMapWrap.requestFullscreen();
+    return;
+  }
+  if (typeof ui.pivotsMapWrap.webkitRequestFullscreen === "function") {
+    ui.pivotsMapWrap.webkitRequestFullscreen();
+  }
+}
+
+async function exitAnyFullscreen() {
+  if (!HAS_DOM) return;
+  if (typeof document.exitFullscreen === "function") {
+    await document.exitFullscreen();
+    return;
+  }
+  if (typeof document.webkitExitFullscreen === "function") {
+    document.webkitExitFullscreen();
+  }
+}
+
+async function toggleMapFullscreen() {
+  const active = !!(ui.pivotsMapWrap && getFullscreenElement() === ui.pivotsMapWrap);
+  try {
+    if (active) {
+      await exitAnyFullscreen();
+    } else {
+      await enterMapFullscreen();
+    }
+  } catch (err) {
+    // no-op
+  } finally {
+    syncMapFullscreenUi();
+  }
+}
+
 function renderHeader(payload) {
   const safePayload = payload && typeof payload === "object" ? payload : {};
   const counts = safePayload.counts && typeof safePayload.counts === "object" ? safePayload.counts : {};
@@ -490,9 +712,10 @@ function renderMapMarkers() {
   if (!mapInstance || !markerLayer || !window.L) return;
   markerLayer.clearLayers();
 
+  const filteredPivots = state.pivots.filter((pivot) => pivotMatchesMapFilters(pivot));
   const zoomLevel = Number(mapInstance.getZoom() || MAP_DEFAULT_ZOOM);
   let markerCount = 0;
-  for (const pivot of state.pivots) {
+  for (const pivot of filteredPivots) {
     if (!hasValidPivotCoordinates(pivot)) continue;
     const { latitude, longitude } = extractPivotCoordinates(pivot);
     const icon = buildPinIcon(pivot, zoomLevel);
@@ -505,19 +728,22 @@ function renderMapMarkers() {
     });
     marker.bindPopup(buildPopupHtml(pivot), {
       maxWidth: 360,
-      closeButton: false,
+      closeButton: true,
       autoPan: true,
     });
-    marker.on("mouseover", () => marker.openPopup());
     marker.addTo(markerLayer);
     markerCount += 1;
   }
 
-  if (!markerCount) {
-    setStatus("Nenhum pivo com latitude/longitude valida para exibir no mapa.");
+  if (!filteredPivots.length) {
+    setStatus("Nenhum pivo encontrado com os filtros atuais.");
     return;
   }
-  setStatus(`${markerCount} pivo(s) com coordenadas validas no mapa.`);
+  if (!markerCount) {
+    setStatus("Nenhum pivo com latitude/longitude valida para os filtros atuais.");
+    return;
+  }
+  setStatus(`${markerCount} pivo(s) exibido(s) no mapa (${filteredPivots.length} apos filtros).`);
 }
 
 async function getJson(url) {
@@ -589,6 +815,7 @@ async function refreshMapData() {
     state.pivots = Array.isArray(state.payload.pivots) ? state.payload.pivots : [];
 
     renderHeader(state.payload);
+    updateMapFilterUi();
     renderMapMarkers();
   } catch (err) {
     setStatus("Nao foi possivel carregar os dados do mapa.");
@@ -602,12 +829,51 @@ async function boot() {
   if (!HAS_DOM) return;
   if (!(await ensureAuthenticated())) return;
   if (!ensureMapReady()) return;
+  syncMapFullscreenUi();
+
+  applyMapFiltersPanelVisibility();
+  updateMapFilterUi();
 
   if (ui.mapRefreshBtn) {
     ui.mapRefreshBtn.addEventListener("click", () => {
       void refreshMapData();
     });
   }
+  if (ui.mapFullscreenBtn) {
+    ui.mapFullscreenBtn.addEventListener("click", () => {
+      void toggleMapFullscreen();
+    });
+  }
+  if (ui.mapSearchInput) {
+    ui.mapSearchInput.addEventListener("input", () => {
+      state.mapSearchTerm = normalizeMapSearchTerm(ui.mapSearchInput.value);
+      updateMapFilterUi();
+      renderMapMarkers();
+    });
+  }
+  if (ui.mapFiltersClearBtn) {
+    ui.mapFiltersClearBtn.addEventListener("click", () => {
+      clearMapFilters();
+    });
+  }
+  if (ui.mapFiltersMinimizeBtn) {
+    ui.mapFiltersMinimizeBtn.addEventListener("click", () => {
+      minimizeMapFiltersPanel();
+    });
+  }
+  if (ui.mapFiltersRestoreBtn) {
+    ui.mapFiltersRestoreBtn.addEventListener("click", () => {
+      restoreMapFiltersPanel();
+    });
+  }
+  if (ui.mapStatusFilters) {
+    ui.mapStatusFilters.addEventListener("click", handleMapFilterChipClick);
+  }
+  if (ui.mapQualityFilters) {
+    ui.mapQualityFilters.addEventListener("click", handleMapFilterChipClick);
+  }
+  document.addEventListener("fullscreenchange", syncMapFullscreenUi);
+  document.addEventListener("webkitfullscreenchange", syncMapFullscreenUi);
 
   window.addEventListener("resize", () => {
     if (!mapInstance) return;

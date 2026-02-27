@@ -7,7 +7,7 @@
   <title>Mapa de Pivos</title>
   <link rel="stylesheet" href="dashboard.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <link rel="stylesheet" href="mapa.css"/>
+  <link rel="stylesheet" href="mapa.css?v=20260227a"/>
 </head>
 <body>
   <main class="layout">
@@ -36,12 +36,85 @@
         <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
       </div>
       <p id="mapStatus" class="hint">Carregando dados...</p>
-      <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
+      <div id="pivotsMapWrap" class="pivots-map-wrap">
+        <div id="mapFiltersPanel" class="map-filters-panel" aria-label="Filtros do mapa">
+          <div class="map-filters-header">
+            <label for="mapSearchInput" class="map-search-label">Buscar pivô</label>
+            <button
+              id="mapFiltersMinimizeBtn"
+              class="ghost map-filters-minimize-btn"
+              type="button"
+              aria-label="Minimizar painel de busca"
+              title="Minimizar painel de busca"
+            >
+              -
+            </button>
+          </div>
+          <div class="map-search-row">
+            <input id="mapSearchInput" class="map-search-input" type="search" placeholder="Ex.: PioneiraLEM_2" autocomplete="off"/>
+            <button id="mapFiltersClearBtn" class="ghost map-filters-clear-btn" type="button">Limpar</button>
+          </div>
+          <div class="map-filter-group">
+            <span class="map-filter-group-label">Status</span>
+            <div id="mapStatusFilters" class="map-filter-chips">
+              <button class="map-filter-chip green" type="button" data-filter-group="status" data-filter-code="green">
+                Conectados <span data-filter-count="status:green">0</span>
+              </button>
+              <button class="map-filter-chip red" type="button" data-filter-group="status" data-filter-code="red">
+                Desconectados <span data-filter-count="status:red">0</span>
+              </button>
+              <button class="map-filter-chip gray" type="button" data-filter-group="status" data-filter-code="gray">
+                Iniciais <span data-filter-count="status:gray">0</span>
+              </button>
+            </div>
+          </div>
+          <div class="map-filter-group">
+            <span class="map-filter-group-label">Conectividade</span>
+            <div id="mapQualityFilters" class="map-filter-chips">
+              <button class="map-filter-chip green" type="button" data-filter-group="quality" data-filter-code="green">
+                Conectividade estavel <span data-filter-count="quality:green">0</span>
+              </button>
+              <button class="map-filter-chip calculating" type="button" data-filter-group="quality" data-filter-code="calculating">
+                Em analise <span data-filter-count="quality:calculating">0</span>
+              </button>
+              <button class="map-filter-chip yellow" type="button" data-filter-group="quality" data-filter-code="yellow">
+                Conectividade instavel <span data-filter-count="quality:yellow">0</span>
+              </button>
+              <button class="map-filter-chip critical" type="button" data-filter-group="quality" data-filter-code="critical">
+                Conectividade critica <span data-filter-count="quality:critical">0</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <button
+          id="mapFiltersRestoreBtn"
+          class="ghost map-filters-restore-btn"
+          type="button"
+          aria-label="Expandir painel de busca"
+          title="Expandir painel de busca"
+          hidden
+        >
+          ^
+        </button>
+        <button
+          id="mapFullscreenBtn"
+          class="ghost map-fullscreen-btn"
+          type="button"
+          aria-pressed="false"
+          aria-label="Ativar visualizacao em tela cheia"
+          title="Ativar visualizacao em tela cheia"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 10V4h6v2H6v4H4zm10-6h6v6h-2V6h-4V4zM6 14v4h4v2H4v-6h2zm12 4v-4h2v6h-6v-2h4z"></path>
+          </svg>
+        </button>
+        <div id="pivotsMapCanvas" class="pivots-map-canvas" aria-label="Mapa de pivôs"></div>
+      </div>
     </section>
   </main>
 
   <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="mapa.js?v=20260219a"></script>
+  <script src="mapa.js?v=20260227a"></script>
 </body>
 </html>

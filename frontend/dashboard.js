@@ -95,6 +95,7 @@ const ui = HAS_DOM
       savePivotTechnologyBtn: document.getElementById("savePivotTechnologyBtn"),
       pivotLocationInput: document.getElementById("pivotLocationInput"),
       savePivotLocationBtn: document.getElementById("savePivotLocationBtn"),
+      resetPivotModemBtn: document.getElementById("resetPivotModemBtn"),
       pivotLocationHint: document.getElementById("pivotLocationHint"),
       pivotTechnologyHint: document.getElementById("pivotTechnologyHint"),
       pivotMoreInfoBtn: document.getElementById("pivotMoreInfoBtn"),
@@ -217,10 +218,12 @@ const state = {
   pivotTableColumnOrder: [],
   pivotTableDragKey: "",
   pivotTablePreferenceLoaded: false,
+  pendingModemResetAck: null,
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
 const CONNECTIVITY_EVENTS_MAX_PAGES = 3;
+const MODEM_RESET_ACK_MIN_FIRMWARE = [2, 8, 4];
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -688,6 +691,62 @@ function parsePivotCoordinatesInput(value) {
     return { ok: false, error: "Longitude deve estar entre -180 e 180." };
   }
   return { ok: true, latitude, longitude };
+}
+
+function parseFirmwareVersionParts(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "-" || raw === "null" || raw === "undefined") return null;
+  const match = raw.match(/v?\s*(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareFirmwareVersionParts(left, right) {
+  const a = Array.isArray(left) ? left : [];
+  const b = Array.isArray(right) ? right : [];
+  for (let index = 0; index < 3; index += 1) {
+    const av = Number(a[index] ?? 0);
+    const bv = Number(b[index] ?? 0);
+    if (av > bv) return 1;
+    if (av < bv) return -1;
+  }
+  return 0;
+}
+
+function supportsModemResetAckByFirmware(firmwareValue) {
+  const firmwareParts = parseFirmwareVersionParts(firmwareValue);
+  if (!firmwareParts) return false;
+  return compareFirmwareVersionParts(firmwareParts, MODEM_RESET_ACK_MIN_FIRMWARE) >= 0;
+}
+
+function getPivotFirmwareVersionForReset(pivot) {
+  const summary = (pivot && typeof pivot.summary === "object" ? pivot.summary : {}) || {};
+  const lastCloud2 = (summary.last_cloud2 && typeof summary.last_cloud2 === "object" ? summary.last_cloud2 : {}) || {};
+  return String(lastCloud2.firmware || "").trim();
+}
+
+function getPivotModemResetSummary(pivot) {
+  const summary = (pivot && typeof pivot.summary === "object" ? pivot.summary : {}) || {};
+  const modemReset = summary.modem_reset;
+  return modemReset && typeof modemReset === "object" ? modemReset : {};
+}
+
+function checkPendingModemResetAck() {
+  const pending = state.pendingModemResetAck;
+  if (!pending || typeof pending !== "object") return;
+  const selectedPivot = String(state.selectedPivot || "").trim();
+  if (!selectedPivot || selectedPivot !== String(pending.pivotId || "").trim()) return;
+  const pivot = state.pivotData;
+  if (!pivot || String(pivot.pivot_id || "").trim() !== selectedPivot) return;
+
+  const modemReset = getPivotModemResetSummary(pivot);
+  const ackTs = Number(modemReset.last_ack_ts);
+  const commandTs = Number(pending.commandTs);
+  if (!Number.isFinite(ackTs) || !Number.isFinite(commandTs)) return;
+  if (ackTs + 0.001 < commandTs) return;
+
+  state.pendingModemResetAck = null;
+  window.alert("Restart realizado com sucesso");
 }
 
 function escapeHtml(value) {
@@ -1658,47 +1717,55 @@ function renderStatusSummary() {
     {
       label: "Total",
       value: stateCounts.all,
+      tone: "neutral",
       tooltip: "Quantidade total de pivos monitorados no painel.",
     },
     {
       label: "Conectados",
       value: stateCounts.green,
+      tone: "green",
       tooltip:
         "Pivos com Status Conectado. O status fica Conectado quando ha comunicacao recente dentro do limite de desconexao do proprio pivo.",
     },
     {
       label: "Desconectados",
       value: stateCounts.red,
+      tone: "red",
       tooltip:
         "Pivos com Status Desconectado. O status vira Desconectado quando o tempo sem comunicacao ultrapassa o limite de desconexao calculado para o pivo.",
     },
     {
       label: "Iniciais",
       value: stateCounts.gray,
+      tone: "gray",
       tooltip:
         `Pivos com Status Inicial. Isso ocorre enquanto o sistema ainda esta coletando dados para definir o comportamento normal (minimo de ${minSamples} amostras cloudv2).`,
     },
     {
       label: "Conectividade estavel",
       value: qualityCounts.green,
+      tone: "green",
       tooltip:
         `Conectividade dentro do esperado no periodo selecionado: percentual desconectado ate ${attentionThreshold.toFixed(1)}% e sem sinais de instabilidade.`,
     },
     {
       label: "Em analise",
       value: qualityCounts.calculating,
+      tone: "calculating",
       tooltip:
         `Conectividade ainda em analise. Ocorre quando o pivo nao atingiu amostras suficientes (minimo ${minSamples}) para calcular a mediana de intervalo.`,
     },
     {
       label: "Conectividade instavel",
       value: qualityCounts.yellow,
+      tone: "yellow",
       tooltip:
         `Conectividade com alerta. Ocorre quando o percentual desconectado supera ${attentionThreshold.toFixed(1)}% sem passar do limite critico (${criticalThreshold.toFixed(1)}%), ou quando so ha sinais auxiliares no periodo.`,
     },
     {
       label: "Conectividade critica",
       value: qualityCounts.critical,
+      tone: "critical",
       tooltip:
         `Conectividade critica no periodo selecionado. Ocorre quando o percentual desconectado fica acima de ${criticalThreshold.toFixed(1)}%.`,
     },
@@ -1723,10 +1790,9 @@ function renderStatusSummary() {
     .map(
       (item) => `
         <div
-          class="summary-pill"
+          class="summary-pill summary-pill--${escapeHtml(text(item.tone, "neutral"))}"
           title="${escapeHtml(item.tooltip)}"
           aria-label="${escapeHtml(item.label + ": " + item.tooltip)}"
-          tabindex="0"
         >
           <span>${escapeHtml(item.label)}</span>
           <strong>${item.value}</strong>
@@ -2954,6 +3020,7 @@ function renderPivotView() {
     ui.pivotTechnologyHint.textContent = "";
   }
   syncPivotTechnologyControl();
+  checkPendingModemResetAck();
 
   renderStatusSummary();
   renderCards();
@@ -3271,6 +3338,7 @@ async function openPivot(pivotId) {
 function closePivot() {
   state.connSelectedSegmentKey = null;
   state.pivotMetricsExpanded = false;
+  state.pendingModemResetAck = null;
   state.selectedPivot = null;
   state.pivotData = null;
   state.panelSessionMeta = null;
@@ -3326,6 +3394,10 @@ function syncPivotTechnologyControl() {
   if (ui.savePivotLocationBtn) {
     ui.savePivotLocationBtn.hidden = !allowed;
     ui.savePivotLocationBtn.disabled = !allowed || !hasPivotSelected;
+  }
+  if (ui.resetPivotModemBtn) {
+    ui.resetPivotModemBtn.hidden = !hasPivotSelected;
+    ui.resetPivotModemBtn.disabled = !hasPivotSelected;
   }
 
   if (ui.pivotTechnologyHint && disableTechControl) {
@@ -3421,6 +3493,56 @@ async function savePivotLocationSetting() {
     showToast("Não foi possível salvar a localização do pivô.", "error", 4200);
   } finally {
     if (ui.savePivotLocationBtn) ui.savePivotLocationBtn.disabled = false;
+  }
+}
+
+async function resetSelectedPivotModem() {
+  const pivotId = String(state.selectedPivot || "").trim();
+  if (!pivotId) return;
+
+  const firmware = getPivotFirmwareVersionForReset(state.pivotData);
+  const expectsAck = supportsModemResetAckByFirmware(firmware);
+  const confirmed = window.confirm(`Enviar comando de reset (#92$) para o pivô ${pivotId}?`);
+  if (!confirmed) return;
+
+  if (ui.resetPivotModemBtn) ui.resetPivotModemBtn.disabled = true;
+  try {
+    const response = await fetch(buildApiUrl("/api/pivot-reset-modem"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_id: pivotId,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+
+    const resetCommand = data.reset_command && typeof data.reset_command === "object" ? data.reset_command : {};
+    const commandTs = Number(resetCommand.command_ts);
+    if (expectsAck && Number.isFinite(commandTs)) {
+      state.pendingModemResetAck = {
+        pivotId,
+        commandTs,
+      };
+      showToast("Comando #92$ enviado. Aguardando confirmação de restart do modem.", "success", 4200);
+      await refreshPivot();
+    } else {
+      state.pendingModemResetAck = null;
+      showToast("Comando #92$ enviado para o modem.", "success", 3200);
+      window.alert("Versao de firmware desatualizada, nao é possivel saber se o reset foi feito com sucesso");
+      await refreshPivot();
+    }
+  } catch (err) {
+    state.pendingModemResetAck = null;
+    showToast("Não foi possível enviar o reset do modem.", "error", 4200);
+  } finally {
+    if (ui.resetPivotModemBtn) {
+      const hasPivotSelected = !!String(state.selectedPivot || "").trim();
+      ui.resetPivotModemBtn.disabled = !hasPivotSelected;
+    }
   }
 }
 
@@ -3759,6 +3881,9 @@ function wireEvents() {
   }
   if (ui.savePivotLocationBtn) {
     ui.savePivotLocationBtn.addEventListener("click", savePivotLocationSetting);
+  }
+  if (ui.resetPivotModemBtn) {
+    ui.resetPivotModemBtn.addEventListener("click", resetSelectedPivotModem);
   }
   ui.saveProbe.addEventListener("click", saveProbeSetting);
 

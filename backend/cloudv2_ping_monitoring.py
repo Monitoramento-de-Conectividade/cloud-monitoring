@@ -174,7 +174,7 @@ def preparar_certificados():
         )
 
 
-def _publish_probe_to_dynamic_topic(pivot_topic, payload):
+def _publish_payload_to_dynamic_topic(pivot_topic, payload, *, label="comando"):
     topic = str(pivot_topic or "").strip()
     if not topic:
         return False
@@ -185,20 +185,40 @@ def _publish_probe_to_dynamic_topic(pivot_topic, payload):
         return False
 
     if mqtt_client is None or not mqtt_connected.is_set():
-        logger.warning("MQTT ainda nao conectado para publicar probe em %s.", topic)
+        logger.warning("MQTT ainda nao conectado para publicar %s em %s.", label, topic)
         return False
 
     try:
         result = mqtt_client.publish(topic, payload, qos=0, retain=False)
         ok = result.rc == mqtt.MQTT_ERR_SUCCESS
         if ok:
-            logger.info("Probe enviado no topico dinamico %s com payload %s", topic, payload)
+            logger.info("%s enviado no topico dinamico %s com payload %s", label.capitalize(), topic, payload)
         else:
-            logger.warning("Falha ao publicar probe em %s (rc=%s)", topic, result.rc)
+            logger.warning("Falha ao publicar %s em %s (rc=%s)", label, topic, result.rc)
         return ok
     except Exception as exc:
-        logger.exception("Erro ao publicar probe em %s: %s", topic, exc)
+        logger.exception("Erro ao publicar %s em %s: %s", label, topic, exc)
         return False
+
+
+def _publish_probe_to_dynamic_topic(pivot_topic, payload):
+    return _publish_payload_to_dynamic_topic(pivot_topic, payload, label="probe")
+
+
+def _publish_modem_reset_to_dynamic_topic(pivot_topic, payload):
+    topic = str(pivot_topic or "").strip()
+    if not topic:
+        return False
+    if mqtt_client is None or not mqtt_connected.is_set():
+        logger.warning("MQTT ainda nao conectado para publicar reset de modem em %s.", topic)
+        return False
+    try:
+        subscribe_result = mqtt_client.subscribe(topic)
+        logger.info("Topico dinamico assinado para ACK de reset: %s (resultado=%s)", topic, subscribe_result)
+    except Exception as exc:
+        logger.exception("Erro ao assinar topico dinamico %s para ACK de reset: %s", topic, exc)
+        return False
+    return _publish_payload_to_dynamic_topic(topic, payload, label="reset de modem")
 
 
 def on_connect(client, userdata, flags, rc):
@@ -337,6 +357,7 @@ def main():
 
     telemetry = TelemetryStore(runtime_config, log_dir=LOG_DIR)
     telemetry.set_probe_sender(_publish_probe_to_dynamic_topic)
+    telemetry.set_modem_reset_sender(_publish_modem_reset_to_dynamic_topic)
     telemetry.start()
 
     if DASHBOARD_ENABLED:
