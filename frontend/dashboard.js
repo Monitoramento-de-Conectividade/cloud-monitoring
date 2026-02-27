@@ -224,6 +224,20 @@ const state = {
 const API_REQUEST_TIMEOUT_MS = 12000;
 const CONNECTIVITY_EVENTS_MAX_PAGES = 3;
 const MODEM_RESET_ACK_MIN_FIRMWARE = [2, 8, 4];
+const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
+const DASHBOARD_DATETIME_UTC_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const DASHBOARD_DATETIME_FORMATTER = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("sv-SE", {
+      timeZone: DASHBOARD_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+  : null;
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -636,6 +650,32 @@ function formatDateTimeValue(value) {
     second: "2-digit",
     hour12: false,
   });
+}
+
+function formatUtcToDashboardTimezone(value) {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const raw = String(value).trim();
+  if (!raw) return "-";
+
+  const asNumber = Number(raw);
+  let date = null;
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    date = asNumber > 1000000000000 ? new Date(asNumber) : new Date(asNumber * 1000);
+  } else if (DASHBOARD_DATETIME_UTC_REGEX.test(raw)) {
+    date = new Date(raw.replace(" ", "T") + "Z");
+  } else {
+    date = new Date(raw);
+  }
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return text(value, "-");
+  }
+
+  if (DASHBOARD_DATETIME_FORMATTER) {
+    return DASHBOARD_DATETIME_FORMATTER.format(date).replace(",", "");
+  }
+  return formatDateTimeValue(value);
 }
 
 function extractPivotCoordinates(pivot) {
@@ -1522,7 +1562,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-timeline-cell">${buildTimelineMiniHtml(safePivot)}</td>`;
       }
       if (columnKey === "last_cloudv2_at") {
-        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_cloudv2_at))}</td>`;
+        return `<td class="pivot-table-text">${escapeHtml(formatUtcToDashboardTimezone(safePivot.last_cloudv2_at))}</td>`;
       }
       if (columnKey === "median") {
         const medianReady = !!safePivot.median_ready;
@@ -1533,7 +1573,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-table-text">${escapeHtml(medianText)}</td>`;
       }
       if (columnKey === "last_activity_at") {
-        return `<td class="pivot-table-text">${escapeHtml(text(safePivot.last_activity_at))}</td>`;
+        return `<td class="pivot-table-text">${escapeHtml(formatUtcToDashboardTimezone(safePivot.last_activity_at))}</td>`;
       }
       if (columnKey === "signal") {
         return `<td class="pivot-table-text">${escapeHtml(text(pivotSignalValue(safePivot)))}</td>`;
