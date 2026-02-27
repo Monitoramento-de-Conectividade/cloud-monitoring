@@ -95,6 +95,9 @@ const ui = HAS_DOM
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
       mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
+      mapFiltersPanel: document.getElementById("mapFiltersPanel"),
+      mapFiltersMinimizeBtn: document.getElementById("mapFiltersMinimizeBtn"),
+      mapFiltersRestoreBtn: document.getElementById("mapFiltersRestoreBtn"),
       mapSearchInput: document.getElementById("mapSearchInput"),
       mapFiltersClearBtn: document.getElementById("mapFiltersClearBtn"),
       mapStatusFilters: document.getElementById("mapStatusFilters"),
@@ -113,6 +116,7 @@ const state = {
   mapSearchTerm: "",
   mapStatusFilter: "",
   mapQualityFilter: "",
+  mapFiltersMinimized: false,
 };
 
 let mapInstance = null;
@@ -381,6 +385,26 @@ function updateMapFilterCounters() {
 function updateMapFilterUi() {
   updateMapFilterButtonsState();
   updateMapFilterCounters();
+}
+
+function applyMapFiltersPanelVisibility() {
+  const minimized = !!state.mapFiltersMinimized;
+  if (ui.mapFiltersPanel) {
+    ui.mapFiltersPanel.hidden = minimized;
+  }
+  if (ui.mapFiltersRestoreBtn) {
+    ui.mapFiltersRestoreBtn.hidden = !minimized;
+  }
+}
+
+function minimizeMapFiltersPanel() {
+  state.mapFiltersMinimized = true;
+  applyMapFiltersPanelVisibility();
+}
+
+function restoreMapFiltersPanel() {
+  state.mapFiltersMinimized = false;
+  applyMapFiltersPanelVisibility();
 }
 
 function clearMapFilters() {
@@ -807,6 +831,7 @@ async function boot() {
   if (!ensureMapReady()) return;
   syncMapFullscreenUi();
 
+  applyMapFiltersPanelVisibility();
   updateMapFilterUi();
 
   if (ui.mapRefreshBtn) {
@@ -829,6 +854,16 @@ async function boot() {
   if (ui.mapFiltersClearBtn) {
     ui.mapFiltersClearBtn.addEventListener("click", () => {
       clearMapFilters();
+    });
+  }
+  if (ui.mapFiltersMinimizeBtn) {
+    ui.mapFiltersMinimizeBtn.addEventListener("click", () => {
+      minimizeMapFiltersPanel();
+    });
+  }
+  if (ui.mapFiltersRestoreBtn) {
+    ui.mapFiltersRestoreBtn.addEventListener("click", () => {
+      restoreMapFiltersPanel();
     });
   }
   if (ui.mapStatusFilters) {

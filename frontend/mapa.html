@@ -7,7 +7,7 @@
   <title>Mapa de Pivos</title>
   <link rel="stylesheet" href="dashboard.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <link rel="stylesheet" href="mapa.css?v=20260219e"/>
+  <link rel="stylesheet" href="mapa.css?v=20260227a"/>
 </head>
 <body>
   <main class="layout">
@@ -37,8 +37,19 @@
       </div>
       <p id="mapStatus" class="hint">Carregando dados...</p>
       <div id="pivotsMapWrap" class="pivots-map-wrap">
-        <div class="map-filters-panel" aria-label="Filtros do mapa">
-          <label for="mapSearchInput" class="map-search-label">Buscar pivô</label>
+        <div id="mapFiltersPanel" class="map-filters-panel" aria-label="Filtros do mapa">
+          <div class="map-filters-header">
+            <label for="mapSearchInput" class="map-search-label">Buscar pivô</label>
+            <button
+              id="mapFiltersMinimizeBtn"
+              class="ghost map-filters-minimize-btn"
+              type="button"
+              aria-label="Minimizar painel de busca"
+              title="Minimizar painel de busca"
+            >
+              -
+            </button>
+          </div>
           <div class="map-search-row">
             <input id="mapSearchInput" class="map-search-input" type="search" placeholder="Ex.: PioneiraLEM_2" autocomplete="off"/>
             <button id="mapFiltersClearBtn" class="ghost map-filters-clear-btn" type="button">Limpar</button>
@@ -76,6 +87,16 @@
           </div>
         </div>
         <button
+          id="mapFiltersRestoreBtn"
+          class="ghost map-filters-restore-btn"
+          type="button"
+          aria-label="Expandir painel de busca"
+          title="Expandir painel de busca"
+          hidden
+        >
+          ^
+        </button>
+        <button
           id="mapFullscreenBtn"
           class="ghost map-fullscreen-btn"
           type="button"
@@ -94,6 +115,6 @@
 
   <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="mapa.js?v=20260219e"></script>
+  <script src="mapa.js?v=20260227a"></script>
 </body>
 </html>

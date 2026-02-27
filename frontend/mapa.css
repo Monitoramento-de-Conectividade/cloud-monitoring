@@ -24,10 +24,43 @@
   backdrop-filter: blur(2px);
 }
 
+.map-filters-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .map-search-label {
   color: var(--muted);
   font-size: 11px;
   letter-spacing: 0.03em;
+}
+
+.map-filters-minimize-btn {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.map-filters-restore-btn {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 645;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 700;
+  border-color: rgba(191, 214, 198, 0.95);
+  background: rgba(239, 247, 242, 0.95);
+  backdrop-filter: blur(2px);
 }
 
 .map-search-row {
@@ -295,6 +328,11 @@
 
   .map-filter-chip {
     font-size: 11px;
+  }
+
+  .map-filters-restore-btn {
+    left: 8px;
+    bottom: 8px;
   }
 
   .pivots-map-canvas {
