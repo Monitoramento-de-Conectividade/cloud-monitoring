@@ -279,6 +279,11 @@ const PIVOT_TABLE_COLUMNS = [
   { key: "technology", label: "Tecnologia" },
   { key: "firmware", label: "Firmware" },
 ];
+const PIVOT_TABLE_HEADER_STACKS = {
+  last_activity_at: ["Ultima", "Atualizacao"],
+  last_cloudv2_at: ["Ultima", "Atualizacao", "de Dados"],
+  median: ["Intervalo tipico", "de atualizacao"],
+};
 const PIVOT_TABLE_COLUMN_KEYS = PIVOT_TABLE_COLUMNS.map((item) => item.key);
 
 const INTERNAL_TERMS = [
@@ -676,6 +681,30 @@ function formatUtcToDashboardTimezone(value) {
     return DASHBOARD_DATETIME_FORMATTER.format(date).replace(",", "");
   }
   return formatDateTimeValue(value);
+}
+
+function buildPivotTableHeaderLabelHtml(columnKey, label) {
+  const lines = PIVOT_TABLE_HEADER_STACKS[columnKey];
+  if (!Array.isArray(lines) || !lines.length) {
+    return escapeHtml(label);
+  }
+  return `<span class="pivot-table-header-stack">${lines
+    .map((line) => `<span>${escapeHtml(line)}</span>`)
+    .join("")}</span>`;
+}
+
+function buildPivotTableDateTimeHtml(value) {
+  const formatted = text(formatUtcToDashboardTimezone(value), "-");
+  const compact = formatted.replace(/\s*,\s*/g, " ").trim();
+  const parts = compact.split(/\s+/);
+  const time = parts.length > 1 ? parts[parts.length - 1] : "";
+
+  if (/^\d{2}:\d{2}:\d{2}$/.test(time)) {
+    const date = parts.slice(0, -1).join(" ").trim();
+    return `<span class="pivot-table-datetime"><span class="pivot-table-date">${escapeHtml(date || "-")}</span><span class="pivot-table-time">${escapeHtml(time)}</span></span>`;
+  }
+
+  return `<span class="pivot-table-datetime"><span class="pivot-table-date">${escapeHtml(formatted)}</span></span>`;
 }
 
 function extractPivotCoordinates(pivot) {
@@ -1608,7 +1637,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-timeline-cell">${buildTimelineMiniHtml(safePivot)}</td>`;
       }
       if (columnKey === "last_cloudv2_at") {
-        return `<td class="pivot-table-text">${escapeHtml(formatUtcToDashboardTimezone(safePivot.last_cloudv2_at))}</td>`;
+        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_cloudv2_at)}</td>`;
       }
       if (columnKey === "median") {
         const medianReady = !!safePivot.median_ready;
@@ -1619,7 +1648,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-table-text">${escapeHtml(medianText)}</td>`;
       }
       if (columnKey === "last_activity_at") {
-        return `<td class="pivot-table-text">${escapeHtml(formatUtcToDashboardTimezone(safePivot.last_activity_at))}</td>`;
+        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_activity_at)}</td>`;
       }
       if (columnKey === "signal") {
         return `<td class="pivot-table-text">${escapeHtml(text(pivotSignalValue(safePivot)))}</td>`;
@@ -1716,7 +1745,8 @@ function renderPivotCardsFull(pageItems, pageKey) {
     .map((columnKey) => {
       const def = PIVOT_TABLE_COLUMNS.find((item) => item.key === columnKey);
       const label = def ? def.label : columnKey;
-      return `<th scope="col" class="pivot-table-header-cell" data-col-key="${escapeHtml(columnKey)}" draggable="true">${escapeHtml(label)}</th>`;
+      const stackedClass = PIVOT_TABLE_HEADER_STACKS[columnKey] ? " is-stacked" : "";
+      return `<th scope="col" class="pivot-table-header-cell${stackedClass}" data-col-key="${escapeHtml(columnKey)}" draggable="true">${buildPivotTableHeaderLabelHtml(columnKey, label)}</th>`;
     })
     .join("");
   const rowsHtml = pageItems.map((pivot) => buildPivotCardHtml(pivot)).join("");

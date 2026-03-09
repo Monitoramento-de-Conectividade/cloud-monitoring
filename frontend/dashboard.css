@@ -2,7 +2,7 @@
   --bg-0: #eef8f2;
   --bg-1: #d6eddc;
   --bg-2: #cde6d4;
-  --page-max-width: 1240px;
+  --page-max-width: 1500px;
   --page-gutter: clamp(18px, 2.2vw, 34px);
   --panel: #fdfefd;
   --panel-soft: #f6fbf8;
@@ -667,11 +667,29 @@ a:focus {
   border-bottom: 1px solid #d4e6db;
   padding: 9px 10px;
   text-align: left;
-  white-space: nowrap;
+  line-height: 1.2;
+  vertical-align: bottom;
+  white-space: normal;
 }
 
 .pivot-table-header-cell {
   cursor: grab;
+}
+
+.pivot-table-header-cell.is-stacked {
+  white-space: normal;
+}
+
+.pivot-table-header-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.pivot-table-header-stack span {
+  display: block;
 }
 
 .pivot-table-header-cell.dragging {
@@ -706,6 +724,26 @@ a:focus {
 .pivot-table-text {
   color: #214d38;
   white-space: nowrap;
+}
+
+.pivot-table-datetime {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.2;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.pivot-table-date,
+.pivot-table-time {
+  display: block;
+}
+
+.pivot-table-time {
+  color: #5b7868;
+  font-size: 11px;
 }
 
 .pivot-table-text.strong {
