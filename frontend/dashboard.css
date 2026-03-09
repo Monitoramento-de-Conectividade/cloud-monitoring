@@ -2,6 +2,8 @@
   --bg-0: #eef8f2;
   --bg-1: #d6eddc;
   --bg-2: #cde6d4;
+  --page-max-width: 1380px;
+  --page-gutter: clamp(14px, 1.5vw, 22px);
   --panel: #fdfefd;
   --panel-soft: #f6fbf8;
   --text: #113225;
@@ -38,6 +40,7 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 body {
@@ -47,6 +50,7 @@ body {
   font-size: clamp(14px, 13px + 0.2vw, 16px);
   color: var(--text);
   background: linear-gradient(165deg, var(--bg-0) 0%, var(--bg-1) 65%, var(--bg-2) 100%);
+  overflow-x: hidden;
 }
 
 body.initial-loading {
@@ -158,32 +162,57 @@ table {
   pointer-events: none;
   border-radius: 999px;
   filter: blur(2px);
+  opacity: 0.78;
 }
 
 .shape-a {
-  width: min(52vw, 420px);
-  height: min(52vw, 420px);
-  left: -180px;
-  top: -150px;
-  background: radial-gradient(circle, rgba(66, 154, 99, 0.26), rgba(66, 154, 99, 0));
+  width: min(44vw, 360px);
+  height: min(44vw, 360px);
+  left: min(-140px, calc(50% - 860px));
+  top: -165px;
+  background: radial-gradient(circle, rgba(66, 154, 99, 0.18), rgba(66, 154, 99, 0));
 }
 
 .shape-b {
-  width: min(58vw, 520px);
-  height: min(58vw, 520px);
-  right: -220px;
-  bottom: -220px;
-  background: radial-gradient(circle, rgba(31, 96, 64, 0.25), rgba(31, 96, 64, 0));
+  width: min(52vw, 460px);
+  height: min(52vw, 460px);
+  right: min(-190px, calc(50% - 900px));
+  bottom: -255px;
+  background: radial-gradient(circle, rgba(31, 96, 64, 0.18), rgba(31, 96, 64, 0));
 }
 
 .layout {
   position: relative;
   z-index: 1;
-  max-width: 1380px;
+  width: min(100%, var(--page-max-width));
+  min-width: 0;
   margin: 0 auto;
-  padding: var(--space-4) var(--space-3) var(--space-5);
+  padding: var(--space-4) max(var(--space-3), var(--page-gutter)) var(--space-5);
   display: grid;
   gap: var(--space-3);
+}
+
+.layout > *,
+.hero,
+.hero-main,
+.hero-meta,
+.hero-session,
+.panel,
+.panel-head,
+.cards-wrap,
+.cards-grid,
+.pivot-view,
+.pivot-sections,
+.map-page-panel,
+.pivots-map-wrap,
+.table-wrap,
+.pivot-table-wrap {
+  min-width: 0;
+}
+
+.hero,
+.panel {
+  width: 100%;
 }
 
 .hero {
@@ -1572,8 +1601,8 @@ th {
 
 @media (max-width: 860px) {
   .layout {
-    padding-left: var(--space-2);
-    padding-right: var(--space-2);
+    padding-left: max(var(--space-2), var(--page-gutter));
+    padding-right: max(var(--space-2), var(--page-gutter));
   }
 
   .hero {
