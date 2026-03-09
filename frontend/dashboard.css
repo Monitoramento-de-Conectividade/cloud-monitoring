@@ -668,7 +668,7 @@ a:focus {
   padding: 9px 10px;
   text-align: left;
   line-height: 1.2;
-  vertical-align: bottom;
+  vertical-align: top;
   white-space: normal;
 }
 
