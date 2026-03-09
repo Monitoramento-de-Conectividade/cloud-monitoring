@@ -79,6 +79,10 @@ const ui = HAS_DOM
       statusSummary: document.getElementById("statusSummary"),
       pendingPanel: document.getElementById("pendingPanel"),
       pendingList: document.getElementById("pendingList"),
+      bulkPivotActions: document.getElementById("bulkPivotActions"),
+      bulkPivotSelectionLabel: document.getElementById("bulkPivotSelectionLabel"),
+      bulkResetPivotsBtn: document.getElementById("bulkResetPivotsBtn"),
+      bulkDeletePivotsBtn: document.getElementById("bulkDeletePivotsBtn"),
       cardsGrid: document.getElementById("cardsGrid"),
       cardsPrev: document.getElementById("cardsPrev"),
       cardsNext: document.getElementById("cardsNext"),
@@ -197,6 +201,7 @@ const state = {
   qualityOverrideRefreshIntervalMs: 45000,
   qualityOverrideMaxConcurrency: 3,
   visiblePivotIds: [],
+  selectedPivotIds: [],
   qualityRefreshSeq: 0,
   selectedRunId: null,
   lastRunResolveAttemptMs: 0,
@@ -218,7 +223,8 @@ const state = {
   pivotTableColumnOrder: [],
   pivotTableDragKey: "",
   pivotTablePreferenceLoaded: false,
-  pendingModemResetAck: null,
+  pendingModemResetAcks: {},
+  bulkPivotActionInFlight: false,
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
@@ -788,34 +794,123 @@ function supportsModemResetAckByFirmware(firmwareValue) {
   return compareFirmwareVersionParts(firmwareParts, MODEM_RESET_ACK_MIN_FIRMWARE) >= 0;
 }
 
+function normalizePivotIdList(values) {
+  if (!Array.isArray(values)) return [];
+  const normalized = [];
+  const seen = new Set();
+  for (const rawValue of values) {
+    const pivotId = String(rawValue || "").trim();
+    if (!pivotId || seen.has(pivotId)) continue;
+    seen.add(pivotId);
+    normalized.push(pivotId);
+  }
+  return normalized;
+}
+
+function getPivotSummaryObject(pivot) {
+  if (!pivot || typeof pivot !== "object") return {};
+  const nestedSummary = pivot.summary;
+  if (nestedSummary && typeof nestedSummary === "object") {
+    return nestedSummary;
+  }
+  return pivot;
+}
+
 function getPivotFirmwareVersionForReset(pivot) {
-  const summary = (pivot && typeof pivot.summary === "object" ? pivot.summary : {}) || {};
+  const summary = getPivotSummaryObject(pivot);
   const lastCloud2 = (summary.last_cloud2 && typeof summary.last_cloud2 === "object" ? summary.last_cloud2 : {}) || {};
   return String(lastCloud2.firmware || "").trim();
 }
 
 function getPivotModemResetSummary(pivot) {
-  const summary = (pivot && typeof pivot.summary === "object" ? pivot.summary : {}) || {};
+  const summary = getPivotSummaryObject(pivot);
   const modemReset = summary.modem_reset;
   return modemReset && typeof modemReset === "object" ? modemReset : {};
 }
 
-function checkPendingModemResetAck() {
-  const pending = state.pendingModemResetAck;
-  if (!pending || typeof pending !== "object") return;
-  const selectedPivot = String(state.selectedPivot || "").trim();
-  if (!selectedPivot || selectedPivot !== String(pending.pivotId || "").trim()) return;
-  const pivot = state.pivotData;
-  if (!pivot || String(pivot.pivot_id || "").trim() !== selectedPivot) return;
+function collectConfirmedModemResetAcks(pendingByPivotId, pivots, panelPivot = null) {
+  const sourcePending = pendingByPivotId && typeof pendingByPivotId === "object" ? pendingByPivotId : {};
+  const pivotSummaryById = {};
 
-  const modemReset = getPivotModemResetSummary(pivot);
-  const ackTs = Number(modemReset.last_ack_ts);
-  const commandTs = Number(pending.commandTs);
-  if (!Number.isFinite(ackTs) || !Number.isFinite(commandTs)) return;
-  if (ackTs + 0.001 < commandTs) return;
+  if (Array.isArray(pivots)) {
+    for (const pivot of pivots) {
+      const pivotId = String((pivot || {}).pivot_id || "").trim();
+      if (!pivotId) continue;
+      pivotSummaryById[pivotId] = getPivotModemResetSummary(pivot);
+    }
+  }
 
-  state.pendingModemResetAck = null;
-  window.alert("Restart realizado com sucesso");
+  const panelPivotId = String((panelPivot || {}).pivot_id || "").trim();
+  if (panelPivotId) {
+    pivotSummaryById[panelPivotId] = getPivotModemResetSummary(panelPivot);
+  }
+
+  const confirmedPivotIds = [];
+  const remainingPendingByPivotId = {};
+  for (const [pivotId, pendingEntry] of Object.entries(sourcePending)) {
+    const normalizedPivotId = String(pivotId || "").trim();
+    if (!normalizedPivotId) continue;
+    const commandTs = Number((pendingEntry || {}).commandTs);
+    const modemReset = pivotSummaryById[normalizedPivotId] || {};
+    const ackTs = Number(modemReset.last_ack_ts);
+    if (Number.isFinite(commandTs) && Number.isFinite(ackTs) && ackTs + 0.001 >= commandTs) {
+      confirmedPivotIds.push(normalizedPivotId);
+      continue;
+    }
+    if (Number.isFinite(commandTs)) {
+      remainingPendingByPivotId[normalizedPivotId] = {
+        pivotId: normalizedPivotId,
+        commandTs,
+      };
+    }
+  }
+
+  return { confirmedPivotIds, remainingPendingByPivotId };
+}
+
+function queuePendingModemResetAck(pivotId, commandTs) {
+  const normalizedPivotId = String(pivotId || "").trim();
+  const normalizedCommandTs = Number(commandTs);
+  if (!normalizedPivotId || !Number.isFinite(normalizedCommandTs)) return;
+  state.pendingModemResetAcks = {
+    ...state.pendingModemResetAcks,
+    [normalizedPivotId]: {
+      pivotId: normalizedPivotId,
+      commandTs: normalizedCommandTs,
+    },
+  };
+}
+
+function buildPivotListPreview(pivotIds, maxItems = 6) {
+  const normalized = normalizePivotIdList(pivotIds);
+  if (!normalized.length) return "";
+  const preview = normalized.slice(0, maxItems);
+  if (normalized.length <= maxItems) {
+    return preview.join(", ");
+  }
+  return `${preview.join(", ")} e mais ${normalized.length - maxItems}`;
+}
+
+function checkPendingModemResetAcks() {
+  const pendingEntries = state.pendingModemResetAcks;
+  if (!pendingEntries || typeof pendingEntries !== "object" || !Object.keys(pendingEntries).length) return;
+
+  const { confirmedPivotIds, remainingPendingByPivotId } = collectConfirmedModemResetAcks(
+    pendingEntries,
+    state.pivots,
+    state.pivotData
+  );
+  if (!confirmedPivotIds.length) return;
+
+  state.pendingModemResetAcks = remainingPendingByPivotId;
+  if (confirmedPivotIds.length === 1 && String(state.selectedPivot || "").trim() === confirmedPivotIds[0]) {
+    window.alert("Restart realizado com sucesso");
+    return;
+  }
+
+  const count = confirmedPivotIds.length;
+  const pivotLabel = count === 1 ? "pivô" : "pivôs";
+  showToast(`Restart confirmado para ${count} ${pivotLabel}: ${buildPivotListPreview(confirmedPivotIds, 4)}.`, "success", 4800);
 }
 
 function escapeHtml(value) {
@@ -1617,6 +1712,8 @@ function buildPivotCardHtml(pivot) {
   const safePivot = pivot || {};
   const pivotIdRaw = text((safePivot || {}).pivot_id, "pivo");
   const pivotId = escapeHtml(pivotIdRaw);
+  const selectionEnabled = canCurrentUserDeletePivots();
+  const isSelected = selectionEnabled && isPivotSelected(pivotIdRaw);
 
   const cells = state.pivotTableColumnOrder
     .map((columnKey) => {
@@ -1663,7 +1760,23 @@ function buildPivotCardHtml(pivot) {
     })
     .join("");
 
-  return `<tr class="pivot-row" data-pivot-id="${pivotId}">
+  const selectionCell = selectionEnabled
+    ? `<td class="pivot-table-select">
+      <label class="pivot-table-check">
+        <input
+          type="checkbox"
+          class="pivot-select-checkbox"
+          data-pivot-id="${pivotId}"
+          aria-label="Selecionar pivô ${pivotId}"
+          ${state.bulkPivotActionInFlight ? "disabled" : ""}
+          ${isSelected ? "checked" : ""}
+        />
+      </label>
+    </td>`
+    : "";
+
+  return `<tr class="pivot-row${isSelected ? " is-selected" : ""}" data-pivot-id="${pivotId}">
+    ${selectionCell}
     <td class="pivot-table-open">
       <button class="ghost open-pivot" data-pivot="${pivotId}">Abrir visao</button>
     </td>
@@ -1741,6 +1854,23 @@ function bindPivotTableHeaderDnD() {
 }
 
 function renderPivotCardsFull(pageItems, pageKey) {
+  const selectionEnabled = canCurrentUserDeletePivots();
+  const pagePivotIds = pageItems.map((pivot) => text((pivot || {}).pivot_id, "").trim()).filter(Boolean);
+  const allPageSelected = selectionEnabled && pagePivotIds.length > 0 && pagePivotIds.every((pivotId) => isPivotSelected(pivotId));
+  const somePageSelected = selectionEnabled && pagePivotIds.some((pivotId) => isPivotSelected(pivotId));
+  const selectionHeader = selectionEnabled
+    ? `<th scope="col" class="pivot-table-select-head">
+            <label class="pivot-table-check">
+              <input
+                type="checkbox"
+                class="pivot-select-all-checkbox"
+                aria-label="Selecionar todos os pivôs desta página"
+                ${state.bulkPivotActionInFlight ? "disabled" : ""}
+                ${allPageSelected ? "checked" : ""}
+              />
+            </label>
+          </th>`
+    : "";
   const headerColumns = state.pivotTableColumnOrder
     .map((columnKey) => {
       const def = PIVOT_TABLE_COLUMNS.find((item) => item.key === columnKey);
@@ -1755,6 +1885,7 @@ function renderPivotCardsFull(pageItems, pageKey) {
       <table class="pivot-table" aria-label="Tabela de pivos monitorados">
         <thead>
           <tr>
+            ${selectionHeader}
             <th scope="col" class="pivot-table-open-head">Abrir visao</th>
             ${headerColumns}
           </tr>
@@ -1764,6 +1895,13 @@ function renderPivotCardsFull(pageItems, pageKey) {
     </div>
   `;
   bindPivotTableHeaderDnD();
+  if (selectionEnabled) {
+    const selectAllInput = ui.cardsGrid.querySelector(".pivot-select-all-checkbox");
+    if (selectAllInput) {
+      selectAllInput.indeterminate = somePageSelected && !allPageSelected;
+    }
+  }
+  syncBulkPivotActionControls();
 
   const nextSignatures = {};
   for (const pivot of pageItems) {
@@ -1971,12 +2109,17 @@ function renderCards() {
       state.cardsRenderPageKey = "empty";
       state.cardsRenderSignaturesByPivotId = {};
     }
+    syncBulkPivotActionControls();
     return;
   }
 
   const pagePivotIds = nextVisiblePivotIds;
   const columnOrderSignature = state.pivotTableColumnOrder.join(",");
-  const pageKey = `${state.cardsPage}|${totalPages}|${pagePivotIds.join(",")}|${columnOrderSignature}`;
+  const selectionSignature = canCurrentUserDeletePivots()
+    ? pagePivotIds.map((pivotId) => (isPivotSelected(pivotId) ? "1" : "0")).join("")
+    : "disabled";
+  const bulkActionSignature = state.bulkPivotActionInFlight ? "busy" : "idle";
+  const pageKey = `${state.cardsPage}|${totalPages}|${pagePivotIds.join(",")}|${columnOrderSignature}|${selectionSignature}|${bulkActionSignature}`;
   const nextSignatures = {};
   for (const pivot of pageItems) {
     const pivotId = text((pivot || {}).pivot_id, "").trim();
@@ -3138,7 +3281,7 @@ function renderPivotView() {
     ui.pivotTechnologyHint.textContent = "";
   }
   syncPivotTechnologyControl();
-  checkPendingModemResetAck();
+  checkPendingModemResetAcks();
 
   renderStatusSummary();
   renderCards();
@@ -3176,6 +3319,7 @@ async function refreshState(options = {}) {
     selectedRunChanged = true;
   }
   const currentPivotIds = new Set(state.pivots.map((item) => text(item.pivot_id, "").trim()).filter(Boolean));
+  setSelectedPivotIds(getSelectedPivotIds().filter((pivotId) => currentPivotIds.has(pivotId)));
   for (const pivotId of Object.keys(state.qualityOverridesByPivotId)) {
     if (!currentPivotIds.has(pivotId)) {
       delete state.qualityOverridesByPivotId[pivotId];
@@ -3204,6 +3348,11 @@ async function refreshState(options = {}) {
   if (Array.isArray(state.visiblePivotIds) && state.visiblePivotIds.length) {
     state.visiblePivotIds = state.visiblePivotIds.filter((pivotId) => currentPivotIds.has(String(pivotId || "").trim()));
   }
+  for (const pivotId of Object.keys(state.pendingModemResetAcks || {})) {
+    if (!currentPivotIds.has(pivotId) && String(state.selectedPivot || "").trim() !== pivotId) {
+      delete state.pendingModemResetAcks[pivotId];
+    }
+  }
   if (state.selectedPivot && !currentPivotIds.has(state.selectedPivot)) {
     if (skipRender) {
       state.connSelectedSegmentKey = null;
@@ -3216,6 +3365,7 @@ async function refreshState(options = {}) {
       closePivot();
     }
   }
+  checkPendingModemResetAcks();
   if (!skipRender) {
     renderHeader();
     renderStatusSummary();
@@ -3254,6 +3404,7 @@ async function refreshPivot(options = {}) {
     state.panelSessionMeta = null;
     state.panelRunMeta = state.rawState?.run || null;
   }
+  checkPendingModemResetAcks();
   if (!skipRender) {
     renderSessionControls();
     renderPivotView();
@@ -3456,7 +3607,6 @@ async function openPivot(pivotId) {
 function closePivot() {
   state.connSelectedSegmentKey = null;
   state.pivotMetricsExpanded = false;
-  state.pendingModemResetAck = null;
   state.selectedPivot = null;
   state.pivotData = null;
   state.panelSessionMeta = null;
@@ -3464,6 +3614,85 @@ function closePivot() {
   setHashPivot("");
   renderSessionControls();
   renderPivotView();
+}
+
+function getSelectedPivotIds() {
+  const normalized = normalizePivotIdList(state.selectedPivotIds);
+  state.selectedPivotIds = normalized;
+  return normalized;
+}
+
+function findPivotById(pivotId) {
+  const normalizedPivotId = String(pivotId || "").trim();
+  if (!normalizedPivotId) return null;
+  return (state.pivots || []).find((pivot) => String((pivot || {}).pivot_id || "").trim() === normalizedPivotId) || null;
+}
+
+function isPivotSelected(pivotId) {
+  const normalizedPivotId = String(pivotId || "").trim();
+  if (!normalizedPivotId) return false;
+  return getSelectedPivotIds().includes(normalizedPivotId);
+}
+
+function setSelectedPivotIds(pivotIds) {
+  state.selectedPivotIds = normalizePivotIdList(pivotIds);
+  syncBulkPivotActionControls();
+}
+
+function toggleSelectedPivotId(pivotId, shouldSelect) {
+  if (state.bulkPivotActionInFlight) return;
+  const normalizedPivotId = String(pivotId || "").trim();
+  if (!normalizedPivotId) return;
+  const current = new Set(getSelectedPivotIds());
+  if (shouldSelect) {
+    current.add(normalizedPivotId);
+  } else {
+    current.delete(normalizedPivotId);
+  }
+  setSelectedPivotIds([...current]);
+  renderCards();
+}
+
+function toggleVisiblePivotSelection(shouldSelect) {
+  if (state.bulkPivotActionInFlight) return;
+  const current = new Set(getSelectedPivotIds());
+  for (const rawPivotId of state.visiblePivotIds || []) {
+    const pivotId = String(rawPivotId || "").trim();
+    if (!pivotId) continue;
+    if (shouldSelect) {
+      current.add(pivotId);
+    } else {
+      current.delete(pivotId);
+    }
+  }
+  setSelectedPivotIds([...current]);
+  renderCards();
+}
+
+function syncBulkPivotActionControls() {
+  const allowed = canCurrentUserDeletePivots();
+  if (!allowed) {
+    state.selectedPivotIds = [];
+  }
+
+  const selectedPivotIds = allowed ? getSelectedPivotIds() : [];
+  const selectedCount = selectedPivotIds.length;
+  const showBulkActions = allowed && selectedCount > 1;
+  const disableActions = state.bulkPivotActionInFlight || selectedCount < 2;
+  const pivotLabel = selectedCount === 1 ? "pivô" : "pivôs";
+
+  if (ui.bulkPivotActions) {
+    ui.bulkPivotActions.hidden = !showBulkActions;
+  }
+  if (ui.bulkPivotSelectionLabel) {
+    ui.bulkPivotSelectionLabel.textContent = `${selectedCount} ${pivotLabel} selecionados`;
+  }
+  if (ui.bulkResetPivotsBtn) {
+    ui.bulkResetPivotsBtn.disabled = disableActions;
+  }
+  if (ui.bulkDeletePivotsBtn) {
+    ui.bulkDeletePivotsBtn.disabled = disableActions;
+  }
 }
 
 function canCurrentUserDeletePivots() {
@@ -3618,7 +3847,7 @@ async function resetSelectedPivotModem() {
   const pivotId = String(state.selectedPivot || "").trim();
   if (!pivotId) return;
 
-  const firmware = getPivotFirmwareVersionForReset(state.pivotData);
+  const firmware = getPivotFirmwareVersionForReset(state.pivotData || findPivotById(pivotId));
   const expectsAck = supportsModemResetAckByFirmware(firmware);
   const confirmed = window.confirm(`Enviar comando de reset (#92$) para o pivô ${pivotId}?`);
   if (!confirmed) return;
@@ -3641,20 +3870,17 @@ async function resetSelectedPivotModem() {
     const resetCommand = data.reset_command && typeof data.reset_command === "object" ? data.reset_command : {};
     const commandTs = Number(resetCommand.command_ts);
     if (expectsAck && Number.isFinite(commandTs)) {
-      state.pendingModemResetAck = {
-        pivotId,
-        commandTs,
-      };
+      queuePendingModemResetAck(pivotId, commandTs);
       showToast("Comando #92$ enviado. Aguardando confirmação de restart do modem.", "success", 4200);
       await refreshPivot();
     } else {
-      state.pendingModemResetAck = null;
+      delete state.pendingModemResetAcks[pivotId];
       showToast("Comando #92$ enviado para o modem.", "success", 3200);
       window.alert("Versao de firmware desatualizada, nao é possivel saber se o reset foi feito com sucesso");
       await refreshPivot();
     }
   } catch (err) {
-    state.pendingModemResetAck = null;
+    delete state.pendingModemResetAcks[pivotId];
     showToast("Não foi possível enviar o reset do modem.", "error", 4200);
   } finally {
     if (ui.resetPivotModemBtn) {
@@ -3701,6 +3927,161 @@ async function deleteSelectedPivot() {
   }
 }
 
+async function resetSelectedPivotsBulk() {
+  if (!canCurrentUserDeletePivots()) {
+    syncBulkPivotActionControls();
+    showToast("Apenas o administrador principal pode resetar varios pivos.", "error", 3800);
+    return;
+  }
+
+  const pivotIds = getSelectedPivotIds();
+  if (pivotIds.length < 2) {
+    syncBulkPivotActionControls();
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Enviar comando de reset (#92$) para ${pivotIds.length} pivôs?\n\n${buildPivotListPreview(pivotIds, 10)}`
+  );
+  if (!confirmed) return;
+
+  state.bulkPivotActionInFlight = true;
+  syncBulkPivotActionControls();
+  renderCards();
+  try {
+    const response = await fetch(buildApiUrl("/api/pivots/reset-modem"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_ids: pivotIds,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    const successIds = [];
+    const queuedAckIds = [];
+    const noAckIds = [];
+    const failedIds = [];
+
+    for (const item of results) {
+      const pivotId = String(item?.pivot_id || "").trim();
+      if (!pivotId || !item?.ok) {
+        if (pivotId) failedIds.push(pivotId);
+        continue;
+      }
+      successIds.push(pivotId);
+
+      const pivot = findPivotById(pivotId) || (String(state.selectedPivot || "").trim() === pivotId ? state.pivotData : null);
+      const expectsAck = supportsModemResetAckByFirmware(getPivotFirmwareVersionForReset(pivot));
+      const commandTs = Number((item.reset_command || {}).command_ts);
+      if (expectsAck && Number.isFinite(commandTs)) {
+        queuePendingModemResetAck(pivotId, commandTs);
+        queuedAckIds.push(pivotId);
+      } else {
+        delete state.pendingModemResetAcks[pivotId];
+        noAckIds.push(pivotId);
+      }
+    }
+
+    if (successIds.length) {
+      const waitSuffix = queuedAckIds.length ? ` Aguardando confirmação de ${queuedAckIds.length}.` : "";
+      showToast(`Comando #92$ enviado para ${successIds.length} pivôs.${waitSuffix}`, "success", 4800);
+    }
+    if (noAckIds.length) {
+      window.alert(`Firmware sem confirmação automática de restart para: ${buildPivotListPreview(noAckIds, 8)}.`);
+    }
+    if (failedIds.length) {
+      showToast(`Não foi possível enviar reset para ${failedIds.length} pivô(s).`, "error", 4800);
+    }
+    if (!successIds.length && !failedIds.length) {
+      throw new Error("Nenhum resultado retornado");
+    }
+    await refreshAll();
+  } catch (err) {
+    showToast("Não foi possível enviar o reset em lote.", "error", 4200);
+  } finally {
+    state.bulkPivotActionInFlight = false;
+    syncBulkPivotActionControls();
+    renderCards();
+  }
+}
+
+async function deleteSelectedPivotsBulk() {
+  if (!canCurrentUserDeletePivots()) {
+    syncBulkPivotActionControls();
+    showToast("Apenas o administrador principal pode deletar varios pivos.", "error", 3800);
+    return;
+  }
+
+  const pivotIds = getSelectedPivotIds();
+  if (pivotIds.length < 2) {
+    syncBulkPivotActionControls();
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Tem certeza que deseja deletar ${pivotIds.length} pivôs?\n\n${buildPivotListPreview(pivotIds, 10)}`
+  );
+  if (!confirmed) return;
+
+  state.bulkPivotActionInFlight = true;
+  syncBulkPivotActionControls();
+  renderCards();
+  try {
+    const response = await fetch(buildApiUrl("/api/pivots/delete"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_ids: pivotIds,
+        source: "ui-bulk",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    const deletedIds = [];
+    const failedIds = [];
+
+    for (const item of results) {
+      const pivotId = String(item?.pivot_id || "").trim();
+      if (!pivotId || !item?.ok) {
+        if (pivotId) failedIds.push(pivotId);
+        continue;
+      }
+      deletedIds.push(pivotId);
+      delete state.pendingModemResetAcks[pivotId];
+    }
+
+    if (deletedIds.length) {
+      const deletedSet = new Set(deletedIds);
+      setSelectedPivotIds(getSelectedPivotIds().filter((pivotId) => !deletedSet.has(pivotId)));
+      showToast(`${deletedIds.length} pivô(s) deletado(s) com sucesso.`, "success", 3600);
+    }
+    if (failedIds.length) {
+      showToast(`Não foi possível deletar ${failedIds.length} pivô(s).`, "error", 4800);
+    }
+    if (!deletedIds.length && !failedIds.length) {
+      throw new Error("Nenhum resultado retornado");
+    }
+    await refreshAll();
+  } catch (err) {
+    showToast("Não foi possível deletar os pivôs selecionados.", "error", 4200);
+  } finally {
+    state.bulkPivotActionInFlight = false;
+    syncBulkPivotActionControls();
+    renderCards();
+  }
+}
+
 function syncAdminControls() {
   const role = String(state.authUserRole || "user").trim().toLowerCase();
   const isAdmin = role === "admin";
@@ -3716,6 +4097,7 @@ function syncAdminControls() {
   }
   syncPivotDeleteControl();
   syncPivotTechnologyControl();
+  syncBulkPivotActionControls();
 }
 
 function renderAdminUsers() {
@@ -3973,6 +4355,18 @@ function wireEvents() {
     openPivot(button.dataset.pivot || "");
   });
 
+  ui.cardsGrid.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.classList.contains("pivot-select-all-checkbox")) {
+      toggleVisiblePivotSelection(!!target.checked);
+      return;
+    }
+    if (target.classList.contains("pivot-select-checkbox")) {
+      toggleSelectedPivotId(target.dataset.pivotId || "", !!target.checked);
+    }
+  });
+
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
     renderCards();
@@ -4002,6 +4396,12 @@ function wireEvents() {
   }
   if (ui.resetPivotModemBtn) {
     ui.resetPivotModemBtn.addEventListener("click", resetSelectedPivotModem);
+  }
+  if (ui.bulkResetPivotsBtn) {
+    ui.bulkResetPivotsBtn.addEventListener("click", resetSelectedPivotsBulk);
+  }
+  if (ui.bulkDeletePivotsBtn) {
+    ui.bulkDeletePivotsBtn.addEventListener("click", deleteSelectedPivotsBulk);
   }
   ui.saveProbe.addEventListener("click", saveProbeSetting);
 
@@ -4201,6 +4601,10 @@ if (typeof module !== "undefined" && module.exports) {
       buildConnectivityQualityInput,
       buildConnectivityStatus,
       computeConnectivityFromRange,
+      normalizePivotIdList,
+      getPivotFirmwareVersionForReset,
+      getPivotModemResetSummary,
+      collectConfirmedModemResetAcks,
       shouldRenderRssiPanel,
     },
   };

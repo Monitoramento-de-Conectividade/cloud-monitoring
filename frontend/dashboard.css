@@ -638,6 +638,31 @@ a:focus {
   gap: 12px;
 }
 
+.bulk-pivot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid #d4e6db;
+  border-radius: 12px;
+  background: #f7fbf8;
+}
+
+.bulk-pivot-selection-label {
+  color: #1f503a;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bulk-pivot-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .cards-grid {
   display: block;
 }
@@ -713,6 +738,35 @@ a:focus {
 
 .pivot-row:hover td {
   background: #f8fcf9;
+}
+
+.pivot-row.is-selected td {
+  background: #eef7f1;
+}
+
+.pivot-row.is-selected:hover td {
+  background: #e3f0e8;
+}
+
+.pivot-table-select,
+.pivot-table-select-head {
+  width: 46px;
+  min-width: 46px;
+  text-align: center;
+}
+
+.pivot-table-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pivot-table-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #166642;
+  cursor: pointer;
 }
 
 .pivot-table-open,

@@ -22,6 +22,7 @@ from backend.cloudv2_paths import DATA_SUBDIR, DEFAULT_WEB_DIR, LEGACY_WEB_DIRS,
 
 DASHBOARD_DIR = resolve_web_dir()
 DATA_DIR = resolve_data_dir(DASHBOARD_DIR)
+MAX_BULK_PIVOT_ACTIONS = 100
 
 
 def _parse_csv_env(value):
@@ -45,6 +46,31 @@ def _normalize_cookie_samesite(value, fallback="Lax"):
     if normalized == "lax":
         return "Lax"
     return str(fallback or "Lax")
+
+
+def _normalize_bulk_pivot_ids(value, limit=MAX_BULK_PIVOT_ACTIONS):
+    if not isinstance(value, list):
+        raise ValueError("pivot_ids obrigatorio")
+
+    try:
+        safe_limit = max(1, int(limit or MAX_BULK_PIVOT_ACTIONS))
+    except (TypeError, ValueError):
+        safe_limit = MAX_BULK_PIVOT_ACTIONS
+
+    normalized = []
+    seen = set()
+    for raw_item in value:
+        pivot_id = str(raw_item or "").strip()
+        if not pivot_id or pivot_id in seen:
+            continue
+        seen.add(pivot_id)
+        normalized.append(pivot_id)
+
+    if not normalized:
+        raise ValueError("pivot_ids obrigatorio")
+    if len(normalized) > safe_limit:
+        raise ValueError(f"maximo de {safe_limit} pivot_ids por requisicao")
+    return normalized
 
 
 def _data_dir_has_files(path):
@@ -1078,6 +1104,52 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"ok": True, "created": created})
                 return
 
+            if path == "/api/pivots/delete":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode deletar pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                results = []
+                success_count = 0
+                for pivot_id in pivot_ids:
+                    try:
+                        deleted = telemetry_store.delete_pivot(pivot_id, source=source)
+                        results.append({"ok": True, "pivot_id": pivot_id, "deleted": deleted})
+                        success_count += 1
+                    except ValueError as exc:
+                        results.append({"ok": False, "pivot_id": pivot_id, "error": str(exc)})
+
+                error_count = len(results) - success_count
+                self._write_json(
+                    200,
+                    {
+                        "ok": error_count == 0,
+                        "partial": success_count > 0 and error_count > 0,
+                        "success_count": success_count,
+                        "error_count": error_count,
+                        "results": results,
+                    },
+                )
+                return
+
             if path.startswith("/api/pivot/") and path.endswith("/delete"):
                 pivot_id = unquote(path[len("/api/pivot/") : -len("/delete")]).strip("/").strip()
                 if not pivot_id:
@@ -1174,6 +1246,51 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                     return
 
                 self._write_json(200, {"ok": True, "updated": updated})
+                return
+
+            if path == "/api/pivots/reset-modem":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode resetar varios pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                results = []
+                success_count = 0
+                for pivot_id in pivot_ids:
+                    try:
+                        result = telemetry_store.send_modem_reset_command(pivot_id)
+                        results.append({"ok": True, "pivot_id": pivot_id, "reset_command": result})
+                        success_count += 1
+                    except (ValueError, RuntimeError) as exc:
+                        results.append({"ok": False, "pivot_id": pivot_id, "error": str(exc)})
+
+                error_count = len(results) - success_count
+                self._write_json(
+                    200,
+                    {
+                        "ok": error_count == 0,
+                        "partial": success_count > 0 and error_count > 0,
+                        "success_count": success_count,
+                        "error_count": error_count,
+                        "results": results,
+                    },
+                )
                 return
 
             if path == "/api/pivot-reset-modem":
