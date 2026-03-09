@@ -2,8 +2,8 @@
   --bg-0: #eef8f2;
   --bg-1: #d6eddc;
   --bg-2: #cde6d4;
-  --page-max-width: 1380px;
-  --page-gutter: clamp(14px, 1.5vw, 22px);
+  --page-max-width: 1240px;
+  --page-gutter: clamp(18px, 2.2vw, 34px);
   --panel: #fdfefd;
   --panel-soft: #f6fbf8;
   --text: #113225;
@@ -166,28 +166,32 @@ table {
 }
 
 .shape-a {
-  width: min(44vw, 360px);
-  height: min(44vw, 360px);
-  left: min(-140px, calc(50% - 860px));
-  top: -165px;
-  background: radial-gradient(circle, rgba(66, 154, 99, 0.18), rgba(66, 154, 99, 0));
+  width: min(38vw, 320px);
+  height: min(38vw, 320px);
+  left: 50%;
+  top: -150px;
+  transform: translateX(calc(-50% - 640px));
+  background: radial-gradient(circle, rgba(66, 154, 99, 0.14), rgba(66, 154, 99, 0));
 }
 
 .shape-b {
-  width: min(52vw, 460px);
-  height: min(52vw, 460px);
-  right: min(-190px, calc(50% - 900px));
-  bottom: -255px;
-  background: radial-gradient(circle, rgba(31, 96, 64, 0.18), rgba(31, 96, 64, 0));
+  width: min(44vw, 380px);
+  height: min(44vw, 380px);
+  left: 50%;
+  right: auto;
+  bottom: -220px;
+  transform: translateX(calc(-50% + 660px));
+  background: radial-gradient(circle, rgba(31, 96, 64, 0.14), rgba(31, 96, 64, 0));
 }
 
 .layout {
   position: relative;
   z-index: 1;
-  width: min(100%, var(--page-max-width));
+  width: 100%;
+  max-width: var(--page-max-width);
   min-width: 0;
-  margin: 0 auto;
-  padding: var(--space-4) max(var(--space-3), var(--page-gutter)) var(--space-5);
+  margin-inline: auto;
+  padding: var(--space-4) var(--page-gutter) var(--space-5);
   display: grid;
   gap: var(--space-3);
 }
@@ -1644,8 +1648,8 @@ th {
 
 @media (max-width: 860px) {
   .layout {
-    padding-left: max(var(--space-2), var(--page-gutter));
-    padding-right: max(var(--space-2), var(--page-gutter));
+    padding-left: max(14px, var(--space-2));
+    padding-right: max(14px, var(--space-2));
   }
 
   .hero {

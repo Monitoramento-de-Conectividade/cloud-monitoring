@@ -17,7 +17,7 @@ from backend.cloudv2_auth import (
     AuthService,
     InMemoryRateLimiter,
 )
-from backend.cloudv2_paths import DATA_SUBDIR, LEGACY_WEB_DIRS, resolve_data_dir, resolve_web_dir
+from backend.cloudv2_paths import DATA_SUBDIR, DEFAULT_WEB_DIR, LEGACY_WEB_DIRS, resolve_data_dir, resolve_web_dir
 
 
 DASHBOARD_DIR = resolve_web_dir()
@@ -97,6 +97,48 @@ def ensure_dirs():
     _seed_data_dir_from_legacy()
 
 
+def _sync_frontend_assets_to_dashboard_dir():
+    source_dir = os.path.normpath(DEFAULT_WEB_DIR)
+    target_dir = os.path.normpath(DASHBOARD_DIR)
+
+    if source_dir == target_dir:
+        return
+    if not os.path.isdir(source_dir):
+        return
+
+    skipped_dirs = {DATA_SUBDIR, "__pycache__"}
+    skipped_files = {".gitkeep", "vercel.json"}
+
+    for dirpath, dirnames, filenames in os.walk(source_dir):
+        dirnames[:] = [name for name in dirnames if name not in skipped_dirs]
+        rel_dir = os.path.relpath(dirpath, source_dir)
+        rel_dir = "" if rel_dir == "." else rel_dir
+
+        for filename in filenames:
+            if filename in skipped_files:
+                continue
+
+            source_path = os.path.join(dirpath, filename)
+            target_path = os.path.join(target_dir, rel_dir, filename)
+            target_parent = os.path.dirname(target_path)
+
+            try:
+                os.makedirs(target_parent, exist_ok=True)
+            except OSError:
+                continue
+
+            try:
+                if os.path.exists(target_path) and os.path.getsize(source_path) == os.path.getsize(target_path):
+                    with open(source_path, "rb") as source_file:
+                        source_bytes = source_file.read()
+                    with open(target_path, "rb") as target_file:
+                        if source_bytes == target_file.read():
+                            continue
+                shutil.copy2(source_path, target_path)
+            except OSError:
+                continue
+
+
 def slugify(value):
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value)).strip("_")
     return slug or "pivot"
@@ -143,6 +185,7 @@ def _default_js():
 
 def generate_dashboard_assets(refresh_sec):
     ensure_dirs()
+    _sync_frontend_assets_to_dashboard_dir()
     index_path = os.path.join(DASHBOARD_DIR, "index.html")
     css_path = os.path.join(DASHBOARD_DIR, "dashboard.css")
     js_path = os.path.join(DASHBOARD_DIR, "dashboard.js")
