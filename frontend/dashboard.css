@@ -1423,16 +1423,59 @@ a:focus {
 }
 
 .table-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 
 .admin-users-panel {
   display: grid;
   gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
+.admin-users-table {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.admin-users-table th,
+.admin-users-table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.admin-users-table th:nth-child(1),
+.admin-users-table td:nth-child(1) {
+  width: 37%;
+}
+
+.admin-users-table th:nth-child(2),
+.admin-users-table td:nth-child(2) {
+  width: 10%;
+}
+
+.admin-users-table th:nth-child(3),
+.admin-users-table td:nth-child(3),
+.admin-users-table th:nth-child(4),
+.admin-users-table td:nth-child(4) {
+  width: 10%;
+}
+
+.admin-users-table th:nth-child(5),
+.admin-users-table td:nth-child(5) {
+  width: 18%;
+}
+
+.admin-users-table th:last-child,
 .admin-users-table td:last-child {
   width: 110px;
+  min-width: 110px;
 }
 
 .danger-inline {
