@@ -1505,8 +1505,8 @@ a:focus {
   font-weight: 600;
 }
 
-.probe-stats-table tbody tr:last-child th,
-.probe-stats-table tbody tr:last-child td {
+.probe-stats-table tbody:last-of-type tr:last-child th,
+.probe-stats-table tbody:last-of-type tr:last-child td {
   border-bottom: 0;
 }
 
