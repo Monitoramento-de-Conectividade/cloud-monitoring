@@ -262,7 +262,17 @@ test("display: probe response info rows include parsed modem payload fields", ()
   assert.equal(rows.length, 13);
   assert.equal(rows.find((row) => row.label === "Modelo do modem").value, "AT+CGMM A7608SA-H");
   assert.equal(rows.find((row) => row.label === "Firmware reportado").value, "v2.8.7");
+  assert.equal(rows.find((row) => row.label === "Redes configuradas").value, "LTE, Automático");
   assert.match(rows.find((row) => row.label === "Timestamp da placa").value, /\(1773171016\)$/);
+});
+
+test("display: configured networks follow the modem firmware mapping", () => {
+  assert.equal(_test.formatProbeConfiguredNetworks(1), "LTE, WCDMA");
+  assert.equal(_test.formatProbeConfiguredNetworks(2), "WCDMA, LTE, GSM");
+  assert.equal(_test.formatProbeConfiguredNetworks(6), "GSM, LTE, WCDMA");
+  assert.equal(_test.formatProbeConfiguredNetworks(7), "Automático");
+  assert.equal(_test.formatProbeConfiguredNetworks(8), "LTE, Automático");
+  assert.equal(_test.formatProbeConfiguredNetworks(99), "LTE, WCDMA, GSM");
 });
 
 test("quality signature: changes when session or activity changes", () => {

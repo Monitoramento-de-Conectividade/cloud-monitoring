@@ -719,6 +719,32 @@ function formatProbeStatusTemperature(value) {
   return `${parsed.toFixed(1)}C`;
 }
 
+function formatProbeConfiguredNetworks(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "-";
+
+  switch (Math.trunc(parsed)) {
+    case 1:
+      return "LTE, WCDMA";
+    case 2:
+      return "WCDMA, LTE, GSM";
+    case 3:
+      return "LTE";
+    case 4:
+      return "WCDMA";
+    case 5:
+      return "GSM";
+    case 6:
+      return "GSM, LTE, WCDMA";
+    case 7:
+      return "Automático";
+    case 8:
+      return "LTE, Automático";
+    default:
+      return "LTE, WCDMA, GSM";
+  }
+}
+
 function getProbeResponseInfoDisplayRows(probe) {
   const info = probe && typeof probe === "object" ? probe.last_response_info : null;
   if (!info || typeof info !== "object") return [];
@@ -734,7 +760,7 @@ function getProbeResponseInfoDisplayRows(probe) {
     { label: "Socket timeout reportado", value: formatProbeStatusInteger(info.socket_timeout_sec, "s") },
     { label: "Tempo APN reportado", value: formatProbeStatusInteger(info.apn_time_ms, "ms") },
     { label: "APN reportada", value: text(info.apn) },
-    { label: "Redes configuradas", value: formatProbeStatusInteger(info.networks) },
+    { label: "Redes configuradas", value: formatProbeConfiguredNetworks(info.networks) },
     { label: "Temperatura ESP reportada", value: formatProbeStatusTemperature(info.esp_temp_c) },
     { label: "Firmware reportado", value: text(info.firmware) },
   ];
@@ -4912,6 +4938,7 @@ if (typeof module !== "undefined" && module.exports) {
       getExpectedPivotsPending,
       shouldRenderRssiPanel,
       getProbeResponseInfoDisplayRows,
+      formatProbeConfiguredNetworks,
     },
   };
 }
