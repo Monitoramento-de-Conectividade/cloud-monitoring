@@ -491,6 +491,24 @@ class TelemetryPersistence:
             conn = self._require_conn_locked()
             self._upsert_pivot_locked(conn, normalized_id, normalized_slug, seen_ts)
 
+    def pivot_exists(self, pivot_id):
+        normalized_id = str(pivot_id or "").strip()
+        if not normalized_id:
+            return False
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM pivots
+                WHERE pivot_id = ?
+                LIMIT 1
+                """,
+                (normalized_id,),
+            ).fetchone()
+        return row is not None
+
     def touch_pivot_seen(self, pivot_id, seen_ts):
         normalized_id = str(pivot_id or "").strip()
         if not normalized_id:

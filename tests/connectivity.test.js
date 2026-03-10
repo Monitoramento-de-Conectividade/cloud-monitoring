@@ -339,3 +339,39 @@ test("ui: timeline mini derivada da conectividade espelha segmentos connected/di
     { state: "offline", ratio: 0.6 },
   ]);
 });
+
+test("ui: selecao multipla de pivôs remove vazios e duplicados", () => {
+  assert.deepEqual(_test.normalizePivotIdList([" PivotA ", "", "PivotB", "PivotA", null]), ["PivotA", "PivotB"]);
+});
+
+test("ui: firmware para reset usa summary do painel e fallback da tabela", () => {
+  assert.equal(
+    _test.getPivotFirmwareVersionForReset({ summary: { last_cloud2: { firmware: "2.8.5" } } }),
+    "2.8.5"
+  );
+  assert.equal(
+    _test.getPivotFirmwareVersionForReset({ last_cloud2: { firmware: "2.8.6" } }),
+    "2.8.6"
+  );
+});
+
+test("ui: confirma ACK de reset pendente a partir do estado resumido dos pivôs", () => {
+  const result = _test.collectConfirmedModemResetAcks(
+    {
+      PivotA: { pivotId: "PivotA", commandTs: 150 },
+      PivotB: { pivotId: "PivotB", commandTs: 250 },
+    },
+    [
+      { pivot_id: "PivotA", modem_reset: { last_ack_ts: 160 } },
+      { pivot_id: "PivotB", modem_reset: { last_ack_ts: 200 } },
+    ]
+  );
+
+  assert.deepEqual(result.confirmedPivotIds, ["PivotA"]);
+  assert.deepEqual(Object.keys(result.remainingPendingByPivotId), ["PivotB"]);
+});
+
+test("ui: entrada de fila de descoberta separa pivot_ids por virgula ou quebra de linha", () => {
+  const parsed = _test.parsePivotIdBatchInput(" PivotA_1,\nPivotB_2 ; PivotC_3  ");
+  assert.deepEqual(parsed, ["PivotA_1", "PivotB_2", "PivotC_3"]);
+});

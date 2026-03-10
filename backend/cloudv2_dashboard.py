@@ -17,11 +17,12 @@ from backend.cloudv2_auth import (
     AuthService,
     InMemoryRateLimiter,
 )
-from backend.cloudv2_paths import DATA_SUBDIR, LEGACY_WEB_DIRS, resolve_data_dir, resolve_web_dir
+from backend.cloudv2_paths import DATA_SUBDIR, DEFAULT_WEB_DIR, LEGACY_WEB_DIRS, resolve_data_dir, resolve_web_dir
 
 
 DASHBOARD_DIR = resolve_web_dir()
 DATA_DIR = resolve_data_dir(DASHBOARD_DIR)
+MAX_BULK_PIVOT_ACTIONS = 100
 
 
 def _parse_csv_env(value):
@@ -45,6 +46,37 @@ def _normalize_cookie_samesite(value, fallback="Lax"):
     if normalized == "lax":
         return "Lax"
     return str(fallback or "Lax")
+
+
+def _normalize_bulk_pivot_ids(value, limit=MAX_BULK_PIVOT_ACTIONS):
+    if not isinstance(value, list):
+        raise ValueError("pivot_ids obrigatorio")
+
+    try:
+        safe_limit = max(1, int(limit or MAX_BULK_PIVOT_ACTIONS))
+    except (TypeError, ValueError):
+        safe_limit = MAX_BULK_PIVOT_ACTIONS
+
+    normalized = []
+    seen = set()
+    for raw_item in value:
+        pivot_id = str(raw_item or "").strip()
+        if not pivot_id or pivot_id in seen:
+            continue
+        seen.add(pivot_id)
+        normalized.append(pivot_id)
+
+    if not normalized:
+        raise ValueError("pivot_ids obrigatorio")
+    if len(normalized) > safe_limit:
+        raise ValueError(f"maximo de {safe_limit} pivot_ids por requisicao")
+    return normalized
+
+
+def _is_admin_auth_context(auth_context):
+    current_user = (auth_context or {}).get("user") or {}
+    current_role = str(current_user.get("role") or "user").strip().lower()
+    return current_role == "admin"
 
 
 def _data_dir_has_files(path):
@@ -97,6 +129,48 @@ def ensure_dirs():
     _seed_data_dir_from_legacy()
 
 
+def _sync_frontend_assets_to_dashboard_dir():
+    source_dir = os.path.normpath(DEFAULT_WEB_DIR)
+    target_dir = os.path.normpath(DASHBOARD_DIR)
+
+    if source_dir == target_dir:
+        return
+    if not os.path.isdir(source_dir):
+        return
+
+    skipped_dirs = {DATA_SUBDIR, "__pycache__"}
+    skipped_files = {".gitkeep", "vercel.json"}
+
+    for dirpath, dirnames, filenames in os.walk(source_dir):
+        dirnames[:] = [name for name in dirnames if name not in skipped_dirs]
+        rel_dir = os.path.relpath(dirpath, source_dir)
+        rel_dir = "" if rel_dir == "." else rel_dir
+
+        for filename in filenames:
+            if filename in skipped_files:
+                continue
+
+            source_path = os.path.join(dirpath, filename)
+            target_path = os.path.join(target_dir, rel_dir, filename)
+            target_parent = os.path.dirname(target_path)
+
+            try:
+                os.makedirs(target_parent, exist_ok=True)
+            except OSError:
+                continue
+
+            try:
+                if os.path.exists(target_path) and os.path.getsize(source_path) == os.path.getsize(target_path):
+                    with open(source_path, "rb") as source_file:
+                        source_bytes = source_file.read()
+                    with open(target_path, "rb") as target_file:
+                        if source_bytes == target_file.read():
+                            continue
+                shutil.copy2(source_path, target_path)
+            except OSError:
+                continue
+
+
 def slugify(value):
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value)).strip("_")
     return slug or "pivot"
@@ -143,6 +217,7 @@ def _default_js():
 
 def generate_dashboard_assets(refresh_sec):
     ensure_dirs()
+    _sync_frontend_assets_to_dashboard_dir()
     index_path = os.path.join(DASHBOARD_DIR, "index.html")
     css_path = os.path.join(DASHBOARD_DIR, "dashboard.css")
     js_path = os.path.join(DASHBOARD_DIR, "dashboard.js")
@@ -474,6 +549,9 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             current_role = str(current_user.get("role") or "user").strip().lower()
             current_email = str(current_user.get("email") or "").strip().lower()
             return current_role == "admin" and current_email == FIXED_ADMIN_EMAIL
+
+        def _can_manage_expected_pivots(self, auth_context):
+            return _is_admin_auth_context(auth_context)
 
         def _check_rate_limit(self, path):
             rule = rate_limit_rules.get(str(path or "").strip())
@@ -1035,6 +1113,116 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"ok": True, "created": created})
                 return
 
+            if path == "/api/pivots/expected":
+                if not self._can_manage_expected_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "admin_required",
+                            "message": "Apenas administradores podem configurar novos pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    result = telemetry_store.queue_expected_pivots(pivot_ids, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                self._write_json(200, result)
+                return
+
+            if path == "/api/pivots/expected/remove":
+                if not self._can_manage_expected_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "admin_required",
+                            "message": "Apenas administradores podem configurar novos pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                pivot_id = str(body.get("pivot_id", "")).strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    result = telemetry_store.remove_expected_pivot(pivot_id, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                self._write_json(200, result)
+                return
+
+            if path == "/api/pivots/delete":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode deletar pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                results = []
+                success_count = 0
+                for pivot_id in pivot_ids:
+                    try:
+                        deleted = telemetry_store.delete_pivot(pivot_id, source=source)
+                        results.append({"ok": True, "pivot_id": pivot_id, "deleted": deleted})
+                        success_count += 1
+                    except ValueError as exc:
+                        results.append({"ok": False, "pivot_id": pivot_id, "error": str(exc)})
+
+                error_count = len(results) - success_count
+                self._write_json(
+                    200,
+                    {
+                        "ok": error_count == 0,
+                        "partial": success_count > 0 and error_count > 0,
+                        "success_count": success_count,
+                        "error_count": error_count,
+                        "results": results,
+                    },
+                )
+                return
+
             if path.startswith("/api/pivot/") and path.endswith("/delete"):
                 pivot_id = unquote(path[len("/api/pivot/") : -len("/delete")]).strip("/").strip()
                 if not pivot_id:
@@ -1131,6 +1319,51 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                     return
 
                 self._write_json(200, {"ok": True, "updated": updated})
+                return
+
+            if path == "/api/pivots/reset-modem":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode resetar varios pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                results = []
+                success_count = 0
+                for pivot_id in pivot_ids:
+                    try:
+                        result = telemetry_store.send_modem_reset_command(pivot_id)
+                        results.append({"ok": True, "pivot_id": pivot_id, "reset_command": result})
+                        success_count += 1
+                    except (ValueError, RuntimeError) as exc:
+                        results.append({"ok": False, "pivot_id": pivot_id, "error": str(exc)})
+
+                error_count = len(results) - success_count
+                self._write_json(
+                    200,
+                    {
+                        "ok": error_count == 0,
+                        "partial": success_count > 0 and error_count > 0,
+                        "success_count": success_count,
+                        "error_count": error_count,
+                        "results": results,
+                    },
+                )
                 return
 
             if path == "/api/pivot-reset-modem":

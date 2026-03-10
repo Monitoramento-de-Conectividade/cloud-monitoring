@@ -314,6 +314,7 @@ class TelemetryStore:
 
         self.pivots = {}
         self.pending_ping_unknown = {}
+        self.pending_expected_pivots = {}
         self.malformed_messages = []
         self.duplicate_count = 0
 
@@ -334,6 +335,40 @@ class TelemetryStore:
 
         self.runtime_path = os.path.join(DATA_DIR, "runtime_store.json")
 
+    def _restore_pending_expected_pivots_locked(self, pending_expected):
+        if not isinstance(pending_expected, dict):
+            return
+
+        cleaned_expected = {}
+        for pivot_id, raw_entry in pending_expected.items():
+            normalized = str(pivot_id or "").strip()
+            if not normalized:
+                continue
+            entry = raw_entry if isinstance(raw_entry, dict) else {}
+            cleaned_expected[normalized] = {
+                "pivot_id": normalized,
+                "added_at_ts": _safe_float(entry.get("added_at_ts"), None),
+                "source": str(entry.get("source") or "ui").strip() or "ui",
+            }
+        self.pending_expected_pivots = cleaned_expected
+
+    def _load_pending_expected_pivots_from_runtime(self):
+        if not os.path.exists(self.runtime_path):
+            return
+
+        try:
+            with open(self.runtime_path, "r", encoding="utf-8") as file:
+                loaded = json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not isinstance(loaded, dict):
+            return
+
+        with self._lock:
+            self._restore_pending_expected_pivots_locked(loaded.get("pending_expected_pivots"))
+            self._cleanup_expected_pivots_locked()
+
     def _ensure_manual_session_rotation_allowed(self, action_label):
         if self.continuous_monitoring_mode:
             raise ValueError(
@@ -344,6 +379,7 @@ class TelemetryStore:
         ensure_dirs()
         os.makedirs(self.log_dir, exist_ok=True)
         self.persistence.start()
+        self._load_pending_expected_pivots_from_runtime()
 
         db_probe_settings = self.persistence.load_probe_settings()
         if isinstance(db_probe_settings, dict) and db_probe_settings:
@@ -534,7 +570,23 @@ class TelemetryStore:
             pivot_id = parsed["pivot_id"]
 
             if topic == TOPIC_CLOUDV2:
+                pivot = self.pivots.get(pivot_id)
+                known_pivot = pivot is not None or self._pivot_exists_locked(pivot_id)
+                pending_expected = self.pending_expected_pivots.get(pivot_id)
+                if (not known_pivot) and pending_expected is None:
+                    self.log.info(
+                        "Mensagem cloudv2 descartada para pivot nao autorizado: pivot_id=%s",
+                        pivot_id,
+                    )
+                    return {
+                        "accepted": False,
+                        "reason": "pivot nao autorizado",
+                        "pivot_id": pivot_id,
+                    }
+
                 pivot = self._get_or_create_pivot_locked(pivot_id, ts)
+                if pending_expected is not None:
+                    self.pending_expected_pivots.pop(pivot_id, None)
                 self._record_message_common_locked(pivot, topic, ts)
                 self._record_cloudv2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
                 self._refresh_status_locked(pivot, ts)
@@ -551,23 +603,14 @@ class TelemetryStore:
 
             pivot = self.pivots.get(pivot_id)
             if pivot is None:
-                if topic == TOPIC_PING:
-                    self._record_pending_ping_locked(pivot_id, ts, payload_text)
-                    self._invalidate_api_caches_locked()
-                    return {
-                        "accepted": False,
-                        "reason": "ping para pivot nao descoberto",
-                        "pivot_id": pivot_id,
-                    }
-
                 self.log.info(
-                    "Mensagem descartada para pivot nao descoberto: topic=%s pivot_id=%s",
+                    "Mensagem descartada para pivot nao autorizado: topic=%s pivot_id=%s",
                     topic,
                     pivot_id,
                 )
                 return {
                     "accepted": False,
-                    "reason": "pivot nao descoberto",
+                    "reason": "pivot nao autorizado",
                     "pivot_id": pivot_id,
                 }
 
@@ -760,6 +803,7 @@ class TelemetryStore:
                     return cached_payload
                 cache_generation = int(self._api_cache_generation)
                 settings = self._build_state_settings_locked()
+                expected_pivots_pending = self._build_expected_pivots_pending_locked()
 
             try:
                 persisted = self.persistence.get_run_state_payload(
@@ -781,11 +825,13 @@ class TelemetryStore:
                     "counts": {
                         "pivots": 0,
                         "pending_ping_unknown": 0,
+                        "expected_pivots_pending": len(expected_pivots_pending),
                         "malformed_messages": 0,
                         "duplicate_drops": 0,
                     },
                     "pivots": [],
                     "pending_ping": [],
+                    "expected_pivots_pending": expected_pivots_pending,
                     "malformed_recent": [],
                     "mode": "history",
                 }
@@ -812,11 +858,13 @@ class TelemetryStore:
                 "counts": {
                     "pivots": len(pivot_items),
                     "pending_ping_unknown": 0,
+                    "expected_pivots_pending": len(expected_pivots_pending),
                     "malformed_messages": 0,
                     "duplicate_drops": 0,
                 },
                 "pivots": pivot_items,
                 "pending_ping": [],
+                "expected_pivots_pending": expected_pivots_pending,
                 "malformed_recent": [],
                 "mode": mode,
             }
@@ -1041,6 +1089,155 @@ class TelemetryStore:
         self._clear_dashboard_data_files()
         self.write()
         return result
+
+    def _pivot_exists_locked(self, pivot_id):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            return False
+        if normalized in self.pivots:
+            return True
+        try:
+            return bool(self.persistence.pivot_exists(normalized))
+        except RuntimeError:
+            return False
+
+    def _cleanup_expected_pivots_locked(self):
+        keep = {}
+        for pivot_id, raw_entry in self.pending_expected_pivots.items():
+            normalized = str(pivot_id or "").strip()
+            if not normalized or (not validate_pivot_id(normalized)):
+                continue
+            if self._pivot_exists_locked(normalized):
+                continue
+            entry = raw_entry if isinstance(raw_entry, dict) else {}
+            keep[normalized] = {
+                "pivot_id": normalized,
+                "added_at_ts": _safe_float(entry.get("added_at_ts"), None),
+                "source": str(entry.get("source") or "ui").strip() or "ui",
+            }
+        self.pending_expected_pivots = keep
+
+    def _build_expected_pivots_pending_locked(self):
+        items = []
+        for pivot_id, entry in sorted(self.pending_expected_pivots.items(), key=lambda item: item[0].lower()):
+            items.append(
+                {
+                    "pivot_id": pivot_id,
+                    "added_at_ts": _safe_float(entry.get("added_at_ts"), None),
+                    "added_at": _ts_to_str(entry.get("added_at_ts")),
+                    "source": str(entry.get("source") or "ui").strip() or "ui",
+                }
+            )
+        return items
+
+    def queue_expected_pivots(self, pivot_ids, now=None, source="ui"):
+        if not isinstance(pivot_ids, list):
+            raise ValueError("pivot_ids obrigatorio")
+
+        normalized_ids = []
+        seen = set()
+        for raw_pivot_id in pivot_ids:
+            pivot_id = str(raw_pivot_id or "").strip()
+            if not pivot_id or pivot_id in seen:
+                continue
+            seen.add(pivot_id)
+            normalized_ids.append(pivot_id)
+
+        if not normalized_ids:
+            raise ValueError("pivot_ids obrigatorio")
+
+        current_ts = float(now if now is not None else time.time())
+        results = []
+        added_count = 0
+        with self._lock:
+            self._cleanup_expected_pivots_locked()
+            for pivot_id in normalized_ids:
+                if not validate_pivot_id(pivot_id):
+                    results.append(
+                        {
+                            "ok": False,
+                            "pivot_id": pivot_id,
+                            "status": "invalid",
+                            "message": "pivot_id invalido",
+                        }
+                    )
+                    continue
+                if self._pivot_exists_locked(pivot_id):
+                    results.append(
+                        {
+                            "ok": False,
+                            "pivot_id": pivot_id,
+                            "status": "already_exists",
+                            "message": "pivot_id ja existe",
+                        }
+                    )
+                    continue
+                if pivot_id in self.pending_expected_pivots:
+                    results.append(
+                        {
+                            "ok": False,
+                            "pivot_id": pivot_id,
+                            "status": "already_pending",
+                            "message": "pivot_id ja aguardando descoberta",
+                        }
+                    )
+                    continue
+
+                self.pending_expected_pivots[pivot_id] = {
+                    "pivot_id": pivot_id,
+                    "added_at_ts": current_ts,
+                    "source": str(source or "ui").strip() or "ui",
+                }
+                added_count += 1
+                results.append(
+                    {
+                        "ok": True,
+                        "pivot_id": pivot_id,
+                        "status": "added",
+                        "message": "pivot_id adicionado para descoberta",
+                    }
+                )
+
+            if added_count:
+                self._dirty = True
+                self._invalidate_api_caches_locked()
+
+            return {
+                "ok": added_count == len(results) and bool(results),
+                "partial": 0 < added_count < len(results),
+                "added_count": added_count,
+                "results": results,
+                "pending": self._build_expected_pivots_pending_locked(),
+            }
+
+    def remove_expected_pivot(self, pivot_id, now=None, source="ui"):
+        normalized = str(pivot_id or "").strip()
+        if not normalized:
+            raise ValueError("pivot_id obrigatorio")
+        if not validate_pivot_id(normalized):
+            raise ValueError("pivot_id invalido")
+
+        current_ts = float(now if now is not None else time.time())
+        with self._lock:
+            removed = self.pending_expected_pivots.pop(normalized, None)
+            if removed is None:
+                return {
+                    "ok": False,
+                    "pivot_id": normalized,
+                    "status": "not_found",
+                    "message": "pivot_id nao estava aguardando descoberta",
+                }
+
+            self._dirty = True
+            self._invalidate_api_caches_locked()
+            return {
+                "ok": True,
+                "pivot_id": normalized,
+                "status": "removed",
+                "removed_at_ts": current_ts,
+                "removed_at": _ts_to_str(current_ts),
+                "source": str(source or "ui").strip() or "ui",
+            }
 
     def delete_pivot(self, pivot_id, now=None, source="ui"):
         normalized = str(pivot_id or "").strip()
@@ -1488,6 +1685,8 @@ class TelemetryStore:
 
         current_ts = float(now if now is not None else time.time())
         with self._lock:
+            if not self._pivot_exists_locked(normalized):
+                raise ValueError("pivot ainda nao foi autorizado para descoberta via cloudv2")
             self._monitoring_mode = "live"
             active_run_id = self._ensure_active_run_locked(current_ts, source=source)
             if not active_run_id:
@@ -2297,7 +2496,7 @@ class TelemetryStore:
                     pivot["longitude"] = coordinates["longitude"]
             return pivot
 
-        session_id = self._ensure_active_session_locked(pivot_id, ts, source="auto_discovery")
+        session_id = self._ensure_active_session_locked(pivot_id, ts, source="cloudv2_discovery")
         is_concentrator = self._load_pivot_concentrator_flag_locked(pivot_id)
         coordinates = self._load_pivot_coordinates_locked(pivot_id)
         pivot = self._new_pivot_state(
@@ -2320,10 +2519,10 @@ class TelemetryStore:
             event_type="pivot_discovered",
             topic=TOPIC_CLOUDV2,
             ts=ts,
-            summary="Pivot descoberto automaticamente via cloudv2.",
+            summary="Pivot descoberto via cloudv2 apos autorizacao.",
             details={"pivot_id": pivot_id},
         )
-        self.log.info("Pivot descoberto via cloudv2: pivot_id=%s", pivot_id)
+        self.log.info("Pivot autorizado descoberto via cloudv2: pivot_id=%s", pivot_id)
         return pivot
 
     def _record_message_common_locked(self, pivot, topic, ts):
@@ -2726,6 +2925,15 @@ class TelemetryStore:
         raw_payload=None,
         parsed_payload=None,
     ):
+        event_details = dict(details or {})
+        normalized_source_topic = str(source_topic or "").strip()
+        if normalized_source_topic and "source_topic" not in event_details:
+            event_details["source_topic"] = normalized_source_topic
+        if raw_payload not in (None, "") and "raw_payload" not in event_details:
+            event_details["raw_payload"] = str(raw_payload)
+        if isinstance(parsed_payload, dict) and parsed_payload and "parsed_payload" not in event_details:
+            event_details["parsed_payload"] = parsed_payload
+
         self._event_seq += 1
         event = {
             "id": self._event_seq,
@@ -2734,7 +2942,7 @@ class TelemetryStore:
             "type": event_type,
             "topic": topic,
             "summary": summary,
-            "details": details or {},
+            "details": event_details,
         }
         pivot["timeline"].append(event)
         if len(pivot["timeline"]) > self.max_events_per_pivot:
@@ -3338,6 +3546,8 @@ class TelemetryStore:
                 }
             )
 
+        expected_pivots_pending = self._build_expected_pivots_pending_locked()
+
         malformed_recent = [
             {
                 "ts": item.get("ts"),
@@ -3368,11 +3578,13 @@ class TelemetryStore:
             "counts": {
                 "pivots": len(pivots),
                 "pending_ping_unknown": len(pending_ping),
+                "expected_pivots_pending": len(expected_pivots_pending),
                 "malformed_messages": len(self.malformed_messages),
                 "duplicate_drops": self.duplicate_count,
             },
             "pivots": pivots,
             "pending_ping": pending_ping,
+            "expected_pivots_pending": expected_pivots_pending,
             "malformed_recent": malformed_recent,
         }
 
@@ -3673,7 +3885,7 @@ class TelemetryStore:
 
     def _build_runtime_payload_locked(self, now):
         payload = {
-            "version": 4,
+            "version": 5,
             "updated_at": _ts_to_str(now),
             "updated_at_ts": now,
             "event_seq": self._event_seq,
@@ -3681,6 +3893,7 @@ class TelemetryStore:
             "monitoring_mode": self._monitoring_mode,
             "probe_settings": self._probe_settings,
             "pending_ping_unknown": self.pending_ping_unknown,
+            "pending_expected_pivots": self.pending_expected_pivots,
             "malformed_messages": self.malformed_messages,
             "duplicate_count": self.duplicate_count,
             "pivots": self.pivots,
@@ -3875,6 +4088,8 @@ class TelemetryStore:
             if isinstance(pending_ping, dict):
                 self.pending_ping_unknown = pending_ping
 
+            self._restore_pending_expected_pivots_locked(loaded.get("pending_expected_pivots"))
+
             malformed_messages = loaded.get("malformed_messages")
             if isinstance(malformed_messages, list):
                 self.malformed_messages = malformed_messages[-500:]
@@ -3887,6 +4102,7 @@ class TelemetryStore:
                 self._prune_pivot_locked(pivot, now)
                 self._refresh_status_locked(pivot, now)
             self._cleanup_pending_ping_locked(now)
+            self._cleanup_expected_pivots_locked()
 
         self.log.info("Estado de runtime restaurado com %s pivots.", len(self.pivots))
 
