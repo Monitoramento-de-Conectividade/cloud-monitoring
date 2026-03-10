@@ -1104,6 +1104,70 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, {"ok": True, "created": created})
                 return
 
+            if path == "/api/pivots/expected":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode configurar novos pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+                try:
+                    pivot_ids = _normalize_bulk_pivot_ids(body.get("pivot_ids"))
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    result = telemetry_store.queue_expected_pivots(pivot_ids, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                self._write_json(200, result)
+                return
+
+            if path == "/api/pivots/expected/remove":
+                if not self._can_delete_pivots(auth_context):
+                    self._write_json(
+                        403,
+                        {
+                            "ok": False,
+                            "code": "fixed_admin_required",
+                            "message": "Apenas o administrador principal pode configurar novos pivos.",
+                        },
+                    )
+                    return
+                try:
+                    body = self._read_json_body()
+                except json.JSONDecodeError:
+                    self._write_json(400, {"error": "json invalido"})
+                    return
+
+                pivot_id = str(body.get("pivot_id", "")).strip()
+                if not pivot_id:
+                    self._write_json(400, {"error": "pivot_id obrigatorio"})
+                    return
+
+                source = str(body.get("source", "ui")).strip() or "ui"
+                try:
+                    result = telemetry_store.remove_expected_pivot(pivot_id, source=source)
+                except ValueError as exc:
+                    self._write_json(400, {"error": str(exc)})
+                    return
+
+                self._write_json(200, result)
+                return
+
             if path == "/api/pivots/delete":
                 if not self._can_delete_pivots(auth_context):
                     self._write_json(

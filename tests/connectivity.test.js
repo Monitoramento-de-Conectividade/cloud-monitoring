@@ -370,3 +370,8 @@ test("ui: confirma ACK de reset pendente a partir do estado resumido dos pivôs"
   assert.deepEqual(result.confirmedPivotIds, ["PivotA"]);
   assert.deepEqual(Object.keys(result.remainingPendingByPivotId), ["PivotB"]);
 });
+
+test("ui: entrada de fila de descoberta separa pivot_ids por virgula ou quebra de linha", () => {
+  const parsed = _test.parsePivotIdBatchInput(" PivotA_1,\nPivotB_2 ; PivotC_3  ");
+  assert.deepEqual(parsed, ["PivotA_1", "PivotB_2", "PivotC_3"]);
+});

@@ -157,16 +157,40 @@
     </section>
 
     <section id="cardsSection" class="panel cards-wrap">
-      <div class="panel-head tight">
-        <div>
+      <div class="panel-head tight cards-head">
+        <div class="cards-head-title">
           <h2>Pivôs monitorados</h2>
           <p class="section-copy">Selecione um pivô para ver conectividade, histórico e latência.</p>
+        </div>
+        <div id="expectedPivotAdminDock" class="expected-pivot-admin" hidden>
+          <label class="field expected-pivot-field">
+            <span>Próximos pivôs para descoberta</span>
+            <textarea
+              id="expectedPivotInput"
+              rows="2"
+              placeholder="Ex.: PioneiralEML_71, PioneiralEML_72"
+            ></textarea>
+          </label>
+          <div class="expected-pivot-actions">
+            <button id="addExpectedPivotBtn" class="primary" type="button">Adicionar pivôs</button>
+            <button id="toggleExpectedPivotPanelBtn" class="ghost" type="button" aria-expanded="false">
+              Ver fila
+            </button>
+          </div>
+          <span class="hint-text expected-pivot-copy">Separe vários IDs por vírgula ou quebra de linha.</span>
         </div>
         <div class="pager">
           <button id="cardsPrev" class="ghost">Anterior</button>
           <span id="cardsPageInfo">Página 1/1</span>
           <button id="cardsNext" class="ghost">Próxima</button>
         </div>
+      </div>
+      <div id="expectedPivotPanel" class="expected-pivot-panel" hidden>
+        <div class="expected-pivot-panel-copy">
+          <strong>Pivôs aguardando descoberta</strong>
+          <span>Quando um destes IDs aparecer na cloudv2, ele será registrado automaticamente e sairá da fila.</span>
+        </div>
+        <div id="expectedPivotList" class="list"></div>
       </div>
       <div id="bulkPivotActions" class="bulk-pivot-actions" hidden>
         <span id="bulkPivotSelectionLabel" class="bulk-pivot-selection-label">0 pivôs selecionados</span>

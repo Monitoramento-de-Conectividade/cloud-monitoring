@@ -79,6 +79,12 @@ const ui = HAS_DOM
       statusSummary: document.getElementById("statusSummary"),
       pendingPanel: document.getElementById("pendingPanel"),
       pendingList: document.getElementById("pendingList"),
+      expectedPivotAdminDock: document.getElementById("expectedPivotAdminDock"),
+      expectedPivotInput: document.getElementById("expectedPivotInput"),
+      addExpectedPivotBtn: document.getElementById("addExpectedPivotBtn"),
+      toggleExpectedPivotPanelBtn: document.getElementById("toggleExpectedPivotPanelBtn"),
+      expectedPivotPanel: document.getElementById("expectedPivotPanel"),
+      expectedPivotList: document.getElementById("expectedPivotList"),
       bulkPivotActions: document.getElementById("bulkPivotActions"),
       bulkPivotSelectionLabel: document.getElementById("bulkPivotSelectionLabel"),
       bulkResetPivotsBtn: document.getElementById("bulkResetPivotsBtn"),
@@ -202,6 +208,9 @@ const state = {
   qualityOverrideMaxConcurrency: 3,
   visiblePivotIds: [],
   selectedPivotIds: [],
+  expectedPivotPanelExpanded: false,
+  expectedPivotPanelSignature: "",
+  expectedPivotActionInFlight: false,
   qualityRefreshSeq: 0,
   selectedRunId: null,
   lastRunResolveAttemptMs: 0,
@@ -805,6 +814,38 @@ function normalizePivotIdList(values) {
     normalized.push(pivotId);
   }
   return normalized;
+}
+
+function parsePivotIdBatchInput(value) {
+  const normalizedText = String(value || "").replace(/\r/g, "\n");
+  if (!normalizedText.trim()) return [];
+  const parts = normalizedText
+    .split(/[\s,;]+/)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return normalizePivotIdList(parts);
+}
+
+function summarizeExpectedPivotResults(results, status) {
+  return (Array.isArray(results) ? results : []).filter((item) => String(item?.status || "") === status);
+}
+
+function getExpectedPivotsPending() {
+  const rawItems = Array.isArray((state.rawState || {}).expected_pivots_pending)
+    ? (state.rawState || {}).expected_pivots_pending
+    : [];
+  return rawItems
+    .map((item) => {
+      const pivotId = text(item?.pivot_id, "").trim();
+      if (!pivotId) return null;
+      return {
+        pivot_id: pivotId,
+        added_at: text(item?.added_at, "-"),
+        added_at_ts: Number(item?.added_at_ts || 0),
+        source: text(item?.source, "ui"),
+      };
+    })
+    .filter(Boolean);
 }
 
 function getPivotSummaryObject(pivot) {
@@ -2092,6 +2133,7 @@ function renderPending() {
 }
 
 function renderCards() {
+  renderExpectedPivotAdmin();
   ensurePivotTableColumnOrder();
   const filtered = applyFilterSort();
   const totalPages = Math.max(1, Math.ceil(filtered.length / state.cardsPageSize));
@@ -3713,6 +3755,87 @@ function syncPivotDeleteControl() {
   }
 }
 
+function canCurrentUserManageExpectedPivots() {
+  return canCurrentUserDeletePivots();
+}
+
+function toggleExpectedPivotPanel(forceExpanded = null) {
+  const nextExpanded = typeof forceExpanded === "boolean"
+    ? forceExpanded
+    : !state.expectedPivotPanelExpanded;
+  state.expectedPivotPanelExpanded = nextExpanded;
+  renderExpectedPivotAdmin();
+}
+
+function renderExpectedPivotAdmin() {
+  const allowed = canCurrentUserManageExpectedPivots();
+  const pendingItems = allowed ? getExpectedPivotsPending() : [];
+  const pendingCount = pendingItems.length;
+  const toggleLabel = state.expectedPivotPanelExpanded
+    ? `Ocultar fila (${pendingCount})`
+    : `Ver fila (${pendingCount})`;
+
+  if (ui.expectedPivotAdminDock) {
+    ui.expectedPivotAdminDock.hidden = !allowed;
+  }
+  if (!allowed) {
+    state.expectedPivotPanelExpanded = false;
+  }
+  if (ui.expectedPivotInput) {
+    ui.expectedPivotInput.disabled = !allowed || state.expectedPivotActionInFlight;
+  }
+  if (ui.addExpectedPivotBtn) {
+    ui.addExpectedPivotBtn.disabled = !allowed || state.expectedPivotActionInFlight;
+  }
+  if (ui.toggleExpectedPivotPanelBtn) {
+    ui.toggleExpectedPivotPanelBtn.disabled = !allowed;
+    ui.toggleExpectedPivotPanelBtn.textContent = toggleLabel;
+    ui.toggleExpectedPivotPanelBtn.setAttribute("aria-expanded", state.expectedPivotPanelExpanded ? "true" : "false");
+  }
+  if (ui.expectedPivotPanel) {
+    ui.expectedPivotPanel.hidden = !allowed || !state.expectedPivotPanelExpanded;
+  }
+
+  const signature = [
+    allowed ? 1 : 0,
+    state.expectedPivotPanelExpanded ? 1 : 0,
+    state.expectedPivotActionInFlight ? 1 : 0,
+    pendingItems.map((item) => `${item.pivot_id}:${item.added_at}`).join("|"),
+  ].join("|");
+  if (state.expectedPivotPanelSignature === signature) return;
+  state.expectedPivotPanelSignature = signature;
+
+  if (!ui.expectedPivotList || !allowed || !state.expectedPivotPanelExpanded) return;
+
+  if (!pendingItems.length) {
+    ui.expectedPivotList.innerHTML = `<div class="empty">Nenhum pivô aguardando descoberta na cloudv2.</div>`;
+    return;
+  }
+
+  ui.expectedPivotList.innerHTML = pendingItems
+    .map((item) => {
+      const pivotId = escapeHtml(text(item.pivot_id, ""));
+      const addedAt = escapeHtml(text(item.added_at, "-"));
+      return `
+        <div class="list-item expected-pivot-item">
+          <div class="expected-pivot-item-main">
+            <strong>${pivotId}</strong>
+            <span class="expected-pivot-item-meta">Na fila desde ${addedAt}</span>
+          </div>
+          <button
+            class="ghost"
+            type="button"
+            data-expected-pivot-remove="${pivotId}"
+            ${state.expectedPivotActionInFlight ? "disabled" : ""}
+          >
+            Remover
+          </button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
 function canCurrentUserManagePivotTechnology() {
   return canCurrentUserDeletePivots();
 }
@@ -4082,6 +4205,112 @@ async function deleteSelectedPivotsBulk() {
   }
 }
 
+async function addExpectedPivots() {
+  if (!canCurrentUserManageExpectedPivots()) {
+    renderExpectedPivotAdmin();
+    showToast("Apenas o administrador principal pode configurar novos pivos.", "error", 3800);
+    return;
+  }
+
+  const pivotIds = parsePivotIdBatchInput(ui.expectedPivotInput?.value || "");
+  if (!pivotIds.length) {
+    showToast("Informe um ou mais pivot_ids para descoberta.", "warn", 3200);
+    return;
+  }
+
+  state.expectedPivotActionInFlight = true;
+  renderExpectedPivotAdmin();
+  try {
+    const response = await fetch(buildApiUrl("/api/pivots/expected"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_ids: pivotIds,
+        source: "ui",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    const added = summarizeExpectedPivotResults(results, "added");
+    const alreadyExists = summarizeExpectedPivotResults(results, "already_exists");
+    const alreadyPending = summarizeExpectedPivotResults(results, "already_pending");
+    const invalid = summarizeExpectedPivotResults(results, "invalid");
+
+    if (added.length && ui.expectedPivotInput) {
+      ui.expectedPivotInput.value = "";
+    }
+    if (added.length) {
+      state.expectedPivotPanelExpanded = true;
+      showToast(`${added.length} pivot_id(s) adicionados para descoberta.`, "success", 3600);
+    }
+    if (alreadyExists.length) {
+      showToast(`Ja registrados: ${buildPivotListPreview(alreadyExists.map((item) => item.pivot_id), 5)}.`, "warn", 4600);
+    }
+    if (alreadyPending.length) {
+      showToast(
+        `Ja aguardando descoberta: ${buildPivotListPreview(alreadyPending.map((item) => item.pivot_id), 5)}.`,
+        "warn",
+        4600
+      );
+    }
+    if (invalid.length) {
+      showToast(`Pivot_id invalido: ${buildPivotListPreview(invalid.map((item) => item.pivot_id), 5)}.`, "error", 4800);
+    }
+    await refreshAll();
+  } catch (err) {
+    showToast("Nao foi possivel atualizar a fila de descoberta.", "error", 4200);
+  } finally {
+    state.expectedPivotActionInFlight = false;
+    renderExpectedPivotAdmin();
+  }
+}
+
+async function removeExpectedPivot(pivotId) {
+  if (!canCurrentUserManageExpectedPivots()) {
+    renderExpectedPivotAdmin();
+    showToast("Apenas o administrador principal pode configurar novos pivos.", "error", 3800);
+    return;
+  }
+
+  const normalizedPivotId = String(pivotId || "").trim();
+  if (!normalizedPivotId) return;
+
+  state.expectedPivotActionInFlight = true;
+  renderExpectedPivotAdmin();
+  try {
+    const response = await fetch(buildApiUrl("/api/pivots/expected/remove"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        pivot_id: normalizedPivotId,
+        source: "ui",
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+
+    if (data.ok) {
+      showToast(`Pivot_id ${normalizedPivotId} removido da fila.`, "success", 3200);
+    } else {
+      showToast(`Pivot_id ${normalizedPivotId} nao estava na fila.`, "warn", 3200);
+    }
+    await refreshAll();
+  } catch (err) {
+    showToast("Nao foi possivel remover o pivot_id da fila.", "error", 4200);
+  } finally {
+    state.expectedPivotActionInFlight = false;
+    renderExpectedPivotAdmin();
+  }
+}
+
 function syncAdminControls() {
   const role = String(state.authUserRole || "user").trim().toLowerCase();
   const isAdmin = role === "admin";
@@ -4098,6 +4327,7 @@ function syncAdminControls() {
   syncPivotDeleteControl();
   syncPivotTechnologyControl();
   syncBulkPivotActionControls();
+  renderExpectedPivotAdmin();
 }
 
 function renderAdminUsers() {
@@ -4344,6 +4574,25 @@ function wireEvents() {
       const userId = String(button.getAttribute("data-admin-delete-user-id") || "").trim();
       const userEmail = String(button.getAttribute("data-admin-delete-user-email") || "").trim();
       deleteManagedUser(userId, userEmail);
+    });
+  }
+
+  if (ui.addExpectedPivotBtn) {
+    ui.addExpectedPivotBtn.addEventListener("click", addExpectedPivots);
+  }
+  if (ui.toggleExpectedPivotPanelBtn) {
+    ui.toggleExpectedPivotPanelBtn.addEventListener("click", () => {
+      toggleExpectedPivotPanel();
+    });
+  }
+  if (ui.expectedPivotList) {
+    ui.expectedPivotList.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest("button[data-expected-pivot-remove]");
+      if (!button) return;
+      const pivotId = String(button.getAttribute("data-expected-pivot-remove") || "").trim();
+      removeExpectedPivot(pivotId);
     });
   }
 
@@ -4602,9 +4851,11 @@ if (typeof module !== "undefined" && module.exports) {
       buildConnectivityStatus,
       computeConnectivityFromRange,
       normalizePivotIdList,
+      parsePivotIdBatchInput,
       getPivotFirmwareVersionForReset,
       getPivotModemResetSummary,
       collectConfirmedModemResetAcks,
+      getExpectedPivotsPending,
       shouldRenderRssiPanel,
     },
   };

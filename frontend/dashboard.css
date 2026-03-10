@@ -134,6 +134,7 @@ a {
 
 input,
 select,
+textarea,
 button,
 table {
   font: inherit;
@@ -478,6 +479,22 @@ input::placeholder {
   color: #789383;
 }
 
+textarea {
+  width: 100%;
+  min-height: 68px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  background: #ffffff;
+  color: var(--text);
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+textarea::placeholder {
+  color: #789383;
+}
+
 button {
   min-height: 40px;
   border-radius: var(--radius-sm);
@@ -636,6 +653,84 @@ a:focus {
 .cards-wrap {
   display: grid;
   gap: 12px;
+}
+
+.cards-head {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 560px) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.cards-head-title {
+  min-width: 0;
+}
+
+.expected-pivot-admin {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+  justify-self: center;
+}
+
+.expected-pivot-field {
+  margin: 0;
+}
+
+.expected-pivot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.expected-pivot-copy {
+  text-align: center;
+}
+
+.expected-pivot-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d4e6db;
+  border-radius: 12px;
+  background: #f7fbf8;
+}
+
+.expected-pivot-panel-copy {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.expected-pivot-panel-copy strong {
+  color: #1f503a;
+  font-size: 14px;
+}
+
+.expected-pivot-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.expected-pivot-item-main {
+  display: grid;
+  gap: 4px;
+}
+
+.expected-pivot-item-main strong {
+  color: #123a2a;
+}
+
+.expected-pivot-item-meta {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .bulk-pivot-actions {
@@ -1760,6 +1855,20 @@ th {
 
   .control-row {
     grid-template-columns: 1fr;
+  }
+
+  .cards-head {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .expected-pivot-admin {
+    max-width: none;
+    justify-self: stretch;
+  }
+
+  .expected-pivot-actions {
+    justify-content: flex-start;
   }
 
   .cards-grid {
