@@ -52,6 +52,7 @@ QUALITY_RANK = {
 
 # Tolerancia percentual para considerar intervalos cloudv2 equivalentes.
 CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.5
+PROBE_STATUS_INFO_MIN_FIRMWARE = (2, 8, 0)
 CONCENTRATOR_TECH_LABEL = "concentrador"
 
 
@@ -224,6 +225,103 @@ def parse_ping_rssi(parsed):
     if rssi_value is None or rssi_value < 0 or rssi_value > 31:
         return None
     return rssi_value
+
+
+def _parse_version_triplet(value):
+    raw = _normalize_text(value).lower()
+    if not raw:
+        return None
+    match = re.search(r"v?\s*(\d+)\.(\d+)\.(\d+)", raw)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _compare_version_triplet(left, right):
+    safe_left = tuple(left or ())
+    safe_right = tuple(right or ())
+    for index in range(3):
+        left_value = int(safe_left[index] if index < len(safe_left) else 0)
+        right_value = int(safe_right[index] if index < len(safe_right) else 0)
+        if left_value > right_value:
+            return 1
+        if left_value < right_value:
+            return -1
+    return 0
+
+
+def _normalize_probe_status_text(value):
+    return re.sub(r"\s+", " ", _normalize_text(value))
+
+
+def _normalize_probe_response_info(value):
+    if not isinstance(value, dict):
+        return None
+
+    timestamp_ts = _safe_int(value.get("board_timestamp_ts"), None)
+    normalized = {
+        "rssi": _safe_int(value.get("rssi"), None),
+        "technology": _normalize_probe_status_text(value.get("technology")),
+        "board_timestamp_ts": timestamp_ts,
+        "board_timestamp_at": _ts_to_str(timestamp_ts),
+        "operator": _normalize_probe_status_text(value.get("operator")),
+        "modem_name": _normalize_probe_status_text(value.get("modem_name")),
+        "imei": _normalize_probe_status_text(value.get("imei")),
+        "keep_alive_sec": _safe_int(value.get("keep_alive_sec"), None),
+        "socket_timeout_sec": _safe_int(value.get("socket_timeout_sec"), None),
+        "apn_time_ms": _safe_int(value.get("apn_time_ms"), None),
+        "apn": _normalize_probe_status_text(value.get("apn")),
+        "networks": _safe_int(value.get("networks"), None),
+        "esp_temp_c": _safe_float(value.get("esp_temp_c"), None),
+        "firmware": _normalize_probe_status_text(value.get("firmware")),
+    }
+
+    if not any(item not in (None, "", "-") for item in normalized.values()):
+        return None
+    return normalized
+
+
+def parse_probe_status_payload(parsed):
+    if not isinstance(parsed, dict):
+        return None
+    if _normalize_text(parsed.get("idp")) != "11":
+        return None
+
+    parts = parsed.get("parts")
+    if not isinstance(parts, list) or len(parts) < 15:
+        return None
+
+    payload_parts = [_normalize_text(part) for part in parts[2:]]
+    if len(payload_parts) < 13:
+        return None
+
+    head = payload_parts[:3]
+    tail = payload_parts[-8:]
+    middle = payload_parts[3:-8]
+    if len(middle) < 2:
+        return None
+
+    firmware = _normalize_probe_status_text(tail[7])
+    firmware_parts = _parse_version_triplet(firmware)
+    if not firmware_parts or _compare_version_triplet(firmware_parts, PROBE_STATUS_INFO_MIN_FIRMWARE) < 0:
+        return None
+
+    info = {
+        "rssi": _safe_int(head[0], None),
+        "technology": head[1],
+        "board_timestamp_ts": _safe_int(head[2], None),
+        "operator": middle[0],
+        "modem_name": "-".join(part for part in middle[1:] if part),
+        "imei": tail[0],
+        "keep_alive_sec": _safe_int(tail[1], None),
+        "socket_timeout_sec": _safe_int(tail[2], None),
+        "apn_time_ms": _safe_int(tail[3], None),
+        "apn": tail[4],
+        "networks": _safe_int(tail[5], None),
+        "esp_temp_c": _safe_float(tail[6], None),
+        "firmware": firmware,
+    }
+    return _normalize_probe_response_info(info)
 
 
 class TelemetryStore:
@@ -2243,6 +2341,7 @@ class TelemetryStore:
                 "interval_sec": probe_interval,
                 "last_sent_ts": None,
                 "last_response_ts": None,
+                "last_response_info": None,
                 "pending_sent_ts": None,
                 "pending_deadline_ts": None,
                 "timeout_streak": 0,
@@ -2332,6 +2431,17 @@ class TelemetryStore:
             if baseline_last_cloud2_ts is not None:
                 pivot["last_cloud2_ts"] = baseline_last_cloud2_ts
             changed = True
+
+        probe = pivot.get("probe")
+        if isinstance(probe, dict) and not isinstance(probe.get("last_response_info"), dict):
+            baseline_probe = summary.get("probe")
+            baseline_probe_info = None
+            if isinstance(baseline_probe, dict):
+                baseline_probe_info = baseline_probe.get("last_response_info")
+            normalized_probe_info = _normalize_probe_response_info(baseline_probe_info)
+            if normalized_probe_info is not None:
+                probe["last_response_info"] = normalized_probe_info
+                changed = True
 
         current_intervals = (
             pivot.get("topic_intervals_sec", {}).get(TOPIC_CLOUDV2)
@@ -2726,6 +2836,9 @@ class TelemetryStore:
         probe = pivot["probe"]
         pending_sent_ts = probe.get("pending_sent_ts")
         pending_deadline_ts = probe.get("pending_deadline_ts")
+        probe_response_info = parse_probe_status_payload(parsed)
+        if probe_response_info is not None:
+            probe["last_response_info"] = probe_response_info
 
         if (
             pending_sent_ts is not None
@@ -2745,6 +2858,12 @@ class TelemetryStore:
                 "topic": topic,
                 "latency_sec": latency,
             }
+            if raw_payload is not None:
+                response_event["payload"] = str(raw_payload)
+            if probe_response_info is not None:
+                response_event["details"] = {
+                    "response_info": probe_response_info,
+                }
             probe["events"].append(response_event)
             if len(probe["events"]) > self.max_events_per_pivot:
                 probe["events"] = probe["events"][-self.max_events_per_pivot :]
@@ -2770,6 +2889,7 @@ class TelemetryStore:
                 details={
                     "latency_sec": latency,
                     "source_topic": topic,
+                    "response_info": probe_response_info,
                 },
                 source_topic=topic,
                 raw_payload=raw_payload,
@@ -2789,6 +2909,12 @@ class TelemetryStore:
             "at": _ts_to_str(ts),
             "topic": topic,
         }
+        if raw_payload is not None:
+            unmatched_event["payload"] = str(raw_payload)
+        if probe_response_info is not None:
+            unmatched_event["details"] = {
+                "response_info": probe_response_info,
+            }
         self.persistence.insert_probe_event(pivot.get("pivot_id"), pivot.get("session_id"), unmatched_event)
         self._record_timeline_locked(
             pivot,
@@ -2796,7 +2922,10 @@ class TelemetryStore:
             topic=topic,
             ts=ts,
             summary="Resposta recebida sem probe pendente na janela temporal.",
-            details={"source_topic": topic},
+            details={
+                "source_topic": topic,
+                "response_info": probe_response_info,
+            },
             source_topic=topic,
             raw_payload=raw_payload,
             parsed_payload=parsed,
@@ -3777,6 +3906,7 @@ class TelemetryStore:
                 "last_sent_at": _ts_to_str(probe.get("last_sent_ts")),
                 "last_response_ts": probe.get("last_response_ts"),
                 "last_response_at": _ts_to_str(probe.get("last_response_ts")),
+                "last_response_info": _normalize_probe_response_info(probe.get("last_response_info")),
                 "pending": probe.get("pending_sent_ts") is not None,
                 "pending_deadline_ts": probe.get("pending_deadline_ts"),
                 "pending_deadline_at": _ts_to_str(probe.get("pending_deadline_ts")),
@@ -4040,6 +4170,7 @@ class TelemetryStore:
                             probe["interval_sec"] = probe_interval
                         probe["last_sent_ts"] = _safe_float(raw_probe.get("last_sent_ts"), None)
                         probe["last_response_ts"] = _safe_float(raw_probe.get("last_response_ts"), None)
+                        probe["last_response_info"] = _normalize_probe_response_info(raw_probe.get("last_response_info"))
                         probe["pending_sent_ts"] = _safe_float(raw_probe.get("pending_sent_ts"), None)
                         probe["pending_deadline_ts"] = _safe_float(raw_probe.get("pending_deadline_ts"), None)
                         probe["timeout_streak"] = _safe_int(raw_probe.get("timeout_streak"), 0) or 0

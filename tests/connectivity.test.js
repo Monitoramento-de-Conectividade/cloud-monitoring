@@ -240,6 +240,31 @@ test("display: tecnologia do cloud2 é usada quando pivô não é concentrador",
   assert.equal(technology, "LTE CAT");
 });
 
+test("display: probe response info rows include parsed modem payload fields", () => {
+  const rows = _test.getProbeResponseInfoDisplayRows({
+    last_response_info: {
+      rssi: 20,
+      technology: "LTE",
+      board_timestamp_ts: 1773171016,
+      operator: "Unknown Operator",
+      modem_name: "AT+CGMM A7608SA-H",
+      imei: "862733060786376",
+      keep_alive_sec: 180,
+      socket_timeout_sec: 180,
+      apn_time_ms: 5000,
+      apn: "APNNAME1",
+      networks: 8,
+      esp_temp_c: 81.7,
+      firmware: "v2.8.7",
+    },
+  });
+
+  assert.equal(rows.length, 13);
+  assert.equal(rows.find((row) => row.label === "Modelo do modem").value, "AT+CGMM A7608SA-H");
+  assert.equal(rows.find((row) => row.label === "Firmware reportado").value, "v2.8.7");
+  assert.match(rows.find((row) => row.label === "Timestamp da placa").value, /\(1773171016\)$/);
+});
+
 test("quality signature: changes when session or activity changes", () => {
   const base = {
     run_id: "run-1",

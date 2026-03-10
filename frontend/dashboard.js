@@ -131,6 +131,7 @@ const ui = HAS_DOM
       probeStatResponseRatio: document.getElementById("probeStatResponseRatio"),
       probeStatDelayLast: document.getElementById("probeStatDelayLast"),
       probeStatDelayAvg: document.getElementById("probeStatDelayAvg"),
+      probeStatsExtraRows: document.getElementById("probeStatsExtraRows"),
       probeDelayPreset: document.getElementById("probeDelayPreset"),
       probeDelayRange: document.getElementById("probeDelayRange"),
       probeDelayFromWrap: document.getElementById("probeDelayFromWrap"),
@@ -696,6 +697,57 @@ function formatUtcToDashboardTimezone(value) {
     return DASHBOARD_DATETIME_FORMATTER.format(date).replace(",", "");
   }
   return formatDateTimeValue(value);
+}
+
+function formatProbeStatusTimestamp(value) {
+  const ts = Number(value);
+  if (!Number.isFinite(ts) || ts <= 0) return "-";
+  const formatted = formatDateTimeValue(ts);
+  if (formatted === "-") return `${Math.trunc(ts)}`;
+  return `${formatted} (${Math.trunc(ts)})`;
+}
+
+function formatProbeStatusInteger(value, suffix = "") {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "-";
+  return `${Math.trunc(parsed)}${suffix}`;
+}
+
+function formatProbeStatusTemperature(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "-";
+  return `${parsed.toFixed(1)}C`;
+}
+
+function getProbeResponseInfoDisplayRows(probe) {
+  const info = probe && typeof probe === "object" ? probe.last_response_info : null;
+  if (!info || typeof info !== "object") return [];
+
+  return [
+    { label: "RSSI reportado", value: formatProbeStatusInteger(info.rssi) },
+    { label: "Tecnologia reportada", value: text(info.technology) },
+    { label: "Timestamp da placa", value: formatProbeStatusTimestamp(info.board_timestamp_ts) },
+    { label: "Operadora reportada", value: text(info.operator) },
+    { label: "Modelo do modem", value: text(info.modem_name) },
+    { label: "IMEI reportado", value: text(info.imei) },
+    { label: "Keep alive reportado", value: formatProbeStatusInteger(info.keep_alive_sec, "s") },
+    { label: "Socket timeout reportado", value: formatProbeStatusInteger(info.socket_timeout_sec, "s") },
+    { label: "Tempo APN reportado", value: formatProbeStatusInteger(info.apn_time_ms, "ms") },
+    { label: "APN reportada", value: text(info.apn) },
+    { label: "Redes configuradas", value: formatProbeStatusInteger(info.networks) },
+    { label: "Temperatura ESP reportada", value: formatProbeStatusTemperature(info.esp_temp_c) },
+    { label: "Firmware reportado", value: text(info.firmware) },
+  ];
+}
+
+function renderProbeResponseInfoRows(probe) {
+  if (!ui.probeStatsExtraRows) return;
+  const rows = getProbeResponseInfoDisplayRows(probe);
+  ui.probeStatsExtraRows.innerHTML = rows
+    .map(
+      (row) => `<tr><th scope="row">${escapeHtml(row.label)}</th><td>${escapeHtml(text(row.value))}</td></tr>`
+    )
+    .join("");
 }
 
 function buildPivotTableHeaderLabelHtml(columnKey, label) {
@@ -3307,6 +3359,7 @@ function renderPivotView() {
   ui.probeStatResponseRatio.textContent = responseCoverageText;
   ui.probeStatDelayLast.textContent = fmtSecondsPrecise(probe.latency_last_sec);
   ui.probeStatDelayAvg.textContent = fmtSecondsPrecise(probe.latency_avg_sec);
+  renderProbeResponseInfoRows(probe);
   ui.probeHint.textContent = "";
   if (ui.pivotConcentratorToggle) {
     ui.pivotConcentratorToggle.checked = isPivotConcentrator(pivot);
@@ -4858,6 +4911,7 @@ if (typeof module !== "undefined" && module.exports) {
       collectConfirmedModemResetAcks,
       getExpectedPivotsPending,
       shouldRenderRssiPanel,
+      getProbeResponseInfoDisplayRows,
     },
   };
 }
