@@ -320,7 +320,7 @@ def _resolve_timeline_disconnect_threshold(summary, settings=None):
 
     tolerance = _safe_float(safe_settings.get("tolerance_factor"), None)
     if tolerance is None or tolerance <= 0:
-        tolerance = 1.5
+        tolerance = 3.0
 
     max_expected = _safe_float(safe_summary.get("max_expected_interval_sec"), None)
     if max_expected is None or max_expected <= 0:

@@ -2550,7 +2550,7 @@ function buildRssiSeries(pivot, startTs, endTs) {
 function resolveDisconnectThresholdSec(summary, settings) {
   const safeSummary = summary || {};
   const safeSettings = settings || {};
-  const tolerance = Number(safeSettings.tolerance_factor || 1.5) || 1.5;
+  const tolerance = Number(safeSettings.tolerance_factor || 3) || 3;
   const monitoredTopics = ["cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network"];
   const expectedByTopic = safeSummary.expected_by_topic_sec || {};
 

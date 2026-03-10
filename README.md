@@ -169,7 +169,7 @@ O script imprime um JSON com todos os checks e retorna código `0` em sucesso.
 Campos importantes em `cloudv2-config.json`:
 
 - `ping_interval_minutes` (base do cálculo de ping esperado).
-- `tolerance_factor` (padrão `1.25`).
+- `tolerance_factor` (padrão `3.0`).
 - `attention_disconnected_pct_threshold` (padrão `20.0` para status de atenção).
 - `critical_disconnected_pct_threshold` (padrão `50.0` para status crítico).
 - `cloudv2_median_window` e `cloudv2_min_samples` (padrao: `5`).

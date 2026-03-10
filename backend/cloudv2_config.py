@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "continuous_monitoring_mode": True,
     "history_mode": "merge",
     "history_retention_hours": 24,
-    "tolerance_factor": 1.5,
+    "tolerance_factor": 3.0,
     "attention_disconnected_pct_threshold": 20.0,
     "critical_disconnected_pct_threshold": 50.0,
     "attention_disconnected_window_hours": 24,
