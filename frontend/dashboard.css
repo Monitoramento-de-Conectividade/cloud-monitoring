@@ -657,25 +657,34 @@ a:focus {
 
 .cards-head {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(360px, 560px) auto;
-  align-items: center;
-  gap: 16px;
+  grid-template-columns: minmax(260px, 1fr) minmax(380px, 520px) minmax(220px, 1fr);
+  align-items: start;
+  gap: 18px;
 }
 
 .cards-head-title {
   min-width: 0;
+  align-self: center;
 }
 
 .expected-pivot-admin {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  max-width: 560px;
+  max-width: 520px;
   justify-self: center;
+  align-self: start;
 }
 
 .expected-pivot-field {
   margin: 0;
+}
+
+.expected-pivot-field textarea {
+  min-height: 42px;
+  max-height: 96px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 .expected-pivot-actions {
@@ -692,16 +701,20 @@ a:focus {
 
 .expected-pivot-panel {
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid #d4e6db;
-  border-radius: 12px;
-  background: #f7fbf8;
+  gap: 0;
+  width: 100%;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 16px 28px rgba(25, 63, 44, 0.12);
 }
 
 .expected-pivot-panel-copy {
   display: grid;
   gap: 4px;
+  padding: 6px 8px 10px;
+  border-bottom: 1px solid #deebe4;
   color: var(--muted);
   font-size: 13px;
 }
@@ -711,12 +724,35 @@ a:focus {
   font-size: 14px;
 }
 
+.expected-pivot-list {
+  gap: 0;
+  margin-top: 0;
+}
+
+.expected-pivot-panel .empty {
+  border: none;
+  background: transparent;
+  padding: 12px 10px;
+}
+
 .expected-pivot-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  padding: 11px 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.expected-pivot-item + .expected-pivot-item {
+  border-top: 1px solid #e6f0ea;
+}
+
+.expected-pivot-item:hover {
+  background: #f4f9f6;
 }
 
 .expected-pivot-item-main {
@@ -730,7 +766,9 @@ a:focus {
 
 .expected-pivot-item-meta {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .bulk-pivot-actions {
@@ -1065,6 +1103,7 @@ a:focus {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  justify-self: end;
   font-size: 12px;
   color: var(--muted);
 }

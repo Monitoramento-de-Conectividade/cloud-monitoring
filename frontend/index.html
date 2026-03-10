@@ -167,7 +167,7 @@
             <span>Próximos pivôs para descoberta</span>
             <textarea
               id="expectedPivotInput"
-              rows="2"
+              rows="1"
               placeholder="Ex.: PioneiralEML_71, PioneiralEML_72"
             ></textarea>
           </label>
@@ -178,19 +178,19 @@
             </button>
           </div>
           <span class="hint-text expected-pivot-copy">Separe vários IDs por vírgula ou quebra de linha.</span>
+          <div id="expectedPivotPanel" class="expected-pivot-panel" hidden>
+            <div class="expected-pivot-panel-copy">
+              <strong>Pivôs aguardando descoberta</strong>
+              <span>Quando um destes IDs aparecer na cloudv2, ele será registrado automaticamente e sairá da fila.</span>
+            </div>
+            <div id="expectedPivotList" class="list expected-pivot-list"></div>
+          </div>
         </div>
         <div class="pager">
           <button id="cardsPrev" class="ghost">Anterior</button>
           <span id="cardsPageInfo">Página 1/1</span>
           <button id="cardsNext" class="ghost">Próxima</button>
         </div>
-      </div>
-      <div id="expectedPivotPanel" class="expected-pivot-panel" hidden>
-        <div class="expected-pivot-panel-copy">
-          <strong>Pivôs aguardando descoberta</strong>
-          <span>Quando um destes IDs aparecer na cloudv2, ele será registrado automaticamente e sairá da fila.</span>
-        </div>
-        <div id="expectedPivotList" class="list"></div>
       </div>
       <div id="bulkPivotActions" class="bulk-pivot-actions" hidden>
         <span id="bulkPivotSelectionLabel" class="bulk-pivot-selection-label">0 pivôs selecionados</span>
