@@ -73,6 +73,12 @@ def _normalize_bulk_pivot_ids(value, limit=MAX_BULK_PIVOT_ACTIONS):
     return normalized
 
 
+def _is_admin_auth_context(auth_context):
+    current_user = (auth_context or {}).get("user") or {}
+    current_role = str(current_user.get("role") or "user").strip().lower()
+    return current_role == "admin"
+
+
 def _data_dir_has_files(path):
     if not os.path.isdir(path):
         return False
@@ -543,6 +549,9 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             current_role = str(current_user.get("role") or "user").strip().lower()
             current_email = str(current_user.get("email") or "").strip().lower()
             return current_role == "admin" and current_email == FIXED_ADMIN_EMAIL
+
+        def _can_manage_expected_pivots(self, auth_context):
+            return _is_admin_auth_context(auth_context)
 
         def _check_rate_limit(self, path):
             rule = rate_limit_rules.get(str(path or "").strip())
@@ -1105,13 +1114,13 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return
 
             if path == "/api/pivots/expected":
-                if not self._can_delete_pivots(auth_context):
+                if not self._can_manage_expected_pivots(auth_context):
                     self._write_json(
                         403,
                         {
                             "ok": False,
-                            "code": "fixed_admin_required",
-                            "message": "Apenas o administrador principal pode configurar novos pivos.",
+                            "code": "admin_required",
+                            "message": "Apenas administradores podem configurar novos pivos.",
                         },
                     )
                     return
@@ -1137,13 +1146,13 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 return
 
             if path == "/api/pivots/expected/remove":
-                if not self._can_delete_pivots(auth_context):
+                if not self._can_manage_expected_pivots(auth_context):
                     self._write_json(
                         403,
                         {
                             "ok": False,
-                            "code": "fixed_admin_required",
-                            "message": "Apenas o administrador principal pode configurar novos pivos.",
+                            "code": "admin_required",
+                            "message": "Apenas administradores podem configurar novos pivos.",
                         },
                     )
                     return

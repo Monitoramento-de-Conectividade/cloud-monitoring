@@ -3756,7 +3756,8 @@ function syncPivotDeleteControl() {
 }
 
 function canCurrentUserManageExpectedPivots() {
-  return canCurrentUserDeletePivots();
+  const role = String(state.authUserRole || "user").trim().toLowerCase();
+  return role === "admin";
 }
 
 function toggleExpectedPivotPanel(forceExpanded = null) {
@@ -4208,7 +4209,7 @@ async function deleteSelectedPivotsBulk() {
 async function addExpectedPivots() {
   if (!canCurrentUserManageExpectedPivots()) {
     renderExpectedPivotAdmin();
-    showToast("Apenas o administrador principal pode configurar novos pivos.", "error", 3800);
+    showToast("Apenas administradores podem configurar novos pivos.", "error", 3800);
     return;
   }
 
@@ -4273,7 +4274,7 @@ async function addExpectedPivots() {
 async function removeExpectedPivot(pivotId) {
   if (!canCurrentUserManageExpectedPivots()) {
     renderExpectedPivotAdmin();
-    showToast("Apenas o administrador principal pode configurar novos pivos.", "error", 3800);
+    showToast("Apenas administradores podem configurar novos pivos.", "error", 3800);
     return;
   }
 

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from backend.cloudv2_dashboard import _normalize_bulk_pivot_ids
+from backend.cloudv2_dashboard import _is_admin_auth_context, _normalize_bulk_pivot_ids
 import backend.cloudv2_telemetry as telemetry_mod
 from backend.cloudv2_telemetry import TelemetryStore
 
@@ -22,6 +22,30 @@ class BulkPivotActionHelpersTests(unittest.TestCase):
     def test_normalize_bulk_pivot_ids_enforces_limit(self):
         with self.assertRaisesRegex(ValueError, "maximo de 2 pivot_ids por requisicao"):
             _normalize_bulk_pivot_ids(["PivotA", "PivotB", "PivotC"], limit=2)
+
+    def test_is_admin_auth_context_accepts_any_admin_email(self):
+        self.assertTrue(
+            _is_admin_auth_context(
+                {
+                    "user": {
+                        "role": "admin",
+                        "email": "outro-admin@empresa.com",
+                    }
+                }
+            )
+        )
+
+    def test_is_admin_auth_context_rejects_non_admin(self):
+        self.assertFalse(
+            _is_admin_auth_context(
+                {
+                    "user": {
+                        "role": "user",
+                        "email": "usuario@empresa.com",
+                    }
+                }
+            )
+        )
 
 
 class ExpectedPivotDiscoveryTests(unittest.TestCase):
