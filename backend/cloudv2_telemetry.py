@@ -571,8 +571,9 @@ class TelemetryStore:
 
             if topic == TOPIC_CLOUDV2:
                 pivot = self.pivots.get(pivot_id)
+                known_pivot = pivot is not None or self._pivot_exists_locked(pivot_id)
                 pending_expected = self.pending_expected_pivots.get(pivot_id)
-                if pivot is None and pending_expected is None:
+                if (not known_pivot) and pending_expected is None:
                     self.log.info(
                         "Mensagem cloudv2 descartada para pivot nao autorizado: pivot_id=%s",
                         pivot_id,

@@ -92,6 +92,21 @@ class ExpectedPivotDiscoveryTests(unittest.TestCase):
             finally:
                 store.stop()
 
+    def test_cloudv2_aceita_pivot_ja_existente_no_banco_mesmo_fora_do_runtime(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._build_store(temp_dir)
+            try:
+                store.persistence.ensure_pivot("PivotPersisted_1", pivot_slug="pivotpersisted-1", seen_ts=1_700_000_000.0)
+
+                accepted = store.process_message("cloudv2", "#01-PivotPersisted_1-discovery$", ts=1_700_000_010.0)
+                self.assertTrue(accepted["accepted"])
+                self.assertEqual(accepted["pivot_id"], "PivotPersisted_1")
+
+                snapshot = store.get_state_snapshot(now=1_700_000_020.0)
+                self.assertEqual([item["pivot_id"] for item in snapshot["pivots"]], ["PivotPersisted_1"])
+            finally:
+                store.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
