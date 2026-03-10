@@ -51,7 +51,7 @@ QUALITY_RANK = {
 }
 
 # Tolerancia percentual para considerar intervalos cloudv2 equivalentes.
-CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.25
+CLOUDV2_MEDIAN_TOLERANCE_PCT = 0.5
 CONCENTRATOR_TECH_LABEL = "concentrador"
 
 

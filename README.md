@@ -6,7 +6,7 @@ Monitoramento robusto de conectividade e saúde de tráfego dos pivots via MQTT 
 - Auto-descoberta de pivots apenas por mensagens em `cloudv2`.
 - Parser resiliente para payload `#<IDP>-<PIVOT_ID>-...$` com descarte seguro de malformados.
 - Cálculo dinâmico da mediana de intervalo de `cloudv2` por pivot (janela móvel).
-- Status consolidado por pivot com tolerância de 25%.
+- Status consolidado por pivot com tolerância de 50%.
 - Probe ativo seletivo com `#11$` publicando apenas no tópico dinâmico `pivot_id`.
 - Dashboard web com visão geral e visão por pivot (timeline, métricas e controle de probe).
 
