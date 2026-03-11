@@ -207,6 +207,7 @@ const state = {
   qualityOverridesLastRefreshMs: 0,
   qualityOverrideRefreshIntervalMs: 45000,
   qualityOverrideMaxConcurrency: 3,
+  visibleConnectivityRefreshTimer: null,
   visiblePivotIds: [],
   selectedPivotIds: [],
   expectedPivotPanelExpanded: false,
@@ -1775,6 +1776,18 @@ function resetAllFilters() {
   if (ui.firmwareFilter) ui.firmwareFilter.value = "all";
 
   renderCards();
+  queueVisibleCardsConnectivityRefresh();
+}
+
+function queueVisibleCardsConnectivityRefresh() {
+  if (!HAS_WINDOW) return;
+  if (state.visibleConnectivityRefreshTimer !== null) {
+    window.clearTimeout(state.visibleConnectivityRefreshTimer);
+  }
+  state.visibleConnectivityRefreshTimer = window.setTimeout(() => {
+    state.visibleConnectivityRefreshTimer = null;
+    void refreshQualityOverrides({ force: true });
+  }, 120);
 }
 
 function arraysShallowEqual(a, b) {
@@ -3744,6 +3757,7 @@ async function refreshInitialDashboardState() {
       await refreshState({ skipRender: true });
     }
   }
+  await refreshQualityOverrides({ skipRender: true, force: true });
   renderDashboardFromCurrentState();
 }
 
@@ -4665,12 +4679,14 @@ function wireEvents() {
     state.search = ui.searchInput.value || "";
     state.cardsPage = 1;
     renderCards();
+    queueVisibleCardsConnectivityRefresh();
   });
 
   ui.sortSelect.addEventListener("change", () => {
     state.sort = ui.sortSelect.value || "critical";
     state.cardsPage = 1;
     renderCards();
+    queueVisibleCardsConnectivityRefresh();
   });
 
   if (ui.technologyFilter) {
@@ -4678,6 +4694,7 @@ function wireEvents() {
       state.technologyFilter = normalizeFilterKey(ui.technologyFilter.value) || "all";
       state.cardsPage = 1;
       renderCards();
+      queueVisibleCardsConnectivityRefresh();
     });
   }
 
@@ -4686,6 +4703,7 @@ function wireEvents() {
       state.firmwareFilter = normalizeFilterKey(ui.firmwareFilter.value) || "all";
       state.cardsPage = 1;
       renderCards();
+      queueVisibleCardsConnectivityRefresh();
     });
   }
 
@@ -4694,6 +4712,7 @@ function wireEvents() {
       state.statusFilter = normalizeFilterKey(ui.statusFilterSelect.value) || "all";
       state.cardsPage = 1;
       renderCards();
+      queueVisibleCardsConnectivityRefresh();
     });
   }
 
@@ -4702,6 +4721,7 @@ function wireEvents() {
       state.connectivityFilter = normalizeFilterKey(ui.connectivityFilterSelect.value) || "all";
       state.cardsPage = 1;
       renderCards();
+      queueVisibleCardsConnectivityRefresh();
     });
   }
 
@@ -4773,12 +4793,14 @@ function wireEvents() {
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
     renderCards();
+    queueVisibleCardsConnectivityRefresh();
   });
 
   ui.cardsNext.addEventListener("click", () => {
     const total = Math.max(1, Math.ceil(applyFilterSort().length / state.cardsPageSize));
     state.cardsPage = Math.min(total, state.cardsPage + 1);
     renderCards();
+    queueVisibleCardsConnectivityRefresh();
   });
 
   ui.closePivot.addEventListener("click", closePivot);
@@ -4974,7 +4996,6 @@ async function boot() {
     void refreshAdminUsers();
   }
   if (initialLoadReady) {
-    void refreshQualityOverrides({ force: true });
     void refreshPivot();
   }
   setInterval(refreshAll, state.refreshMs);
