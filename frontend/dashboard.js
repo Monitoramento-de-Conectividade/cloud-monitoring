@@ -492,10 +492,27 @@ function buildTimelineMiniSegmentsFromConnectivity(segments, durationSec) {
 function resolvePivotTimelineMiniSegments(item) {
   const safePivot = item || {};
   const pivotId = text(safePivot.pivot_id, "").trim();
-  if (!pivotId) return [];
-  const computed = state.connectivityMiniSegmentsByPivotId[pivotId];
-  if (!Array.isArray(computed) || !computed.length) return [];
-  return normalizeTimelineMiniSegments(computed);
+  if (pivotId) {
+    const computed = state.connectivityMiniSegmentsByPivotId[pivotId];
+    if (Array.isArray(computed) && computed.length) {
+      return normalizeTimelineMiniSegments(computed);
+    }
+  }
+
+  const summary =
+    safePivot.summary && typeof safePivot.summary === "object"
+      ? safePivot.summary
+      : null;
+  const fallbackCandidates = [
+    safePivot.timeline_mini,
+    summary ? summary.timeline_mini : null,
+  ];
+  for (const candidate of fallbackCandidates) {
+    if (Array.isArray(candidate) && candidate.length) {
+      return normalizeTimelineMiniSegments(candidate);
+    }
+  }
+  return [];
 }
 
 function buildTimelineMiniHtml(item) {
@@ -4947,6 +4964,7 @@ if (typeof module !== "undefined" && module.exports) {
       pivotTechnologyColumnValue,
       normalizeTimelineMiniSegments,
       buildTimelineMiniSegmentsFromConnectivity,
+      resolvePivotTimelineMiniSegments,
       normalizePivotTableColumnOrder,
       expandPivotTableColumnOrderKey,
       buildQualitySourceSignature,

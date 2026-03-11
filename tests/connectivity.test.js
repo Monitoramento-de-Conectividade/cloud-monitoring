@@ -379,6 +379,21 @@ test("ui: selecao multipla de pivôs remove vazios e duplicados", () => {
   assert.deepEqual(_test.normalizePivotIdList([" PivotA ", "", "PivotB", "PivotA", null]), ["PivotA", "PivotB"]);
 });
 
+test("ui: timeline mini usa fallback do payload enquanto override ainda nao chegou", () => {
+  const segments = _test.resolvePivotTimelineMiniSegments({
+    pivot_id: "PivotA",
+    timeline_mini: [
+      { state: "online", ratio: 0.25 },
+      { state: "offline", ratio: 0.75 },
+    ],
+  });
+
+  assert.deepEqual(segments, [
+    { state: "online", ratio: 0.25 },
+    { state: "offline", ratio: 0.75 },
+  ]);
+});
+
 test("ui: firmware para reset usa summary do painel e fallback da tabela", () => {
   assert.equal(
     _test.getPivotFirmwareVersionForReset({ summary: { last_cloud2: { firmware: "2.8.5" } } }),
