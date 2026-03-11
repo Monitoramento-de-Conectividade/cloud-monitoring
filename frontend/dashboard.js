@@ -943,6 +943,39 @@ function getExpectedPivotsPending() {
     .filter(Boolean);
 }
 
+function setExpectedPivotsPendingState(pendingItems) {
+  const normalized = Array.isArray(pendingItems)
+    ? pendingItems
+      .map((item) => {
+        const pivotId = text(item?.pivot_id, "").trim();
+        if (!pivotId) return null;
+        return {
+          pivot_id: pivotId,
+          added_at: text(item?.added_at, "-"),
+          added_at_ts: Number(item?.added_at_ts || 0),
+          source: text(item?.source, "ui"),
+        };
+      })
+      .filter(Boolean)
+    : [];
+
+  if (!state.rawState || typeof state.rawState !== "object") {
+    state.rawState = {};
+  }
+  state.rawState.expected_pivots_pending = normalized;
+  if (!state.rawState.counts || typeof state.rawState.counts !== "object") {
+    state.rawState.counts = {};
+  }
+  state.rawState.counts.expected_pivots_pending = normalized.length;
+}
+
+function removeExpectedPivotPendingState(pivotId) {
+  const normalizedPivotId = String(pivotId || "").trim();
+  if (!normalizedPivotId) return;
+  const currentItems = getExpectedPivotsPending();
+  setExpectedPivotsPendingState(currentItems.filter((item) => item.pivot_id !== normalizedPivotId));
+}
+
 function getPivotSummaryObject(pivot) {
   if (!pivot || typeof pivot !== "object") return {};
   const nestedSummary = pivot.summary;
@@ -4376,6 +4409,10 @@ async function addExpectedPivots() {
     if (invalid.length) {
       showToast(`Pivot_id invalido: ${buildPivotListPreview(invalid.map((item) => item.pivot_id), 5)}.`, "error", 4800);
     }
+    if (Array.isArray(data.pending)) {
+      setExpectedPivotsPendingState(data.pending);
+      renderExpectedPivotAdmin();
+    }
     await refreshAll();
   } catch (err) {
     showToast("Nao foi possivel atualizar a fila de descoberta.", "error", 4200);
@@ -4413,6 +4450,8 @@ async function removeExpectedPivot(pivotId) {
     }
 
     if (data.ok) {
+      removeExpectedPivotPendingState(normalizedPivotId);
+      renderExpectedPivotAdmin();
       showToast(`Pivot_id ${normalizedPivotId} removido da fila.`, "success", 3200);
     } else {
       showToast(`Pivot_id ${normalizedPivotId} nao estava na fila.`, "warn", 3200);
@@ -4986,6 +5025,8 @@ if (typeof module !== "undefined" && module.exports) {
       getPivotModemResetSummary,
       collectConfirmedModemResetAcks,
       getExpectedPivotsPending,
+      setExpectedPivotsPendingState,
+      removeExpectedPivotPendingState,
       shouldRenderRssiPanel,
       getProbeResponseInfoDisplayRows,
       formatProbeConfiguredNetworks,

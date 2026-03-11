@@ -425,3 +425,22 @@ test("ui: entrada de fila de descoberta separa pivot_ids por virgula ou quebra d
   const parsed = _test.parsePivotIdBatchInput(" PivotA_1,\nPivotB_2 ; PivotC_3  ");
   assert.deepEqual(parsed, ["PivotA_1", "PivotB_2", "PivotC_3"]);
 });
+
+test("ui: fila de descoberta atualiza localmente sem depender do refresh completo", () => {
+  _test.setExpectedPivotsPendingState([
+    {
+      pivot_id: "PivotA_1",
+      added_at: "2026-03-11 10:00:00",
+      added_at_ts: 1,
+      source: "ui",
+    },
+  ]);
+
+  assert.deepEqual(
+    _test.getExpectedPivotsPending().map((item) => item.pivot_id),
+    ["PivotA_1"]
+  );
+
+  _test.removeExpectedPivotPendingState("PivotA_1");
+  assert.deepEqual(_test.getExpectedPivotsPending(), []);
+});
