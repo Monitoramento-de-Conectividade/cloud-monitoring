@@ -2509,7 +2509,9 @@ function resolveTimelineReferenceNowTs(pivot) {
 
 function getConnectivityEventsPanelCapped(pivot) {
   const events = Array.isArray((pivot || {}).timeline) ? pivot.timeline : [];
-  return events;
+  const maxEvents = state.timelinePageSize * 5;
+  if (events.length <= maxEvents) return events;
+  return events.slice(0, maxEvents);
 }
 
 function normalizeRange(pivot) {
