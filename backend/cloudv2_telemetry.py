@@ -674,6 +674,7 @@ class TelemetryStore:
         if not topic:
             return {"accepted": False, "reason": "topic vazio"}
 
+        write_expected_queue_after = False
         with self._lock:
             if self._monitoring_mode != "live":
                 return {
@@ -720,8 +721,52 @@ class TelemetryStore:
                 pivot = self._get_or_create_pivot_locked(pivot_id, ts)
                 if pending_expected is not None:
                     self.pending_expected_pivots.pop(pivot_id, None)
+                    write_expected_queue_after = True
                 self._record_message_common_locked(pivot, topic, ts)
                 self._record_cloudv2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
+                self._refresh_status_locked(pivot, ts)
+                self._prune_pivot_locked(pivot, ts)
+                self._persist_pivot_snapshot_locked(pivot, ts)
+                self._dirty = True
+                self._invalidate_api_caches_locked()
+                result = {
+                    "accepted": True,
+                    "pivot_id": pivot_id,
+                    "event": "cloudv2",
+                    "session_id": pivot.get("session_id"),
+                }
+                # Persiste imediatamente a fila de descoberta quando um pivot autorizado
+                # eh encontrado, para nao reaparecer apos restart.
+                if write_expected_queue_after:
+                    pass
+                else:
+                    return result
+            else:
+                result = None
+
+            if topic != TOPIC_CLOUDV2:
+                pivot = self.pivots.get(pivot_id)
+                if pivot is None:
+                    self.log.info(
+                        "Mensagem descartada para pivot nao autorizado: topic=%s pivot_id=%s",
+                        topic,
+                        pivot_id,
+                    )
+                    return {
+                        "accepted": False,
+                        "reason": "pivot nao autorizado",
+                        "pivot_id": pivot_id,
+                    }
+
+                self._record_message_common_locked(pivot, topic, ts)
+
+                if topic == TOPIC_PING:
+                    self._record_ping_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
+                elif topic == TOPIC_CLOUD2:
+                    self._record_cloud2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
+                elif topic in PROBE_RESPONSE_TOPICS:
+                    self._record_probe_response_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
+
                 self._refresh_status_locked(pivot, ts)
                 self._prune_pivot_locked(pivot, ts)
                 self._persist_pivot_snapshot_locked(pivot, ts)
@@ -730,43 +775,13 @@ class TelemetryStore:
                 return {
                     "accepted": True,
                     "pivot_id": pivot_id,
-                    "event": "cloudv2",
+                    "event": topic,
                     "session_id": pivot.get("session_id"),
                 }
 
-            pivot = self.pivots.get(pivot_id)
-            if pivot is None:
-                self.log.info(
-                    "Mensagem descartada para pivot nao autorizado: topic=%s pivot_id=%s",
-                    topic,
-                    pivot_id,
-                )
-                return {
-                    "accepted": False,
-                    "reason": "pivot nao autorizado",
-                    "pivot_id": pivot_id,
-                }
-
-            self._record_message_common_locked(pivot, topic, ts)
-
-            if topic == TOPIC_PING:
-                self._record_ping_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
-            elif topic == TOPIC_CLOUD2:
-                self._record_cloud2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
-            elif topic in PROBE_RESPONSE_TOPICS:
-                self._record_probe_response_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
-
-            self._refresh_status_locked(pivot, ts)
-            self._prune_pivot_locked(pivot, ts)
-            self._persist_pivot_snapshot_locked(pivot, ts)
-            self._dirty = True
-            self._invalidate_api_caches_locked()
-            return {
-                "accepted": True,
-                "pivot_id": pivot_id,
-                "event": topic,
-                "session_id": pivot.get("session_id"),
-            }
+        if write_expected_queue_after:
+            self.write()
+        return result
 
     def _record_modem_reset_ack_if_applicable_locked(self, topic, payload_text, ts):
         if not topic or not payload_text:
@@ -1282,6 +1297,7 @@ class TelemetryStore:
         current_ts = float(now if now is not None else time.time())
         results = []
         added_count = 0
+        should_write = False
         with self._lock:
             self._cleanup_expected_pivots_locked()
             for pivot_id in normalized_ids:
@@ -1322,6 +1338,7 @@ class TelemetryStore:
                     "source": str(source or "ui").strip() or "ui",
                 }
                 added_count += 1
+                should_write = True
                 results.append(
                     {
                         "ok": True,
@@ -1334,14 +1351,16 @@ class TelemetryStore:
             if added_count:
                 self._dirty = True
                 self._invalidate_api_caches_locked()
-
-            return {
+            response = {
                 "ok": added_count == len(results) and bool(results),
                 "partial": 0 < added_count < len(results),
                 "added_count": added_count,
                 "results": results,
                 "pending": self._build_expected_pivots_pending_locked(),
             }
+        if should_write:
+            self.write()
+        return response
 
     def remove_expected_pivot(self, pivot_id, now=None, source="ui"):
         normalized = str(pivot_id or "").strip()
@@ -1351,6 +1370,7 @@ class TelemetryStore:
             raise ValueError("pivot_id invalido")
 
         current_ts = float(now if now is not None else time.time())
+        should_write = False
         with self._lock:
             removed = self.pending_expected_pivots.pop(normalized, None)
             if removed is None:
@@ -1363,7 +1383,8 @@ class TelemetryStore:
 
             self._dirty = True
             self._invalidate_api_caches_locked()
-            return {
+            should_write = True
+            response = {
                 "ok": True,
                 "pivot_id": normalized,
                 "status": "removed",
@@ -1371,6 +1392,9 @@ class TelemetryStore:
                 "removed_at": _ts_to_str(current_ts),
                 "source": str(source or "ui").strip() or "ui",
             }
+        if should_write:
+            self.write()
+        return response
 
     def delete_pivot(self, pivot_id, now=None, source="ui"):
         normalized = str(pivot_id or "").strip()
