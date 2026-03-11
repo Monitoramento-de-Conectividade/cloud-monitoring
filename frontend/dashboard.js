@@ -3674,6 +3674,29 @@ async function refreshQualityOverrides(options = {}) {
   }
 }
 
+function renderDashboardFromCurrentState() {
+  renderHeader();
+  renderStatusSummary();
+  renderPending();
+  renderCards();
+  renderSessionControls();
+  renderPivotView();
+}
+
+async function refreshInitialDashboardState() {
+  const stateResult = await refreshState({ skipRender: true });
+  if (stateResult?.selectedRunChanged) {
+    await refreshState({ skipRender: true });
+  }
+  if (!state.pivots.length) {
+    const resolved = await autoResolveRunIdFromBackend({ allowOverride: true });
+    if (resolved) {
+      await refreshState({ skipRender: true });
+    }
+  }
+  renderDashboardFromCurrentState();
+}
+
 async function refreshAll(options = {}) {
   const suppressInterimRender = !!options.suppressInterimRender;
   if (state.refreshInFlight) return;
@@ -3692,12 +3715,7 @@ async function refreshAll(options = {}) {
     await refreshQualityOverrides({ skipRender: suppressInterimRender });
     await refreshPivot({ skipRender: suppressInterimRender });
     if (suppressInterimRender) {
-      renderHeader();
-      renderStatusSummary();
-      renderPending();
-      renderCards();
-      renderSessionControls();
-      renderPivotView();
+      renderDashboardFromCurrentState();
     }
     state.lastRefreshToastAtMs = 0;
   } catch (err) {
@@ -4862,9 +4880,7 @@ async function boot() {
   if (!authorized) return;
   setInitialLoading(true, "Buscando pivos e calculando conectividade inicial...");
   wireEvents();
-  if (String(state.authUserRole || "").trim().toLowerCase() === "admin") {
-    await refreshAdminUsers();
-  }
+  const shouldLoadAdminUsers = String(state.authUserRole || "").trim().toLowerCase() === "admin";
   startDevAutoReload();
   await loadUiConfig();
   ensurePivotTableColumnOrder();
@@ -4884,10 +4900,26 @@ async function boot() {
   if (hashPivot) {
     state.selectedPivot = hashPivot;
   }
+  let initialLoadReady = false;
   try {
-    await refreshAll({ suppressInterimRender: true });
+    await refreshInitialDashboardState();
+    initialLoadReady = true;
+  } catch (err) {
+    ui.cardsGrid.innerHTML = `<div class="empty">NÃ£o foi possÃ­vel carregar os dados. Tente novamente.</div>`;
+    const now = Date.now();
+    if (now - Number(state.lastRefreshToastAtMs || 0) > 15000) {
+      showToast("NÃ£o foi possÃ­vel carregar os dados. Tente novamente.", "error", 3800);
+      state.lastRefreshToastAtMs = now;
+    }
   } finally {
     setInitialLoading(false);
+  }
+  if (shouldLoadAdminUsers) {
+    void refreshAdminUsers();
+  }
+  if (initialLoadReady) {
+    void refreshQualityOverrides({ force: true });
+    void refreshPivot();
   }
   setInterval(refreshAll, state.refreshMs);
 }
