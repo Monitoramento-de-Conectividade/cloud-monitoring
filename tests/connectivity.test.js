@@ -43,17 +43,47 @@ test("connectivity: status is derived from the same timeline rule (ignores backe
   assert.equal(view.connectivityQualityInput.connectedPct, 100);
 });
 
-test("connectivity: active run uses wall-clock time as the current reference", () => {
+test("connectivity: active run prefers backend reference time over client clock drift", () => {
   const originalNow = Date.now;
+  const originalRawState = _test.state.rawState;
+  const originalPanelRunMeta = _test.state.panelRunMeta;
   Date.now = () => 2_000_000;
   try {
+    _test.state.rawState = {
+      updated_at_ts: 1500,
+      mode: "live",
+    };
+    _test.state.panelRunMeta = { is_active: true, updated_at_ts: 1500 };
     const referenceTs = _test.resolveTimelineReferenceNowTs({
       updated_at_ts: 1200,
       timeline: [{ topic: "cloudv2", ts: 1200 }],
       run: { is_active: true },
     });
-    assert.equal(referenceTs, 2000);
+    assert.equal(referenceTs, 1500);
   } finally {
+    _test.state.rawState = originalRawState;
+    _test.state.panelRunMeta = originalPanelRunMeta;
+    Date.now = originalNow;
+  }
+});
+
+test("connectivity: active run falls back to persisted event time when backend reference is unavailable", () => {
+  const originalNow = Date.now;
+  const originalRawState = _test.state.rawState;
+  const originalPanelRunMeta = _test.state.panelRunMeta;
+  Date.now = () => 2_000_000;
+  try {
+    _test.state.rawState = null;
+    _test.state.panelRunMeta = null;
+    const referenceTs = _test.resolveTimelineReferenceNowTs({
+      updated_at_ts: 1200,
+      timeline: [{ topic: "cloudv2", ts: 1300 }],
+      run: { is_active: true },
+    });
+    assert.equal(referenceTs, 1300);
+  } finally {
+    _test.state.rawState = originalRawState;
+    _test.state.panelRunMeta = originalPanelRunMeta;
     Date.now = originalNow;
   }
 });

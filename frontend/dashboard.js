@@ -2483,11 +2483,29 @@ function resolveTimelineReferenceNowTs(pivot) {
   const timelineLastTs = maxEventTs(safePivot.timeline);
   const probeLastTs = maxEventTs(safePivot.probe_events);
   const cloud2LastTs = maxEventTs(safePivot.cloud2_events);
+  const pivotSessionUpdatedTs = Number(((safePivot.session || {}).updated_at_ts) || 0);
+  const pivotRunUpdatedTs = Number(((safePivot.run || {}).updated_at_ts) || 0);
+  const panelSessionUpdatedTs = Number(((state.panelSessionMeta || {}).updated_at_ts) || 0);
+  const panelRunUpdatedTs = Number(((state.panelRunMeta || {}).updated_at_ts) || 0);
+  const rawStateUpdatedTs = Number(((state.rawState || {}).updated_at_ts) || 0);
 
   let persistedLatestTs = 0;
   for (const candidate of [payloadUpdatedTs, timelineLastTs, probeLastTs, cloud2LastTs]) {
     const ts = Number(candidate || 0);
     if (Number.isFinite(ts) && ts > persistedLatestTs) persistedLatestTs = ts;
+  }
+
+  let serverReferenceNowTs = 0;
+  for (const candidate of [
+    payloadUpdatedTs,
+    pivotSessionUpdatedTs,
+    pivotRunUpdatedTs,
+    panelSessionUpdatedTs,
+    panelRunUpdatedTs,
+    rawStateUpdatedTs,
+  ]) {
+    const ts = Number(candidate || 0);
+    if (Number.isFinite(ts) && ts > serverReferenceNowTs) serverReferenceNowTs = ts;
   }
 
   const pivotRun = safePivot.run && typeof safePivot.run === "object" ? safePivot.run : null;
@@ -2499,6 +2517,8 @@ function resolveTimelineReferenceNowTs(pivot) {
       : String((state.rawState || {}).mode || "").toLowerCase() === "live";
 
   if (isRunActive) {
+    const liveReferenceTs = Math.max(serverReferenceNowTs || 0, persistedLatestTs || 0);
+    if (liveReferenceTs > 0) return liveReferenceTs;
     return Math.max(wallClockNowTs, persistedLatestTs || 0);
   }
   if (persistedLatestTs > 0) {
@@ -5090,6 +5110,7 @@ if (typeof module !== "undefined" && module.exports) {
       formatShortDateTime,
       formatCompactDateTime,
       formatTimestampFromTsOrValue,
+      state,
     },
   };
 }
