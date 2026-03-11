@@ -239,7 +239,6 @@ const state = {
 };
 
 const API_REQUEST_TIMEOUT_MS = 12000;
-const CONNECTIVITY_EVENTS_MAX_PAGES = 5;
 const MODEM_RESET_ACK_MIN_FIRMWARE = [2, 8, 4];
 const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
 const DASHBOARD_DATETIME_UTC_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
@@ -2510,9 +2509,7 @@ function resolveTimelineReferenceNowTs(pivot) {
 
 function getConnectivityEventsPanelCapped(pivot) {
   const events = Array.isArray((pivot || {}).timeline) ? pivot.timeline : [];
-  const maxEvents = state.timelinePageSize * CONNECTIVITY_EVENTS_MAX_PAGES;
-  if (events.length <= maxEvents) return events;
-  return events.slice(events.length - maxEvents);
+  return events;
 }
 
 function normalizeRange(pivot) {
@@ -5070,6 +5067,7 @@ if (typeof module !== "undefined" && module.exports) {
       getDisplayQuality,
       buildQualityFromConnectivity,
       resolveTimelineReferenceNowTs,
+      getConnectivityEventsPanelCapped,
       resolveDisconnectThresholdSec,
       buildConnectivitySegments,
       summarizeConnectivitySegments,

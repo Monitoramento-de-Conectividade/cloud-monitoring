@@ -400,6 +400,19 @@ test("ui: timeline mini usa fallback do payload enquanto override ainda nao cheg
   ]);
 });
 
+test("ui: painel de eventos preserva os eventos mais recentes sem capar em 125 itens antigos", () => {
+  const timeline = Array.from({ length: 160 }, (_, index) => ({
+    ts: 2_000 - index,
+    topic: "cloudv2",
+  }));
+
+  const events = _test.getConnectivityEventsPanelCapped({ timeline });
+
+  assert.equal(events.length, 160);
+  assert.equal(events[0].ts, 2_000);
+  assert.equal(events.at(-1).ts, 1_841);
+});
+
 test("ui: firmware para reset usa summary do painel e fallback da tabela", () => {
   assert.equal(
     _test.getPivotFirmwareVersionForReset({ summary: { last_cloud2: { firmware: "2.8.5" } } }),
