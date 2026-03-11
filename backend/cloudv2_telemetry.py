@@ -485,6 +485,79 @@ class TelemetryStore:
             }
         self.pending_expected_pivots = cleaned_expected
 
+    def _merge_pending_expected_pivots_locked(self, pending_expected):
+        if not isinstance(pending_expected, dict):
+            return False
+
+        changed = False
+        for pivot_id, raw_entry in pending_expected.items():
+            normalized = str(pivot_id or "").strip()
+            if not normalized:
+                continue
+            entry = raw_entry if isinstance(raw_entry, dict) else {}
+            incoming_added_at_ts = _safe_float(entry.get("added_at_ts"), None)
+            incoming_source = str(entry.get("source") or "ui").strip() or "ui"
+            current = self.pending_expected_pivots.get(normalized)
+            if isinstance(current, dict):
+                current_added_at_ts = _safe_float(current.get("added_at_ts"), None)
+                merged_added_at_ts = current_added_at_ts
+                if merged_added_at_ts is None:
+                    merged_added_at_ts = incoming_added_at_ts
+                elif incoming_added_at_ts is not None:
+                    merged_added_at_ts = min(merged_added_at_ts, incoming_added_at_ts)
+                merged_source = str(current.get("source") or incoming_source).strip() or incoming_source
+                next_entry = {
+                    "pivot_id": normalized,
+                    "added_at_ts": merged_added_at_ts,
+                    "source": merged_source,
+                }
+                if current != next_entry:
+                    self.pending_expected_pivots[normalized] = next_entry
+                    changed = True
+                continue
+
+            self.pending_expected_pivots[normalized] = {
+                "pivot_id": normalized,
+                "added_at_ts": incoming_added_at_ts,
+                "source": incoming_source,
+            }
+            changed = True
+        return changed
+
+    def _persist_pending_expected_pivots_locked(self):
+        items = [
+            {
+                "pivot_id": pivot_id,
+                "added_at_ts": _safe_float(entry.get("added_at_ts"), None),
+                "source": str(entry.get("source") or "ui").strip() or "ui",
+            }
+            for pivot_id, entry in sorted(self.pending_expected_pivots.items(), key=lambda item: item[0].lower())
+        ]
+        try:
+            self.persistence.replace_expected_pivots_pending(items)
+        except RuntimeError:
+            return
+
+    def _load_pending_expected_pivots_from_persistence(self):
+        try:
+            loaded_items = self.persistence.load_expected_pivots_pending()
+        except RuntimeError:
+            return
+
+        loaded_map = {}
+        for item in loaded_items:
+            if not isinstance(item, dict):
+                continue
+            pivot_id = str(item.get("pivot_id") or "").strip()
+            if not pivot_id:
+                continue
+            loaded_map[pivot_id] = item
+
+        with self._lock:
+            self._restore_pending_expected_pivots_locked(loaded_map)
+            if self._cleanup_expected_pivots_locked():
+                self._persist_pending_expected_pivots_locked()
+
     def _load_pending_expected_pivots_from_runtime(self):
         if not os.path.exists(self.runtime_path):
             return
@@ -499,8 +572,10 @@ class TelemetryStore:
             return
 
         with self._lock:
-            self._restore_pending_expected_pivots_locked(loaded.get("pending_expected_pivots"))
-            self._cleanup_expected_pivots_locked()
+            merged = self._merge_pending_expected_pivots_locked(loaded.get("pending_expected_pivots"))
+            cleaned = self._cleanup_expected_pivots_locked()
+            if merged or cleaned:
+                self._persist_pending_expected_pivots_locked()
 
     def _ensure_manual_session_rotation_allowed(self, action_label):
         if self.continuous_monitoring_mode:
@@ -512,6 +587,7 @@ class TelemetryStore:
         ensure_dirs()
         os.makedirs(self.log_dir, exist_ok=True)
         self.persistence.start()
+        self._load_pending_expected_pivots_from_persistence()
         self._load_pending_expected_pivots_from_runtime()
 
         db_probe_settings = self.persistence.load_probe_settings()
@@ -721,6 +797,7 @@ class TelemetryStore:
                 pivot = self._get_or_create_pivot_locked(pivot_id, ts)
                 if pending_expected is not None:
                     self.pending_expected_pivots.pop(pivot_id, None)
+                    self._persist_pending_expected_pivots_locked()
                     write_expected_queue_after = True
                 self._record_message_common_locked(pivot, topic, ts)
                 self._record_cloudv2_locked(pivot, parsed, topic, ts, raw_payload=payload_text)
@@ -1251,19 +1328,26 @@ class TelemetryStore:
 
     def _cleanup_expected_pivots_locked(self):
         keep = {}
+        changed = False
         for pivot_id, raw_entry in self.pending_expected_pivots.items():
             normalized = str(pivot_id or "").strip()
             if not normalized or (not validate_pivot_id(normalized)):
+                changed = True
                 continue
             if self._pivot_exists_locked(normalized):
+                changed = True
                 continue
             entry = raw_entry if isinstance(raw_entry, dict) else {}
-            keep[normalized] = {
+            next_entry = {
                 "pivot_id": normalized,
                 "added_at_ts": _safe_float(entry.get("added_at_ts"), None),
                 "source": str(entry.get("source") or "ui").strip() or "ui",
             }
+            keep[normalized] = next_entry
+            if raw_entry != next_entry or pivot_id != normalized:
+                changed = True
         self.pending_expected_pivots = keep
+        return changed
 
     def _build_expected_pivots_pending_locked(self):
         items = []
@@ -1299,7 +1383,9 @@ class TelemetryStore:
         added_count = 0
         should_write = False
         with self._lock:
-            self._cleanup_expected_pivots_locked()
+            cleaned = self._cleanup_expected_pivots_locked()
+            if cleaned:
+                should_write = True
             for pivot_id in normalized_ids:
                 if not validate_pivot_id(pivot_id):
                     results.append(
@@ -1351,6 +1437,8 @@ class TelemetryStore:
             if added_count:
                 self._dirty = True
                 self._invalidate_api_caches_locked()
+            if cleaned or added_count:
+                self._persist_pending_expected_pivots_locked()
             response = {
                 "ok": added_count == len(results) and bool(results),
                 "partial": 0 < added_count < len(results),
@@ -1383,6 +1471,7 @@ class TelemetryStore:
 
             self._dirty = True
             self._invalidate_api_caches_locked()
+            self._persist_pending_expected_pivots_locked()
             should_write = True
             response = {
                 "ok": True,
@@ -4283,8 +4372,6 @@ class TelemetryStore:
             if isinstance(pending_ping, dict):
                 self.pending_ping_unknown = pending_ping
 
-            self._restore_pending_expected_pivots_locked(loaded.get("pending_expected_pivots"))
-
             malformed_messages = loaded.get("malformed_messages")
             if isinstance(malformed_messages, list):
                 self.malformed_messages = malformed_messages[-500:]
@@ -4297,7 +4384,8 @@ class TelemetryStore:
                 self._prune_pivot_locked(pivot, now)
                 self._refresh_status_locked(pivot, now)
             self._cleanup_pending_ping_locked(now)
-            self._cleanup_expected_pivots_locked()
+            if self._cleanup_expected_pivots_locked():
+                self._persist_pending_expected_pivots_locked()
 
         self.log.info("Estado de runtime restaurado com %s pivots.", len(self.pivots))
 

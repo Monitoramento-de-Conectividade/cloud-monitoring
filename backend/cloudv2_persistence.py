@@ -2057,6 +2057,68 @@ class TelemetryPersistence:
                 }
             return settings
 
+    def replace_expected_pivots_pending(self, pending_items):
+        normalized_rows = []
+        seen = set()
+        updated_at_ts = time.time()
+
+        for raw_item in pending_items or []:
+            item = raw_item if isinstance(raw_item, dict) else {}
+            pivot_id = str(item.get("pivot_id") or "").strip()
+            if not pivot_id or pivot_id in seen:
+                continue
+            seen.add(pivot_id)
+            normalized_rows.append(
+                (
+                    pivot_id,
+                    _safe_float(item.get("added_at_ts"), None),
+                    str(item.get("source") or "ui").strip() or "ui",
+                    updated_at_ts,
+                )
+            )
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            with conn:
+                conn.execute("DELETE FROM expected_pivots_pending")
+                if normalized_rows:
+                    conn.executemany(
+                        """
+                        INSERT INTO expected_pivots_pending (
+                            pivot_id,
+                            added_at_ts,
+                            source,
+                            updated_at_ts
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        normalized_rows,
+                    )
+
+    def load_expected_pivots_pending(self):
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT pivot_id, added_at_ts, source
+                FROM expected_pivots_pending
+                ORDER BY pivot_id COLLATE NOCASE ASC
+                """
+            ).fetchall()
+
+        items = []
+        for row in rows:
+            pivot_id = str(row["pivot_id"] or "").strip()
+            if not pivot_id:
+                continue
+            items.append(
+                {
+                    "pivot_id": pivot_id,
+                    "added_at_ts": _safe_float(row["added_at_ts"], None),
+                    "source": str(row["source"] or "ui").strip() or "ui",
+                }
+            )
+        return items
+
     def _parse_event_row(self, row, fallback_type, fallback_topic):
         event = self._json_loads(row["event_json"], {})
         if not isinstance(event, dict):

@@ -109,8 +109,12 @@ class ExpectedPivotDiscoveryTests(unittest.TestCase):
             try:
                 queued = store.queue_expected_pivots(["PivotPersist_1"], now=1_700_000_000.0, source="test")
                 self.assertEqual(queued["added_count"], 1)
+                runtime_path = store.runtime_path
             finally:
                 store.stop()
+
+            if os.path.exists(runtime_path):
+                os.remove(runtime_path)
 
             restarted = self._build_store(temp_dir)
             try:
@@ -129,14 +133,18 @@ class ExpectedPivotDiscoveryTests(unittest.TestCase):
                 store.queue_expected_pivots(["PivotFound_1"], now=1_700_000_000.0, source="test")
                 accepted = store.process_message("cloudv2", "#01-PivotFound_1-discovery$", ts=1_700_000_010.0)
                 self.assertTrue(accepted["accepted"])
+                runtime_path = store.runtime_path
             finally:
                 store.stop()
+
+            if os.path.exists(runtime_path):
+                os.remove(runtime_path)
 
             restarted = self._build_store(temp_dir)
             try:
                 snapshot = restarted.get_state_snapshot(now=1_700_000_020.0)
                 self.assertEqual(snapshot["expected_pivots_pending"], [])
-                self.assertEqual([item["pivot_id"] for item in snapshot["pivots"]], ["PivotFound_1"])
+                self.assertTrue(restarted.persistence.pivot_exists("PivotFound_1"))
             finally:
                 restarted.stop()
 
