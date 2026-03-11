@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from backend.cloudv2_persistence import TelemetryPersistence
+from backend.cloudv2_time import ts_to_dashboard_str
 
 
 class PivotTablePayloadTests(unittest.TestCase):
@@ -196,6 +197,83 @@ class PivotTablePayloadTests(unittest.TestCase):
                 # Com fallback adequado, deve existir ao menos um trecho online.
                 has_online = any(str(item.get("state")) == "online" and float(item.get("ratio") or 0) > 0 for item in timeline_mini)
                 self.assertTrue(has_online)
+            finally:
+                persistence.stop()
+
+    def test_persisted_snapshot_timestamps_are_reformatted_from_ts_for_gmt_minus_3(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                pivot_id = "PivotTimezone_1"
+                base_ts = 1_735_689_600.0  # 2025-01-01 00:00:00 UTC
+                expected_local = ts_to_dashboard_str(base_ts)
+
+                run = persistence.get_or_create_active_run(now_ts=base_ts, source="test")
+                session = persistence.get_or_create_active_session(
+                    pivot_id,
+                    pivot_slug="pivottimezone-1",
+                    now_ts=base_ts,
+                    source="test",
+                    run_id=run["run_id"],
+                )
+                session_id = session["session_id"]
+
+                persistence.upsert_snapshot(
+                    pivot_id,
+                    session_id,
+                    {
+                        "pivot_id": pivot_id,
+                        "session_id": session_id,
+                        "run_id": run["run_id"],
+                        "updated_at_ts": base_ts,
+                        "updated_at": "2025-01-01 00:00:00",
+                        "summary": {
+                            "status": {"code": "red", "label": "Desconectado", "rank": 0},
+                            "quality": {"code": "critical", "label": "Critico", "rank": 0},
+                            "last_ping_ts": base_ts,
+                            "last_ping_at": "2025-01-01 00:00:00",
+                            "last_cloudv2_ts": base_ts,
+                            "last_cloudv2_at": "2025-01-01 00:00:00",
+                            "last_activity_ts": base_ts,
+                            "last_activity_at": "2025-01-01 00:00:00",
+                            "last_cloud2": {
+                                "ts": base_ts,
+                                "at": "2025-01-01 00:00:00",
+                                "rssi": "18",
+                                "technology": "LTE",
+                            },
+                            "probe": {
+                                "last_sent_ts": base_ts,
+                                "last_sent_at": "2025-01-01 00:00:00",
+                                "last_response_ts": base_ts,
+                                "last_response_at": "2025-01-01 00:00:00",
+                            },
+                        },
+                    },
+                    updated_at_ts=base_ts,
+                )
+
+                state_payload = persistence.get_run_state_payload(run_id=run["run_id"])
+                self.assertIsNotNone(state_payload)
+                state_item = state_payload["pivots"][0]
+                self.assertEqual(state_item["last_ping_at"], expected_local)
+                self.assertEqual(state_item["last_cloudv2_at"], expected_local)
+                self.assertEqual(state_item["last_activity_at"], expected_local)
+                self.assertEqual(state_item["last_cloud2"]["at"], expected_local)
+                self.assertEqual(state_payload["updated_at"], expected_local)
+
+                panel_payload = persistence.get_panel_payload(
+                    pivot_id,
+                    session_id=session_id,
+                    run_id=run["run_id"],
+                )
+                self.assertIsNotNone(panel_payload)
+                self.assertEqual(panel_payload["updated_at"], expected_local)
+                self.assertEqual(panel_payload["summary"]["last_cloudv2_at"], expected_local)
+                self.assertEqual(panel_payload["summary"]["probe"]["last_sent_at"], expected_local)
+                self.assertEqual(panel_payload["summary"]["probe"]["last_response_at"], expected_local)
             finally:
                 persistence.stop()
 

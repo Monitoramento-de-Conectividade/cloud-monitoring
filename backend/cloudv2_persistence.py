@@ -6,10 +6,10 @@ import statistics
 import threading
 import time
 import uuid
-from datetime import datetime
 
 from backend.cloudv2_paths import resolve_data_dir
 from backend.cloudv2_dashboard import slugify
+from backend.cloudv2_time import ts_to_dashboard_str
 
 
 DEFAULT_DB_PATH = os.path.join(resolve_data_dir(), "telemetry.sqlite3")
@@ -22,9 +22,7 @@ CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-netwo
 
 
 def _ts_to_str(ts):
-    if ts is None:
-        return "-"
-    return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S")
+    return ts_to_dashboard_str(ts)
 
 
 def _safe_float(value, default=None):
@@ -59,6 +57,96 @@ def _safe_bool(value, default=None):
 
 def _normalize_text(value):
     return str(value or "").strip()
+
+
+def _refresh_timestamp_field(item, ts_key="ts", at_key="at"):
+    if not isinstance(item, dict):
+        return item
+    ts_value = _safe_float(item.get(ts_key), None)
+    if ts_value is not None:
+        item[at_key] = _ts_to_str(ts_value)
+    elif at_key not in item:
+        item[at_key] = "-"
+    return item
+
+
+def _refresh_named_timestamp_fields(item, field_pairs):
+    if not isinstance(item, dict):
+        return item
+    for ts_key, at_key in field_pairs:
+        ts_value = _safe_float(item.get(ts_key), None)
+        if ts_value is not None:
+            item[at_key] = _ts_to_str(ts_value)
+        elif at_key not in item:
+            item[at_key] = "-"
+    return item
+
+
+def _normalize_probe_summary_timestamps(probe):
+    if not isinstance(probe, dict):
+        return probe
+    _refresh_named_timestamp_fields(
+        probe,
+        (
+            ("last_sent_ts", "last_sent_at"),
+            ("last_response_ts", "last_response_at"),
+            ("pending_deadline_ts", "pending_deadline_at"),
+        ),
+    )
+    last_response_info = probe.get("last_response_info")
+    if isinstance(last_response_info, dict):
+        board_timestamp_ts = _safe_float(last_response_info.get("board_timestamp_ts"), None)
+        last_response_info["board_timestamp_at"] = _ts_to_str(board_timestamp_ts)
+    return probe
+
+
+def _normalize_modem_reset_timestamps(modem_reset):
+    if not isinstance(modem_reset, dict):
+        return modem_reset
+    _refresh_named_timestamp_fields(
+        modem_reset,
+        (
+            ("last_command_ts", "last_command_at"),
+            ("last_ack_ts", "last_ack_at"),
+        ),
+    )
+    return modem_reset
+
+
+def _normalize_summary_timestamps(summary):
+    if not isinstance(summary, dict):
+        return summary
+    _refresh_named_timestamp_fields(
+        summary,
+        (
+            ("last_monitored_message_ts", "last_monitored_message_at"),
+            ("last_ping_ts", "last_ping_at"),
+            ("last_cloudv2_ts", "last_cloudv2_at"),
+            ("last_activity_ts", "last_activity_at"),
+        ),
+    )
+    last_cloud2 = summary.get("last_cloud2")
+    if isinstance(last_cloud2, dict):
+        _refresh_timestamp_field(last_cloud2)
+    _normalize_probe_summary_timestamps(summary.get("probe"))
+    _normalize_modem_reset_timestamps(summary.get("modem_reset"))
+    return summary
+
+
+def _normalize_snapshot_payload_timestamps(payload):
+    if not isinstance(payload, dict):
+        return payload
+    updated_at_ts = _safe_float(payload.get("updated_at_ts"), None)
+    if updated_at_ts is not None:
+        payload["updated_at"] = _ts_to_str(updated_at_ts)
+    _normalize_summary_timestamps(payload.get("summary"))
+    metrics = payload.get("metrics")
+    if isinstance(metrics, dict):
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        last_cloud2 = summary.get("last_cloud2") if isinstance(summary.get("last_cloud2"), dict) else {}
+        if isinstance(last_cloud2, dict):
+            metrics["last_cloud2_at"] = _ts_to_str(_safe_float(last_cloud2.get("ts"), None))
+    return payload
 
 
 def _parse_signal_technology_combined(value):
@@ -2468,6 +2556,7 @@ class TelemetryPersistence:
             )["probe"]
         if not isinstance(item.get("last_cloud2"), dict):
             item["last_cloud2"] = {}
+        _normalize_summary_timestamps(item)
         _ensure_summary_signal_fields(item)
         item["timeline_mini"] = _normalize_timeline_mini_segments(item.get("timeline_mini"))
         return item
@@ -2759,6 +2848,7 @@ class TelemetryPersistence:
         payload["run_id"] = resolved_run_id
         payload["session"] = self._row_to_session_dict_locked(session_row)
         payload["run"] = self._row_to_run_dict_locked(run_row)
+        _normalize_snapshot_payload_timestamps(payload)
 
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
         probe_summary = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
@@ -2785,8 +2875,10 @@ class TelemetryPersistence:
         summary["is_concentrator"] = bool(pivot_is_concentrator)
         summary["latitude"] = pivot_latitude
         summary["longitude"] = pivot_longitude
+        _normalize_summary_timestamps(summary)
         payload["summary"] = summary
         payload["is_concentrator"] = bool(pivot_is_concentrator)
         payload["latitude"] = pivot_latitude
         payload["longitude"] = pivot_longitude
+        _normalize_snapshot_payload_timestamps(payload)
         return payload

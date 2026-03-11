@@ -255,6 +255,18 @@ const DASHBOARD_DATETIME_FORMATTER = typeof Intl !== "undefined"
       hour12: false,
     })
   : null;
+const DASHBOARD_DISPLAY_DATETIME_FORMATTER = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("pt-BR", {
+      timeZone: DASHBOARD_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+  : null;
 
 const STATUS_META = {
   all: { label: "Todos", css: "gray", rank: 99 },
@@ -659,7 +671,28 @@ function formatShortDateTime(tsSec) {
   const ts = Number(tsSec);
   if (!Number.isFinite(ts) || ts <= 0) return "-";
   const date = new Date(ts * 1000);
-  return date.toLocaleString();
+  if (DASHBOARD_DISPLAY_DATETIME_FORMATTER) {
+    return DASHBOARD_DISPLAY_DATETIME_FORMATTER.format(date);
+  }
+  return date.toLocaleString("pt-BR");
+}
+
+function formatCompactDateTime(tsSec) {
+  const ts = Number(tsSec);
+  if (!Number.isFinite(ts) || ts <= 0) return "-";
+  const date = new Date(ts * 1000);
+  if (DASHBOARD_DATETIME_FORMATTER) {
+    return DASHBOARD_DATETIME_FORMATTER.format(date).replace(",", "");
+  }
+  return formatShortDateTime(tsSec);
+}
+
+function formatTimestampFromTsOrValue(tsSec, value, compact = false) {
+  const ts = Number(tsSec);
+  if (Number.isFinite(ts) && ts > 0) {
+    return compact ? formatCompactDateTime(ts) : formatShortDateTime(ts);
+  }
+  return text(value, "-");
 }
 
 function formatDateTimeValue(value) {
@@ -680,15 +713,10 @@ function formatDateTimeValue(value) {
     return text(value, "-");
   }
 
-  return date.toLocaleString("pt-BR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  if (DASHBOARD_DISPLAY_DATETIME_FORMATTER) {
+    return DASHBOARD_DISPLAY_DATETIME_FORMATTER.format(date);
+  }
+  return date.toLocaleString("pt-BR");
 }
 
 function formatUtcToDashboardTimezone(value) {
@@ -804,8 +832,8 @@ function buildPivotTableHeaderLabelHtml(columnKey, label) {
     .join("")}</span>`;
 }
 
-function buildPivotTableDateTimeHtml(value) {
-  const formatted = text(formatUtcToDashboardTimezone(value), "-");
+function buildPivotTableDateTimeHtml(value, tsSec = null) {
+  const formatted = formatTimestampFromTsOrValue(tsSec, value, true);
   const compact = formatted.replace(/\s*,\s*/g, " ").trim();
   const parts = compact.split(/\s+/);
   const time = parts.length > 1 ? parts[parts.length - 1] : "";
@@ -936,7 +964,7 @@ function getExpectedPivotsPending() {
       if (!pivotId) return null;
       return {
         pivot_id: pivotId,
-        added_at: text(item?.added_at, "-"),
+        added_at: formatTimestampFromTsOrValue(item?.added_at_ts, item?.added_at),
         added_at_ts: Number(item?.added_at_ts || 0),
         source: text(item?.source, "ui"),
       };
@@ -952,7 +980,7 @@ function setExpectedPivotsPendingState(pendingItems) {
         if (!pivotId) return null;
         return {
           pivot_id: pivotId,
-          added_at: text(item?.added_at, "-"),
+          added_at: formatTimestampFromTsOrValue(item?.added_at_ts, item?.added_at),
           added_at_ts: Number(item?.added_at_ts || 0),
           source: text(item?.source, "ui"),
         };
@@ -1877,9 +1905,9 @@ function buildPivotCardSignature(pivot) {
     text(status.label, "Inicial"),
     text(quality.code, "green"),
     text(quality.label, "Estável"),
-    text(safePivot.last_ping_at, "-"),
-    text(safePivot.last_cloudv2_at, "-"),
-    text(safePivot.last_activity_at, "-"),
+    formatTimestampFromTsOrValue(safePivot.last_ping_ts, safePivot.last_ping_at, true),
+    formatTimestampFromTsOrValue(safePivot.last_cloudv2_ts, safePivot.last_cloudv2_at, true),
+    formatTimestampFromTsOrValue(safePivot.last_activity_ts, safePivot.last_activity_at, true),
     timelineSegments,
     safePivot.median_ready ? 1 : 0,
     Number(safePivot.median_sample_count || 0),
@@ -1916,7 +1944,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-timeline-cell">${buildTimelineMiniHtml(safePivot)}</td>`;
       }
       if (columnKey === "last_cloudv2_at") {
-        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_cloudv2_at)}</td>`;
+        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_cloudv2_at, safePivot.last_cloudv2_ts)}</td>`;
       }
       if (columnKey === "median") {
         const medianReady = !!safePivot.median_ready;
@@ -1927,7 +1955,7 @@ function buildPivotCardHtml(pivot) {
         return `<td class="pivot-table-text">${escapeHtml(medianText)}</td>`;
       }
       if (columnKey === "last_activity_at") {
-        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_activity_at)}</td>`;
+        return `<td class="pivot-table-text">${buildPivotTableDateTimeHtml(safePivot.last_activity_at, safePivot.last_activity_ts)}</td>`;
       }
       if (columnKey === "signal") {
         return `<td class="pivot-table-text">${escapeHtml(text(pivotSignalValue(safePivot)))}</td>`;
@@ -2098,10 +2126,10 @@ function renderPivotCardsFull(pageItems, pageKey) {
 
 function renderHeader() {
   const raw = state.rawState || {};
-  const updatedAt = text(raw.updated_at, "-");
+  const updatedAt = formatTimestampFromTsOrValue(raw.updated_at_ts, raw.updated_at);
   const counts = raw.counts || {};
   const runMeta = raw.run || state.panelRunMeta || null;
-  const startedAt = text((runMeta || {}).started_at, "").trim();
+  const startedAt = formatTimestampFromTsOrValue((runMeta || {}).started_at_ts, (runMeta || {}).started_at).trim();
   const usingHistoricalRun = !!text(state.selectedRunId, "").trim();
   const sessionHintText = usingHistoricalRun
     ? (startedAt
@@ -2246,7 +2274,7 @@ function renderPending() {
     ? "disabled"
     : `enabled|${pending
       .slice(0, 40)
-      .map((item) => `${text(item.pivot_id)}:${Number(item.count || 0)}:${text(item.last_seen_at)}`)
+      .map((item) => `${text(item.pivot_id)}:${Number(item.count || 0)}:${formatTimestampFromTsOrValue(item.last_seen_ts, item.last_seen_at, true)}`)
       .join("|")}`;
   if (state.pendingRenderSignature === pendingSignature) return;
   state.pendingRenderSignature = pendingSignature;
@@ -2267,7 +2295,7 @@ function renderPending() {
     .map((item) => {
       const id = escapeHtml(text(item.pivot_id));
       const count = Number(item.count || 0);
-      const last = escapeHtml(text(item.last_seen_at));
+      const last = escapeHtml(formatTimestampFromTsOrValue(item.last_seen_ts, item.last_seen_at));
       return `<div class="list-item"><strong>${id}</strong> com ${count} registro(s) (última atualização em ${last})</div>`;
     })
     .join("");
@@ -2358,8 +2386,16 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
     { key: "connectivity_reason", label: "Detalhe da conectividade", value: safeQualityReason },
     { key: "connected_pct", label: "% Conectado (janela)", value: connectedPctText },
     { key: "disconnected_pct", label: "% Desconectado (janela)", value: disconnectedPctText },
-    { key: "last_ping", label: "Última atualização de conectividade", value: text(summary.last_ping_at) },
-    { key: "last_cloudv2", label: "Última atualização de dados", value: text(summary.last_cloudv2_at) },
+    {
+      key: "last_ping",
+      label: "Última atualização de conectividade",
+      value: formatTimestampFromTsOrValue(summary.last_ping_ts, summary.last_ping_at),
+    },
+    {
+      key: "last_cloudv2",
+      label: "Última atualização de dados",
+      value: formatTimestampFromTsOrValue(summary.last_cloudv2_ts, summary.last_cloudv2_at),
+    },
     {
       key: "median_cloudv2",
       label: "Intervalo típico de atualização",
@@ -3347,7 +3383,7 @@ function renderTimeline(pivot) {
           <article class="event ${escapeHtml(type)}">
             <div class="event-head">
               <div class="event-title">${escapeHtml(title)}</div>
-              <div class="event-time">${escapeHtml(text(event.at))}</div>
+              <div class="event-time">${escapeHtml(formatTimestampFromTsOrValue(event.ts, event.at, true))}</div>
             </div>
             <div class="event-topic">Origem: ${escapeHtml(sourceTopic)}</div>
             <div>${escapeHtml(payloadText)}</div>
@@ -3377,7 +3413,7 @@ function renderCloud2Table(pivot) {
     .map((row) => {
       return `
       <tr>
-        <td>${escapeHtml(text(row.at))}</td>
+        <td>${escapeHtml(formatTimestampFromTsOrValue(row.ts, row.at, true))}</td>
         <td>${escapeHtml(text(row.rssi))}</td>
         <td>${escapeHtml(text(row.technology))}</td>
         <td>${escapeHtml(fmtDuration(row.drop_duration_sec))}</td>
@@ -3442,8 +3478,8 @@ function renderPivotView() {
     sentCount > 0
       ? `${responseCount}/${sentCount} (${fmtPercent(probe.response_ratio_pct)})`
       : `${responseCount}/${sentCount}`;
-  ui.probeStatLastSent.textContent = text(probe.last_sent_at);
-  ui.probeStatLastResponse.textContent = text(probe.last_response_at);
+  ui.probeStatLastSent.textContent = formatTimestampFromTsOrValue(probe.last_sent_ts, probe.last_sent_at);
+  ui.probeStatLastResponse.textContent = formatTimestampFromTsOrValue(probe.last_response_ts, probe.last_response_at);
   ui.probeStatTimeoutStreak.textContent = text(probe.timeout_streak, "0");
   ui.probeStatResponseRatio.textContent = responseCoverageText;
   ui.probeStatDelayLast.textContent = fmtSecondsPrecise(probe.latency_last_sec);
@@ -3977,7 +4013,7 @@ function renderExpectedPivotAdmin() {
   ui.expectedPivotList.innerHTML = pendingItems
     .map((item) => {
       const pivotId = escapeHtml(text(item.pivot_id, ""));
-      const addedAt = escapeHtml(text(item.added_at, "-"));
+      const addedAt = escapeHtml(formatTimestampFromTsOrValue(item.added_at_ts, item.added_at));
       return `
         <div class="list-item expected-pivot-item">
           <div class="expected-pivot-item-main">
@@ -5051,6 +5087,9 @@ if (typeof module !== "undefined" && module.exports) {
       shouldRenderRssiPanel,
       getProbeResponseInfoDisplayRows,
       formatProbeConfiguredNetworks,
+      formatShortDateTime,
+      formatCompactDateTime,
+      formatTimestampFromTsOrValue,
     },
   };
 }

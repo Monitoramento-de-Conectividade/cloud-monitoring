@@ -48,6 +48,31 @@ function buildApiUrl(url) {
 }
 
 const REQUEST_TIMEOUT_MS = 12000;
+const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
+const DASHBOARD_DATETIME_FORMATTER = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("sv-SE", {
+      timeZone: DASHBOARD_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+  : null;
+const DASHBOARD_DISPLAY_DATETIME_FORMATTER = typeof Intl !== "undefined"
+  ? new Intl.DateTimeFormat("pt-BR", {
+      timeZone: DASHBOARD_TIMEZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+  : null;
 const MAP_DEFAULT_CENTER = [-14.235, -51.9253];
 const MAP_DEFAULT_ZOOM = 4;
 const MAP_MIN_ZOOM = 3;
@@ -194,6 +219,34 @@ function fmtDuration(seconds) {
   if (s < 60) return `${Math.round(s)}s`;
   if (s < 3600) return `${Math.round(s / 60)} min`;
   return `${(s / 3600).toFixed(1)}h`;
+}
+
+function formatShortDateTime(tsSec) {
+  const ts = Number(tsSec);
+  if (!Number.isFinite(ts) || ts <= 0) return "-";
+  const date = new Date(ts * 1000);
+  if (DASHBOARD_DISPLAY_DATETIME_FORMATTER) {
+    return DASHBOARD_DISPLAY_DATETIME_FORMATTER.format(date);
+  }
+  return date.toLocaleString("pt-BR");
+}
+
+function formatCompactDateTime(tsSec) {
+  const ts = Number(tsSec);
+  if (!Number.isFinite(ts) || ts <= 0) return "-";
+  const date = new Date(ts * 1000);
+  if (DASHBOARD_DATETIME_FORMATTER) {
+    return DASHBOARD_DATETIME_FORMATTER.format(date).replace(",", "");
+  }
+  return formatShortDateTime(tsSec);
+}
+
+function formatTimestampFromTsOrValue(tsSec, value, compact = false) {
+  const ts = Number(tsSec);
+  if (Number.isFinite(ts) && ts > 0) {
+    return compact ? formatCompactDateTime(ts) : formatShortDateTime(ts);
+  }
+  return text(value, "-");
 }
 
 function resolveCssVarColor(variableName, fallbackColor) {
@@ -565,7 +618,7 @@ function popupValueHtml(pivot, columnKey) {
     return buildTimelineMiniHtml(safePivot);
   }
   if (columnKey === "last_cloudv2_at") {
-    return escapeHtml(text(safePivot.last_cloudv2_at));
+    return escapeHtml(formatTimestampFromTsOrValue(safePivot.last_cloudv2_ts, safePivot.last_cloudv2_at, true));
   }
   if (columnKey === "median") {
     const medianReady = !!safePivot.median_ready;
@@ -576,7 +629,7 @@ function popupValueHtml(pivot, columnKey) {
     return escapeHtml(medianText);
   }
   if (columnKey === "last_activity_at") {
-    return escapeHtml(text(safePivot.last_activity_at));
+    return escapeHtml(formatTimestampFromTsOrValue(safePivot.last_activity_ts, safePivot.last_activity_at, true));
   }
   if (columnKey === "signal") {
     return escapeHtml(text(pivotSignalValue(safePivot)));
@@ -680,7 +733,7 @@ function renderHeader(payload) {
   const safePayload = payload && typeof payload === "object" ? payload : {};
   const counts = safePayload.counts && typeof safePayload.counts === "object" ? safePayload.counts : {};
   if (ui.mapUpdatedAt) {
-    ui.mapUpdatedAt.textContent = `Ultima atualizacao: ${text(safePayload.updated_at)}`;
+    ui.mapUpdatedAt.textContent = `Ultima atualizacao: ${formatTimestampFromTsOrValue(safePayload.updated_at_ts, safePayload.updated_at)}`;
   }
   if (ui.mapCountsMeta) {
     ui.mapCountsMeta.textContent = `${Number(counts.pivots || 0)} pivôs • ${Number(counts.duplicate_drops || 0)} duplicidades`;

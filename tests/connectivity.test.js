@@ -73,6 +73,12 @@ test("connectivity: historical run keeps persisted timestamp as the current refe
   }
 });
 
+test("display: compact timestamp formatting uses America/Sao_Paulo and prefers ts over stale text", () => {
+  const ts = 1_735_689_600; // 2025-01-01 00:00:00 UTC
+  assert.equal(_test.formatCompactDateTime(ts), "2024-12-31 21:00:00");
+  assert.equal(_test.formatTimestampFromTsOrValue(ts, "2025-01-01 00:00:00", true), "2024-12-31 21:00:00");
+});
+
 test("display: status is forced to inicial when connectivity is em analise", () => {
   const item = {
     pivot_id: "PivotA",

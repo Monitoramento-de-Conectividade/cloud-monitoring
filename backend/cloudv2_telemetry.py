@@ -7,11 +7,11 @@ import statistics
 import threading
 import time
 import copy
-from datetime import datetime
 
 from backend.cloudv2_dashboard import DATA_DIR, ensure_dirs, slugify, write_json_atomic
 from backend.cloudv2_persistence import TelemetryPersistence
 from backend.cloudv2_security import get_db_purge_password
+from backend.cloudv2_time import ts_to_dashboard_str
 
 
 TOPIC_CLOUDV2 = "cloudv2"
@@ -57,9 +57,44 @@ CONCENTRATOR_TECH_LABEL = "concentrador"
 
 
 def _ts_to_str(ts):
-    if ts is None:
-        return "-"
-    return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S")
+    return ts_to_dashboard_str(ts)
+
+
+def _refresh_timestamp_field(item, ts_key="ts", at_key="at"):
+    if not isinstance(item, dict):
+        return item
+    ts_value = _safe_float(item.get(ts_key), None)
+    if ts_value is not None:
+        item[at_key] = _ts_to_str(ts_value)
+    elif at_key not in item:
+        item[at_key] = "-"
+    return item
+
+
+def _refresh_named_timestamp_fields(item, field_pairs):
+    if not isinstance(item, dict):
+        return item
+    for ts_key, at_key in field_pairs:
+        ts_value = _safe_float(item.get(ts_key), None)
+        if ts_value is not None:
+            item[at_key] = _ts_to_str(ts_value)
+        elif at_key not in item:
+            item[at_key] = "-"
+    return item
+
+
+def _clone_timestamped_items(items, field_pairs=None):
+    if not isinstance(items, list):
+        return []
+    normalized = []
+    pairs = tuple(field_pairs or (("ts", "at"),))
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cloned = dict(item)
+        _refresh_named_timestamp_fields(cloned, pairs)
+        normalized.append(cloned)
+    return normalized
 
 
 def _format_ago(seconds):
@@ -3804,6 +3839,7 @@ class TelemetryStore:
         is_concentrator = bool(pivot.get("is_concentrator"))
         source_last_cloud2 = pivot.get("last_cloud2")
         last_cloud2 = dict(source_last_cloud2) if isinstance(source_last_cloud2, dict) else {}
+        _refresh_timestamp_field(last_cloud2)
         if is_concentrator:
             last_cloud2["technology"] = CONCENTRATOR_TECH_LABEL
         signal = _normalize_text(last_cloud2.get("rssi"))
@@ -3941,7 +3977,7 @@ class TelemetryStore:
     def _build_pivot_snapshot_locked(self, pivot, now):
         summary = self._build_pivot_summary_locked(pivot, now)
 
-        drop_events = list(pivot.get("drop_events", []))
+        drop_events = _clone_timestamped_items(pivot.get("drop_events", []))
         drops_24h = [item for item in drop_events if _safe_float(item.get("ts"), 0) >= (now - 86400)]
         drops_7d = [item for item in drop_events if _safe_float(item.get("ts"), 0) >= (now - 604800)]
 
@@ -3950,21 +3986,25 @@ class TelemetryStore:
         last_cloud2 = dict(summary_last_cloud2) if isinstance(summary_last_cloud2, dict) else (pivot.get("last_cloud2") or {})
         if not isinstance(last_cloud2, dict):
             last_cloud2 = {}
+        _refresh_timestamp_field(last_cloud2)
 
         timeline = sorted(
-            list(pivot.get("timeline", [])),
+            _clone_timestamped_items(pivot.get("timeline", [])),
             key=lambda item: _safe_float(item.get("ts"), 0),
             reverse=True,
         )
 
         probe_events = sorted(
-            list(pivot.get("probe", {}).get("events", [])),
+            _clone_timestamped_items(
+                pivot.get("probe", {}).get("events", []),
+                field_pairs=(("ts", "at"), ("sent_ts", "sent_at"), ("deadline_ts", "deadline_at")),
+            ),
             key=lambda item: _safe_float(item.get("ts"), 0),
             reverse=True,
         )
         probe_delay_points = self._build_probe_delay_points_locked(probe_events)
         rssi_series = sorted(
-            list(pivot.get("ping_rssi_points", [])),
+            _clone_timestamped_items(pivot.get("ping_rssi_points", [])),
             key=lambda item: _safe_float(item.get("ts"), 0),
         )
         session_info = self.persistence.resolve_session(
@@ -4007,7 +4047,7 @@ class TelemetryStore:
             "hasRssi": bool(rssi_series),
             "rssiSeries": rssi_series,
             "cloud2_events": sorted(
-                list(pivot.get("cloud2_events", [])),
+                _clone_timestamped_items(pivot.get("cloud2_events", [])),
                 key=lambda item: _safe_float(item.get("ts"), 0),
                 reverse=True,
             ),
