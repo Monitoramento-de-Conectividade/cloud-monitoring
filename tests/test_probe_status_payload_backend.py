@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import backend.cloudv2_telemetry as telemetry_mod
+from backend.cloudv2_persistence import TelemetryPersistence
 from backend.cloudv2_telemetry import TelemetryStore, parse_device_payload, parse_probe_status_payload
 
 
@@ -89,6 +90,39 @@ class ProbeStatusPayloadTests(unittest.TestCase):
                 self.assertEqual(probe["last_response_info"]["keep_alive_sec"], 180)
             finally:
                 store.stop()
+
+    def test_restart_prefers_db_probe_settings_over_stale_runtime_store(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pivot_id = "Savana_16"
+            first_store = self._build_store(temp_dir)
+            try:
+                first_store.queue_expected_pivots([pivot_id], now=1_773_171_000.0, source="test")
+                first_store.process_message("cloudv2", f"#01-{pivot_id}-discovery$", ts=1_773_171_001.0)
+                first_store.update_probe_setting(pivot_id, enabled=True, interval_sec=300)
+            finally:
+                first_store.stop()
+
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                persistence.upsert_probe_setting(pivot_id, False, 900)
+            finally:
+                persistence.stop()
+
+            restarted_store = self._build_store(temp_dir)
+            try:
+                probe_config = restarted_store.get_probe_config_snapshot()
+                probe_item = next(item for item in probe_config["items"] if item["pivot_id"] == pivot_id)
+                self.assertFalse(probe_item["enabled"])
+                self.assertEqual(probe_item["interval_sec"], 900)
+
+                snapshot = restarted_store.get_pivot_snapshot(pivot_id, now=1_773_171_100.0)
+                self.assertIsNotNone(snapshot)
+                self.assertFalse(snapshot["summary"]["probe"]["enabled"])
+                self.assertEqual(snapshot["summary"]["probe"]["interval_sec"], 900)
+            finally:
+                restarted_store.stop()
 
 
 if __name__ == "__main__":

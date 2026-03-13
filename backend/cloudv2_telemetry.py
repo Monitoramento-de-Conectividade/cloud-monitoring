@@ -640,11 +640,16 @@ class TelemetryStore:
 
             if self.history_mode == "merge":
                 self._load_runtime_state()
+                db_probe_settings = self.persistence.load_probe_settings()
+                if isinstance(db_probe_settings, dict) and db_probe_settings:
+                    with self._lock:
+                        self._probe_settings.update(db_probe_settings)
             else:
                 self._clear_dashboard_data_files()
 
             now = time.time()
             with self._lock:
+                self._sync_probe_settings_to_runtime_pivots_locked()
                 self._monitoring_mode = "live"
                 self._ensure_active_run_locked(now, source="runtime_start")
                 for pivot_id, pivot in self.pivots.items():
@@ -2176,12 +2181,7 @@ class TelemetryStore:
 
             pivot = self.pivots.get(normalized_pivot)
             if pivot is not None:
-                probe = pivot["probe"]
-                probe["enabled"] = normalized_enabled
-                probe["interval_sec"] = normalized_interval
-                if not normalized_enabled:
-                    probe["pending_sent_ts"] = None
-                    probe["pending_deadline_ts"] = None
+                self._apply_probe_setting_to_pivot_locked(pivot, self._probe_settings[normalized_pivot])
                 now_ts = time.time()
                 self._refresh_status_locked(pivot, now_ts)
                 self._persist_pivot_snapshot_locked(pivot, now_ts)
@@ -2201,6 +2201,38 @@ class TelemetryStore:
             "enabled": normalized_enabled,
             "interval_sec": normalized_interval,
         }
+
+    def _apply_probe_setting_to_pivot_locked(self, pivot, setting):
+        if not isinstance(pivot, dict):
+            return
+
+        probe = pivot.get("probe")
+        if not isinstance(probe, dict):
+            probe = {}
+            pivot["probe"] = probe
+
+        normalized_enabled = bool((setting or {}).get("enabled", False))
+        normalized_interval = _safe_int(
+            (setting or {}).get("interval_sec"),
+            self.probe_default_interval_sec,
+        )
+        if normalized_interval is None:
+            normalized_interval = self.probe_default_interval_sec
+        if normalized_interval < self.probe_min_interval_sec:
+            normalized_interval = self.probe_min_interval_sec
+
+        probe["enabled"] = normalized_enabled
+        probe["interval_sec"] = normalized_interval
+        if not normalized_enabled:
+            probe["pending_sent_ts"] = None
+            probe["pending_deadline_ts"] = None
+
+    def _sync_probe_settings_to_runtime_pivots_locked(self):
+        for pivot_id, pivot in self.pivots.items():
+            self._apply_probe_setting_to_pivot_locked(
+                pivot,
+                self._probe_settings.get(pivot_id, {}),
+            )
 
     def update_pivot_concentrator(self, pivot_id, is_concentrator):
         normalized_pivot = str(pivot_id or "").strip()

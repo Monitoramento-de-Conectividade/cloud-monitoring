@@ -149,6 +149,24 @@ def _normalize_snapshot_payload_timestamps(payload):
     return payload
 
 
+def _overlay_probe_setting_on_summary(summary, probe_setting):
+    if not isinstance(summary, dict) or not isinstance(probe_setting, dict):
+        return summary
+
+    probe = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
+
+    enabled = _safe_bool(probe_setting.get("enabled"), None)
+    if enabled is not None:
+        probe["enabled"] = enabled
+
+    interval_sec = _safe_int(probe_setting.get("interval_sec"), None)
+    if interval_sec is not None and interval_sec > 0:
+        probe["interval_sec"] = interval_sec
+
+    summary["probe"] = probe
+    return summary
+
+
 def _parse_signal_technology_combined(value):
     raw = _normalize_text(value)
     if not raw:
@@ -2039,23 +2057,26 @@ class TelemetryPersistence:
     def load_probe_settings(self):
         with self._lock:
             conn = self._require_conn_locked()
-            rows = conn.execute(
-                """
-                SELECT pivot_id, enabled, interval_sec
-                FROM probe_settings
-                ORDER BY pivot_id COLLATE NOCASE ASC
-                """
-            ).fetchall()
-            settings = {}
-            for row in rows:
-                pivot_id = str(row["pivot_id"] or "").strip()
-                if not pivot_id:
-                    continue
-                settings[pivot_id] = {
-                    "enabled": bool(int(row["enabled"])),
-                    "interval_sec": int(row["interval_sec"]),
-                }
-            return settings
+            return self._load_probe_settings_locked(conn)
+
+    def _load_probe_settings_locked(self, conn):
+        rows = conn.execute(
+            """
+            SELECT pivot_id, enabled, interval_sec
+            FROM probe_settings
+            ORDER BY pivot_id COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        settings = {}
+        for row in rows:
+            pivot_id = str(row["pivot_id"] or "").strip()
+            if not pivot_id:
+                continue
+            settings[pivot_id] = {
+                "enabled": bool(int(row["enabled"])),
+                "interval_sec": int(row["interval_sec"]),
+            }
+        return settings
 
     def replace_expected_pivots_pending(self, pending_items):
         normalized_rows = []
@@ -2668,6 +2689,7 @@ class TelemetryPersistence:
                 """,
                 (resolved_run_id,),
             ).fetchall()
+            probe_settings = self._load_probe_settings_locked(conn)
 
         pivots = []
         last_updated_ts = _safe_float(run_row["updated_at_ts"], None)
@@ -2675,6 +2697,7 @@ class TelemetryPersistence:
             summary = self._build_state_summary_from_snapshot_row(row, resolved_run_id)
             pivot_id = str(summary.get("pivot_id") or row["pivot_id"] or "").strip()
             session_id = str(summary.get("session_id") or row["session_id"] or "").strip()
+            _overlay_probe_setting_on_summary(summary, probe_settings.get(pivot_id))
             row_updated = _safe_float(row["snapshot_updated_at_ts"], _safe_float(row["session_updated_at_ts"], None))
             if row_updated is None:
                 row_updated = time.time()
@@ -2762,6 +2785,7 @@ class TelemetryPersistence:
                 """,
                 (resolved_run_id,),
             ).fetchall()
+            probe_settings = self._load_probe_settings_locked(conn)
 
         pivots = []
         last_updated_ts = _safe_float(run_row["updated_at_ts"], None)
@@ -2769,6 +2793,7 @@ class TelemetryPersistence:
             summary = self._build_state_summary_from_snapshot_row(row, resolved_run_id)
             pivot_id = str(summary.get("pivot_id") or row["pivot_id"] or "").strip()
             session_id = str(summary.get("session_id") or row["session_id"] or "").strip()
+            _overlay_probe_setting_on_summary(summary, probe_settings.get(pivot_id))
             if not pivot_id or not session_id:
                 continue
 
@@ -2861,6 +2886,7 @@ class TelemetryPersistence:
                 pivot_is_concentrator = bool(parsed)
                 pivot_latitude = _safe_float(pivot_row["latitude"], None)
                 pivot_longitude = _safe_float(pivot_row["longitude"], None)
+            probe_settings = self._load_probe_settings_locked(conn)
 
         payload = {}
         if snapshot_row is not None:
@@ -2937,6 +2963,7 @@ class TelemetryPersistence:
         summary["is_concentrator"] = bool(pivot_is_concentrator)
         summary["latitude"] = pivot_latitude
         summary["longitude"] = pivot_longitude
+        _overlay_probe_setting_on_summary(summary, probe_settings.get(normalized_id))
         _normalize_summary_timestamps(summary)
         payload["summary"] = summary
         payload["is_concentrator"] = bool(pivot_is_concentrator)

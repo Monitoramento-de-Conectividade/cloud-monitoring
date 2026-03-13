@@ -7,6 +7,71 @@ from backend.cloudv2_time import ts_to_dashboard_str
 
 
 class PivotTablePayloadTests(unittest.TestCase):
+    def test_probe_settings_override_stale_snapshot_in_state_quality_and_panel_payloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "telemetry.sqlite3")
+            persistence = TelemetryPersistence(db_path=db_path, max_events_per_pivot=5000)
+            persistence.start()
+            try:
+                pivot_id = "PivotProbeConfig_1"
+                base_ts = 1_700_300_000.0
+
+                run = persistence.get_or_create_active_run(now_ts=base_ts, source="test")
+                session = persistence.get_or_create_active_session(
+                    pivot_id,
+                    pivot_slug="pivotprobeconfig-1",
+                    now_ts=base_ts,
+                    source="test",
+                    run_id=run["run_id"],
+                )
+                session_id = session["session_id"]
+
+                persistence.upsert_snapshot(
+                    pivot_id,
+                    session_id,
+                    {
+                        "pivot_id": pivot_id,
+                        "session_id": session_id,
+                        "run_id": run["run_id"],
+                        "updated_at_ts": base_ts + 30,
+                        "summary": {
+                            "status": {"code": "green", "label": "Online", "rank": 2},
+                            "quality": {"code": "green", "label": "Saudavel", "rank": 2},
+                            "probe": {
+                                "enabled": True,
+                                "interval_sec": 300,
+                            },
+                        },
+                    },
+                    updated_at_ts=base_ts + 30,
+                )
+
+                persistence.upsert_probe_setting(pivot_id, False, 900)
+
+                state_payload = persistence.get_run_state_payload(run_id=run["run_id"])
+                self.assertIsNotNone(state_payload)
+                state_probe = state_payload["pivots"][0]["probe"]
+                self.assertFalse(state_probe["enabled"])
+                self.assertEqual(state_probe["interval_sec"], 900)
+
+                quality_payload = persistence.get_quality_cards_payload(run_id=run["run_id"])
+                self.assertIsNotNone(quality_payload)
+                quality_probe = quality_payload["pivots"][0]["summary"]["probe"]
+                self.assertFalse(quality_probe["enabled"])
+                self.assertEqual(quality_probe["interval_sec"], 900)
+
+                panel_payload = persistence.get_panel_payload(
+                    pivot_id,
+                    session_id=session_id,
+                    run_id=run["run_id"],
+                )
+                self.assertIsNotNone(panel_payload)
+                panel_probe = panel_payload["summary"]["probe"]
+                self.assertFalse(panel_probe["enabled"])
+                self.assertEqual(panel_probe["interval_sec"], 900)
+            finally:
+                persistence.stop()
+
     def test_coordinates_are_persisted_and_exposed_in_state_and_panel(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "telemetry.sqlite3")
