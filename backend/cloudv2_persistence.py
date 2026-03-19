@@ -2702,7 +2702,10 @@ class TelemetryPersistence:
             if row_updated is None:
                 row_updated = time.time()
 
-            if pivot_id and session_id:
+            existing_timeline_mini = _normalize_timeline_mini_segments(summary.get("timeline_mini"))
+            if existing_timeline_mini:
+                summary["timeline_mini"] = existing_timeline_mini
+            elif pivot_id and session_id:
                 timeline_events = self.fetch_timeline_events_light(
                     pivot_id,
                     session_id,
@@ -2738,8 +2741,16 @@ class TelemetryPersistence:
             "pivots": pivots,
         }
 
-    def get_quality_cards_payload(self, run_id=None, timeline_limit=None):
+    def get_quality_cards_payload(self, run_id=None, timeline_limit=None, pivot_ids=None):
         safe_timeline_limit = max(1, min(50000, int(timeline_limit or self.max_events_per_pivot)))
+        normalized_pivot_ids = []
+        seen_pivot_ids = set()
+        for raw_pivot_id in pivot_ids or []:
+            pivot_id = str(raw_pivot_id or "").strip()
+            if not pivot_id or pivot_id in seen_pivot_ids:
+                continue
+            seen_pivot_ids.add(pivot_id)
+            normalized_pivot_ids.append(pivot_id)
 
         with self._lock:
             conn = self._require_conn_locked()
@@ -2751,8 +2762,7 @@ class TelemetryPersistence:
             if not resolved_run_id:
                 return None
 
-            rows = conn.execute(
-                """
+            query = """
                 SELECT
                     sessions.pivot_id,
                     sessions.session_id,
@@ -2773,6 +2783,13 @@ class TelemetryPersistence:
                     ON snapshots.pivot_id = sessions.pivot_id
                     AND snapshots.session_id = sessions.session_id
                 WHERE sessions.run_id = ?
+            """
+            params = [resolved_run_id]
+            if normalized_pivot_ids:
+                placeholders = ", ".join("?" for _ in normalized_pivot_ids)
+                query += f" AND sessions.pivot_id IN ({placeholders})"
+                params.extend(normalized_pivot_ids)
+            query += """
                     AND sessions.session_id = (
                         SELECT sessions_inner.session_id
                         FROM monitoring_sessions AS sessions_inner
@@ -2782,9 +2799,8 @@ class TelemetryPersistence:
                         LIMIT 1
                     )
                 ORDER BY sessions.pivot_id COLLATE NOCASE ASC
-                """,
-                (resolved_run_id,),
-            ).fetchall()
+                """
+            rows = conn.execute(query, tuple(params)).fetchall()
             probe_settings = self._load_probe_settings_locked(conn)
 
         pivots = []

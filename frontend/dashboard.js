@@ -220,6 +220,7 @@ const state = {
   panelSessionMeta: null,
   panelRunMeta: null,
   refreshInFlight: false,
+  auxRefreshPromise: null,
   authUserRole: "user",
   authUserEmail: "",
   pivotDeleteAllowed: false,
@@ -238,10 +239,16 @@ const state = {
   bulkPivotActionInFlight: false,
 };
 
-const API_REQUEST_TIMEOUT_MS = 12000;
+const API_REQUEST_TIMEOUT_MS = 20000;
+const API_GET_RETRY_DELAYS_MS = [0, 1200];
+const API_STALE_RESPONSE_TTL_MS = 180000;
+const DASHBOARD_CACHE_STORAGE_PREFIX = "cloud-monitoring:get:";
+const DASHBOARD_CACHE_STORAGE_MAX_CHARS = 750000;
 const MODEM_RESET_ACK_MIN_FIRMWARE = [2, 8, 4];
 const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
 const DASHBOARD_DATETIME_UTC_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const GET_JSON_RESPONSE_CACHE = new Map();
+const GET_JSON_INFLIGHT_REQUESTS = new Map();
 const DASHBOARD_DATETIME_FORMATTER = typeof Intl !== "undefined"
   ? new Intl.DateTimeFormat("sv-SE", {
       timeZone: DASHBOARD_TIMEZONE,
@@ -1331,41 +1338,220 @@ function setInitialLoading(loading, message = "") {
   }
 }
 
-async function getJson(url) {
-  const targetUrl = buildApiUrl(url);
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeoutId = controller
-    ? window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
-    : null;
-  let response;
+function cloneJsonValue(value) {
+  if (value === null || value === undefined) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function canUseSessionStorage() {
   try {
-    response = await fetch(`${targetUrl}${targetUrl.includes("?") ? "&" : "?"}t=${Date.now()}`, {
-      credentials: "include",
-      signal: controller ? controller.signal : undefined,
+    return typeof sessionStorage !== "undefined";
+  } catch (err) {
+    return false;
+  }
+}
+
+function isCacheableDashboardGet(url) {
+  const targetUrl = buildApiUrl(url);
+  return (
+    targetUrl.startsWith("/api/state")
+    || targetUrl.startsWith("/api/quality-lite")
+    || targetUrl.startsWith("/api/pivot/")
+    || targetUrl.startsWith("/api/monitoring/runs")
+    || targetUrl === "data/ui_config.json"
+  );
+}
+
+function isPersistentDashboardGet(url) {
+  const targetUrl = buildApiUrl(url);
+  return (
+    targetUrl.startsWith("/api/state")
+    || targetUrl.startsWith("/api/quality-lite")
+    || targetUrl.startsWith("/api/monitoring/runs")
+    || targetUrl === "data/ui_config.json"
+  );
+}
+
+function readPersistentCachedGetJson(url, maxAgeMs = API_STALE_RESPONSE_TTL_MS) {
+  if (!isPersistentDashboardGet(url) || !canUseSessionStorage()) return null;
+  const storageKey = `${DASHBOARD_CACHE_STORAGE_PREFIX}${buildApiUrl(url)}`;
+  let raw = "";
+  try {
+    raw = String(sessionStorage.getItem(storageKey) || "");
+  } catch (err) {
+    return null;
+  }
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const savedAtMs = Number(parsed?.savedAtMs || 0);
+    if (!Number.isFinite(savedAtMs) || Date.now() - savedAtMs > Math.max(0, Number(maxAgeMs || 0))) {
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch (cleanupErr) {
+        // no-op
+      }
+      return null;
+    }
+    return cloneJsonValue(parsed.payload);
+  } catch (err) {
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
+    }
+    return null;
+  }
+}
+
+function readCachedGetJson(url, maxAgeMs = API_STALE_RESPONSE_TTL_MS) {
+  if (!isCacheableDashboardGet(url)) return null;
+  const key = buildApiUrl(url);
+  const cached = GET_JSON_RESPONSE_CACHE.get(key);
+  if (cached) {
+    if (Date.now() - Number(cached.savedAtMs || 0) > Math.max(0, Number(maxAgeMs || 0))) {
+      GET_JSON_RESPONSE_CACHE.delete(key);
+    } else {
+      return cloneJsonValue(cached.payload);
+    }
+  }
+  return readPersistentCachedGetJson(url, maxAgeMs);
+}
+
+function writePersistentCachedGetJson(url, payload) {
+  if (!isPersistentDashboardGet(url) || !canUseSessionStorage()) return;
+  const storageKey = `${DASHBOARD_CACHE_STORAGE_PREFIX}${buildApiUrl(url)}`;
+  let serialized = "";
+  try {
+    serialized = JSON.stringify({
+      savedAtMs: Date.now(),
+      payload: cloneJsonValue(payload),
     });
   } catch (err) {
-    if (controller && err && err.name === "AbortError") {
-      throw new Error(`timeout:${API_REQUEST_TIMEOUT_MS}`);
-    }
-    throw err;
-  } finally {
-    if (timeoutId !== null) window.clearTimeout(timeoutId);
+    return;
   }
-  let payload = {};
+  if (!serialized || serialized.length > DASHBOARD_CACHE_STORAGE_MAX_CHARS) {
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
+    }
+    return;
+  }
   try {
-    payload = await response.json();
+    sessionStorage.setItem(storageKey, serialized);
   } catch (err) {
-    payload = {};
-  }
-  if (!response.ok) {
-    const redirect = String(payload.redirect || "").trim();
-    if (redirect) {
-      window.location.assign(buildAppUrl(redirect));
-      throw new Error(`AUTH_REDIRECT_${response.status}`);
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
     }
-    throw new Error(String(payload.error || payload.message || response.status));
   }
-  return payload;
+}
+
+function writeCachedGetJson(url, payload) {
+  if (!isCacheableDashboardGet(url)) return;
+  const key = buildApiUrl(url);
+  GET_JSON_RESPONSE_CACHE.set(key, {
+    savedAtMs: Date.now(),
+    payload: cloneJsonValue(payload),
+  });
+  writePersistentCachedGetJson(url, payload);
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, Math.max(0, Number(ms || 0)));
+  });
+}
+
+async function executeJsonGet(url, options = {}) {
+  const targetUrl = buildApiUrl(url);
+  const timeoutMs = Math.max(4000, Number(options.timeoutMs || API_REQUEST_TIMEOUT_MS));
+  const retryDelaysMs = Array.isArray(options.retryDelaysMs) && options.retryDelaysMs.length
+    ? options.retryDelaysMs
+    : API_GET_RETRY_DELAYS_MS;
+  const allowStale = options.allowStale !== false;
+  const staleTtlMs = Math.max(0, Number(options.staleTtlMs || API_STALE_RESPONSE_TTL_MS));
+  let lastError = null;
+
+  for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex += 1) {
+    if (attemptIndex > 0) {
+      await sleepMs(retryDelaysMs[attemptIndex]);
+    }
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutId = controller
+      ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+    let response;
+    try {
+      response = await fetch(targetUrl, {
+        credentials: "include",
+        cache: "no-store",
+        signal: controller ? controller.signal : undefined,
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (err) {
+        payload = {};
+      }
+      if (!response.ok) {
+        const redirect = String(payload.redirect || "").trim();
+        if (redirect) {
+          window.location.assign(buildAppUrl(redirect));
+          throw new Error(`AUTH_REDIRECT_${response.status}`);
+        }
+        throw new Error(String(payload.error || payload.message || response.status));
+      }
+      writeCachedGetJson(url, payload);
+      return payload;
+    } catch (err) {
+      if (controller && err && err.name === "AbortError") {
+        lastError = new Error(`timeout:${timeoutMs}`);
+      } else {
+        lastError = err;
+      }
+      if (String((lastError || {}).message || "").startsWith("AUTH_REDIRECT_")) {
+        throw lastError;
+      }
+    } finally {
+      if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
+    }
+  }
+
+  if (allowStale) {
+    const cachedPayload = readCachedGetJson(url, staleTtlMs);
+    if (cachedPayload !== null) return cachedPayload;
+  }
+  throw lastError || new Error("request_failed");
+}
+
+async function getJson(url, options = {}) {
+  const targetUrl = buildApiUrl(url);
+  if (!options.bypassInflight) {
+    const inFlight = GET_JSON_INFLIGHT_REQUESTS.get(targetUrl);
+    if (inFlight) {
+      return cloneJsonValue(await inFlight);
+    }
+  }
+
+  const requestPromise = executeJsonGet(url, options);
+  if (!options.bypassInflight) {
+    GET_JSON_INFLIGHT_REQUESTS.set(targetUrl, requestPromise);
+  }
+  try {
+    return cloneJsonValue(await requestPromise);
+  } finally {
+    if (!options.bypassInflight) {
+      const active = GET_JSON_INFLIGHT_REQUESTS.get(targetUrl);
+      if (active === requestPromise) {
+        GET_JSON_INFLIGHT_REQUESTS.delete(targetUrl);
+      }
+    }
+  }
 }
 
 async function putJson(url, body) {
@@ -1394,10 +1580,18 @@ function buildStateUrl(runId = null) {
   return `/api/state?run_id=${encodeURIComponent(normalizedRun)}`;
 }
 
-function buildQualityLiteUrl(runId = null) {
+function buildQualityLiteUrl(runId = null, pivotIds = []) {
+  const params = new URLSearchParams();
   const normalizedRun = String(runId || "").trim();
-  if (!normalizedRun) return "/api/quality-lite";
-  return `/api/quality-lite?run_id=${encodeURIComponent(normalizedRun)}`;
+  if (normalizedRun) {
+    params.set("run_id", normalizedRun);
+  }
+  const normalizedPivotIds = normalizePivotIdList(pivotIds);
+  if (normalizedPivotIds.length) {
+    params.set("pivot_ids", normalizedPivotIds.join(","));
+  }
+  const query = params.toString();
+  return query ? `/api/quality-lite?${query}` : "/api/quality-lite";
 }
 
 function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
@@ -3546,7 +3740,12 @@ async function loadUiConfig() {
 async function refreshState(options = {}) {
   const skipRender = !!options.skipRender;
   const requestedRunId = normalizeRunId(state.selectedRunId) || null;
-  const data = await getJson(buildStateUrl(requestedRunId));
+  const data = await getJson(buildStateUrl(requestedRunId), {
+    allowStale: true,
+    timeoutMs: 25000,
+    retryDelaysMs: [0, 1500],
+    staleTtlMs: 180000,
+  });
   state.rawState = data;
   state.pivots = data.pivots || [];
   syncCloud2FilterOptions(data);
@@ -3629,11 +3828,17 @@ async function refreshPivot(options = {}) {
 
   const pivotId = String(state.selectedPivot || "").trim();
   const selectedRunId = text(state.selectedRunId, "").trim() || null;
+  const previousPivotData = state.pivotData;
 
   try {
-    state.pivotData = await getJson(buildPivotPanelUrl(pivotId, selectedRunId));
+    state.pivotData = await getJson(buildPivotPanelUrl(pivotId, selectedRunId), {
+      allowStale: true,
+      timeoutMs: 30000,
+      retryDelaysMs: [0, 1500],
+      staleTtlMs: 180000,
+    });
   } catch (err) {
-    state.pivotData = null;
+    state.pivotData = previousPivotData;
   }
 
   if (state.pivotData) {
@@ -3736,7 +3941,12 @@ async function refreshQualityOverrides(options = {}) {
   const nextConnectivityMiniSegmentsByPivotId = { ...state.connectivityMiniSegmentsByPivotId };
   let qualityPayload = null;
   try {
-    qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId));
+    qualityPayload = await getJson(buildQualityLiteUrl(state.selectedRunId, targetPivotIds), {
+      allowStale: true,
+      timeoutMs: 25000,
+      retryDelaysMs: [0, 1500],
+      staleTtlMs: 180000,
+    });
   } catch (err) {
     return;
   }
@@ -3801,6 +4011,31 @@ function renderDashboardFromCurrentState() {
   renderPivotView();
 }
 
+function refreshDashboardSupportData(options = {}) {
+  const forceQuality = !!options.forceQuality;
+  const skipRender = !!options.skipRender;
+  if (state.auxRefreshPromise) return state.auxRefreshPromise;
+
+  const promise = Promise.allSettled([
+    refreshQualityOverrides({ skipRender: true, force: forceQuality }),
+    refreshPivot({ skipRender: true }),
+  ])
+    .then((results) => {
+      if (!skipRender) {
+        renderDashboardFromCurrentState();
+      }
+      return results;
+    })
+    .finally(() => {
+      if (state.auxRefreshPromise === promise) {
+        state.auxRefreshPromise = null;
+      }
+    });
+
+  state.auxRefreshPromise = promise;
+  return promise;
+}
+
 async function refreshInitialDashboardState() {
   const stateResult = await refreshState({ skipRender: true });
   if (stateResult?.selectedRunChanged) {
@@ -3812,8 +4047,8 @@ async function refreshInitialDashboardState() {
       await refreshState({ skipRender: true });
     }
   }
-  await refreshQualityOverrides({ skipRender: true, force: true });
   renderDashboardFromCurrentState();
+  void refreshDashboardSupportData({ forceQuality: true });
 }
 
 async function refreshAll(options = {}) {
@@ -3831,17 +4066,17 @@ async function refreshAll(options = {}) {
         await refreshState({ skipRender: suppressInterimRender });
       }
     }
-    await refreshQualityOverrides({ skipRender: suppressInterimRender });
-    await refreshPivot({ skipRender: suppressInterimRender });
-    if (suppressInterimRender) {
-      renderDashboardFromCurrentState();
-    }
+    renderDashboardFromCurrentState();
+    void refreshDashboardSupportData({ skipRender: suppressInterimRender });
     state.lastRefreshToastAtMs = 0;
   } catch (err) {
-    ui.cardsGrid.innerHTML = `<div class="empty">Não foi possível carregar os dados. Tente novamente.</div>`;
+    const hasRenderableData = Array.isArray(state.pivots) && state.pivots.length > 0;
+    if (!hasRenderableData) {
+      ui.cardsGrid.innerHTML = `<div class="empty">Nao foi possivel carregar os dados. Tente novamente.</div>`;
+    }
     const now = Date.now();
     if (now - Number(state.lastRefreshToastAtMs || 0) > 15000) {
-      showToast("Não foi possível carregar os dados. Tente novamente.", "error", 3800);
+      showToast("Nao foi possivel carregar os dados. Tente novamente.", "error", 3800);
       state.lastRefreshToastAtMs = now;
     }
   } finally {
@@ -5033,15 +5268,16 @@ async function boot() {
   if (hashPivot) {
     state.selectedPivot = hashPivot;
   }
-  let initialLoadReady = false;
   try {
     await refreshInitialDashboardState();
-    initialLoadReady = true;
   } catch (err) {
-    ui.cardsGrid.innerHTML = `<div class="empty">NÃ£o foi possÃ­vel carregar os dados. Tente novamente.</div>`;
+    const hasRenderableData = Array.isArray(state.pivots) && state.pivots.length > 0;
+    if (!hasRenderableData) {
+      ui.cardsGrid.innerHTML = `<div class="empty">Nao foi possivel carregar os dados. Tente novamente.</div>`;
+    }
     const now = Date.now();
     if (now - Number(state.lastRefreshToastAtMs || 0) > 15000) {
-      showToast("NÃ£o foi possÃ­vel carregar os dados. Tente novamente.", "error", 3800);
+      showToast("Nao foi possivel carregar os dados. Tente novamente.", "error", 3800);
       state.lastRefreshToastAtMs = now;
     }
   } finally {
@@ -5049,9 +5285,6 @@ async function boot() {
   }
   if (shouldLoadAdminUsers) {
     void refreshAdminUsers();
-  }
-  if (initialLoadReady) {
-    void refreshPivot();
   }
   setInterval(refreshAll, state.refreshMs);
 }

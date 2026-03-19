@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import threading
+import gzip
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -310,12 +311,30 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=DASHBOARD_DIR, **kwargs)
 
+        def _client_accepts_gzip(self):
+            accepted = str(self.headers.get("Accept-Encoding", "") or "").lower()
+            return "gzip" in accepted
+
+        def _encode_response_body(self, body, allow_gzip=False):
+            raw_body = body if isinstance(body, (bytes, bytearray)) else bytes(body or b"")
+            headers = {}
+            if allow_gzip and self._client_accepts_gzip() and len(raw_body) >= 1024:
+                compressed = gzip.compress(raw_body, compresslevel=5)
+                if len(compressed) < len(raw_body):
+                    raw_body = compressed
+                    headers["Content-Encoding"] = "gzip"
+                    headers["Vary"] = "Accept-Encoding"
+            return raw_body, headers
+
         def _write_json(self, status_code, payload, extra_headers=None, cookies=None):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            body, encoding_headers = self._encode_response_body(body, allow_gzip=True)
             self.send_response(status_code)
             self._write_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            for key, value in encoding_headers.items():
+                self.send_header(str(key), str(value))
             if extra_headers:
                 for key, value in extra_headers.items():
                     self.send_header(str(key), str(value))
@@ -932,7 +951,11 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 run_id = (query.get("run_id") or [None])[0]
                 if isinstance(run_id, str):
                     run_id = run_id.strip() or None
-                payload = telemetry_store.get_quality_cards_snapshot(run_id=run_id)
+                pivot_ids_raw = (query.get("pivot_ids") or [None])[0]
+                pivot_ids = None
+                if isinstance(pivot_ids_raw, str) and pivot_ids_raw.strip():
+                    pivot_ids = _normalize_bulk_pivot_ids(pivot_ids_raw.split(","), limit=500)
+                payload = telemetry_store.get_quality_cards_snapshot(run_id=run_id, pivot_ids=pivot_ids)
                 self._write_json(200, payload)
                 return
 

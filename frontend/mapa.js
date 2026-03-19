@@ -47,7 +47,11 @@ function buildApiUrl(url) {
   return `${API_BASE_URL}${normalized}`;
 }
 
-const REQUEST_TIMEOUT_MS = 12000;
+const REQUEST_TIMEOUT_MS = 20000;
+const REQUEST_RETRY_DELAYS_MS = [0, 1500];
+const REQUEST_STALE_TTL_MS = 180000;
+const MAP_CACHE_STORAGE_PREFIX = "cloud-monitoring:map:";
+const MAP_CACHE_STORAGE_MAX_CHARS = 500000;
 const DASHBOARD_TIMEZONE = "America/Sao_Paulo";
 const DASHBOARD_DATETIME_FORMATTER = typeof Intl !== "undefined"
   ? new Intl.DateTimeFormat("sv-SE", {
@@ -146,6 +150,8 @@ const state = {
 
 let mapInstance = null;
 let markerLayer = null;
+const GET_JSON_RESPONSE_CACHE = new Map();
+const GET_JSON_INFLIGHT_REQUESTS = new Map();
 
 function text(value, fallback = "-") {
   const normalized = String(value ?? "").trim();
@@ -154,6 +160,114 @@ function text(value, fallback = "-") {
 
 function normalizeRunId(value) {
   return String(value || "").trim();
+}
+
+function cloneJsonValue(value) {
+  if (value === null || value === undefined) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function canUseSessionStorage() {
+  try {
+    return typeof sessionStorage !== "undefined";
+  } catch (err) {
+    return false;
+  }
+}
+
+function isCacheableMapGet(url) {
+  const targetUrl = buildApiUrl(url);
+  return targetUrl.startsWith("/api/state") || targetUrl.startsWith("/api/monitoring/runs");
+}
+
+function readPersistentCachedGetJson(url, maxAgeMs = REQUEST_STALE_TTL_MS) {
+  if (!isCacheableMapGet(url) || !canUseSessionStorage()) return null;
+  const storageKey = `${MAP_CACHE_STORAGE_PREFIX}${buildApiUrl(url)}`;
+  let raw = "";
+  try {
+    raw = String(sessionStorage.getItem(storageKey) || "");
+  } catch (err) {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const savedAtMs = Number(parsed?.savedAtMs || 0);
+    if (!Number.isFinite(savedAtMs) || Date.now() - savedAtMs > Math.max(0, Number(maxAgeMs || 0))) {
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch (cleanupErr) {
+        // no-op
+      }
+      return null;
+    }
+    return cloneJsonValue(parsed.payload);
+  } catch (err) {
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
+    }
+    return null;
+  }
+}
+
+function readCachedGetJson(url, maxAgeMs = REQUEST_STALE_TTL_MS) {
+  if (!isCacheableMapGet(url)) return null;
+  const key = buildApiUrl(url);
+  const cached = GET_JSON_RESPONSE_CACHE.get(key);
+  if (cached) {
+    if (Date.now() - Number(cached.savedAtMs || 0) > Math.max(0, Number(maxAgeMs || 0))) {
+      GET_JSON_RESPONSE_CACHE.delete(key);
+    } else {
+      return cloneJsonValue(cached.payload);
+    }
+  }
+  return readPersistentCachedGetJson(url, maxAgeMs);
+}
+
+function writeCachedGetJson(url, payload) {
+  if (!isCacheableMapGet(url)) return;
+  const key = buildApiUrl(url);
+  const cloned = cloneJsonValue(payload);
+  GET_JSON_RESPONSE_CACHE.set(key, {
+    savedAtMs: Date.now(),
+    payload: cloned,
+  });
+  if (!canUseSessionStorage()) return;
+  const storageKey = `${MAP_CACHE_STORAGE_PREFIX}${key}`;
+  let serialized = "";
+  try {
+    serialized = JSON.stringify({
+      savedAtMs: Date.now(),
+      payload: cloned,
+    });
+  } catch (err) {
+    return;
+  }
+  if (!serialized || serialized.length > MAP_CACHE_STORAGE_MAX_CHARS) {
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
+    }
+    return;
+  }
+  try {
+    sessionStorage.setItem(storageKey, serialized);
+  } catch (err) {
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch (cleanupErr) {
+      // no-op
+    }
+  }
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, Math.max(0, Number(ms || 0)));
+  });
 }
 
 function buildStateUrl(runId = null) {
@@ -799,34 +913,86 @@ function renderMapMarkers() {
   setStatus(`${markerCount} pivo(s) exibido(s) no mapa (${filteredPivots.length} apos filtros).`);
 }
 
-async function getJson(url) {
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeoutId = controller ? window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS) : null;
-  try {
-    const response = await fetch(buildApiUrl(url), {
-      method: "GET",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-      signal: controller ? controller.signal : undefined,
-    });
-    let data = {};
-    try {
-      data = await response.json();
-    } catch (err) {
-      data = {};
-    }
+async function executeJsonGet(url, options = {}) {
+  const timeoutMs = Math.max(4000, Number(options.timeoutMs || REQUEST_TIMEOUT_MS));
+  const retryDelaysMs = Array.isArray(options.retryDelaysMs) && options.retryDelaysMs.length
+    ? options.retryDelaysMs
+    : REQUEST_RETRY_DELAYS_MS;
+  const allowStale = options.allowStale !== false;
+  const staleTtlMs = Math.max(0, Number(options.staleTtlMs || REQUEST_STALE_TTL_MS));
+  let lastError = null;
 
-    if (!response.ok) {
-      const redirectTo = text((data || {}).redirect, "");
-      if ((response.status === 401 || response.status === 403) && redirectTo) {
-        window.location.assign(buildAppUrl(redirectTo));
-      }
-      throw new Error(text((data || {}).error, `HTTP ${response.status}`));
+  for (let attemptIndex = 0; attemptIndex < retryDelaysMs.length; attemptIndex += 1) {
+    if (attemptIndex > 0) {
+      await sleepMs(retryDelaysMs[attemptIndex]);
     }
-    return data;
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutId = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await fetch(buildApiUrl(url), {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller ? controller.signal : undefined,
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (err) {
+        data = {};
+      }
+
+      if (!response.ok) {
+        const redirectTo = text((data || {}).redirect, "");
+        if ((response.status === 401 || response.status === 403) && redirectTo) {
+          window.location.assign(buildAppUrl(redirectTo));
+        }
+        throw new Error(text((data || {}).error, `HTTP ${response.status}`));
+      }
+      writeCachedGetJson(url, data);
+      return data;
+    } catch (err) {
+      if (controller && err && err.name === "AbortError") {
+        lastError = new Error(`timeout:${timeoutMs}`);
+      } else {
+        lastError = err;
+      }
+    } finally {
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  if (allowStale) {
+    const cached = readCachedGetJson(url, staleTtlMs);
+    if (cached !== null) return cached;
+  }
+  throw lastError || new Error("request_failed");
+}
+
+async function getJson(url, options = {}) {
+  const targetUrl = buildApiUrl(url);
+  if (!options.bypassInflight) {
+    const inFlight = GET_JSON_INFLIGHT_REQUESTS.get(targetUrl);
+    if (inFlight) {
+      return cloneJsonValue(await inFlight);
+    }
+  }
+
+  const requestPromise = executeJsonGet(url, options);
+  if (!options.bypassInflight) {
+    GET_JSON_INFLIGHT_REQUESTS.set(targetUrl, requestPromise);
+  }
+  try {
+    return cloneJsonValue(await requestPromise);
   } finally {
-    if (timeoutId !== null) {
-      window.clearTimeout(timeoutId);
+    if (!options.bypassInflight) {
+      const active = GET_JSON_INFLIGHT_REQUESTS.get(targetUrl);
+      if (active === requestPromise) {
+        GET_JSON_INFLIGHT_REQUESTS.delete(targetUrl);
+      }
     }
   }
 }
@@ -861,7 +1027,12 @@ async function refreshMapData() {
   if (ui.mapRefreshBtn) ui.mapRefreshBtn.disabled = true;
   try {
     const requestedRunId = await resolveRunIdForMap();
-    const statePayload = await getJson(buildStateUrl(requestedRunId));
+    const statePayload = await getJson(buildStateUrl(requestedRunId), {
+      allowStale: true,
+      timeoutMs: 25000,
+      retryDelaysMs: [0, 1500],
+      staleTtlMs: 180000,
+    });
     state.payload = statePayload && typeof statePayload === "object" ? statePayload : {};
     const payloadRunId = normalizeRunId(state.payload.run_id);
     if (payloadRunId) state.selectedRunId = payloadRunId;

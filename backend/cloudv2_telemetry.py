@@ -444,6 +444,7 @@ class TelemetryStore:
         self._api_cache_generation = 0
         self._state_snapshot_cache = {}
         self._quality_cards_cache = {}
+        self._cloud2_filter_options_cache = {}
 
         self.pivots = {}
         self.pending_ping_unknown = {}
@@ -702,6 +703,7 @@ class TelemetryStore:
         self._api_cache_generation += 1
         self._state_snapshot_cache.clear()
         self._quality_cards_cache.clear()
+        self._cloud2_filter_options_cache.clear()
 
     def _get_cached_api_payload_locked(self, cache, cache_key, now_ts):
         entry = cache.get(cache_key)
@@ -1162,10 +1164,21 @@ class TelemetryStore:
     def get_complete_panel(self, pivot_id, session_id=None, run_id=None, now=None):
         return self.get_pivot_snapshot(pivot_id, now=now, session_id=session_id, run_id=run_id)
 
-    def get_quality_cards_snapshot(self, run_id=None):
+    def get_quality_cards_snapshot(self, run_id=None, pivot_ids=None):
         normalized_run = str(run_id or "").strip() or None
+        normalized_pivot_ids = []
+        seen_pivot_ids = set()
+        for raw_pivot_id in pivot_ids or []:
+            pivot_id = str(raw_pivot_id or "").strip()
+            if not pivot_id or pivot_id in seen_pivot_ids:
+                continue
+            seen_pivot_ids.add(pivot_id)
+            normalized_pivot_ids.append(pivot_id)
         now = time.time()
-        cache_key = self._api_cache_key(normalized_run)
+        quality_scope = ",".join(normalized_pivot_ids)
+        cache_key = self._api_cache_key(
+            f"{normalized_run or '__default__'}|quality:{quality_scope or '__all__'}"
+        )
         cache_ttl_sec = self.api_quality_cache_ttl_sec
         with self._lock:
             cached_payload = self._get_cached_api_payload_locked(self._quality_cards_cache, cache_key, now)
@@ -1176,7 +1189,8 @@ class TelemetryStore:
         try:
             payload = self.persistence.get_quality_cards_payload(
                 run_id=normalized_run,
-                timeline_limit=self.max_events_per_pivot_panel,
+                timeline_limit=self.max_events_per_pivot_list,
+                pivot_ids=normalized_pivot_ids,
             )
         except RuntimeError:
             payload = None
@@ -1247,13 +1261,35 @@ class TelemetryStore:
 
     def get_cloud2_filter_options(self, run_id=None):
         normalized_run = str(run_id or "").strip() or None
+        now = time.time()
+        cache_key = self._api_cache_key(f"{normalized_run or '__default__'}|cloud2-filter-options")
+        cache_ttl_sec = self.api_state_cache_ttl_sec
+        with self._lock:
+            cached_payload = self._get_cached_api_payload_locked(
+                self._cloud2_filter_options_cache,
+                cache_key,
+                now,
+            )
+            if cached_payload is not None:
+                return cached_payload
+            cache_generation = int(self._api_cache_generation)
         try:
             payload = self.persistence.get_cloud2_filter_options(run_id=normalized_run)
-            return {
+            normalized_payload = {
                 "run_id": str(payload.get("run_id") or "").strip() or None,
                 "technologies": list(payload.get("technologies") or []),
                 "firmwares": list(payload.get("firmwares") or []),
             }
+            with self._lock:
+                self._set_cached_api_payload_locked(
+                    self._cloud2_filter_options_cache,
+                    cache_key,
+                    normalized_payload,
+                    ttl_sec=cache_ttl_sec,
+                    now_ts=now,
+                    expected_generation=cache_generation,
+                )
+            return normalized_payload
         except RuntimeError:
             pass
 
@@ -1276,11 +1312,20 @@ class TelemetryStore:
 
             technologies = sorted(by_technology.values(), key=lambda value: value.lower())
             firmwares = sorted(by_firmware.values(), key=lambda value: value.lower())
-            return {
+            payload = {
                 "run_id": normalized_run,
                 "technologies": technologies,
                 "firmwares": firmwares,
             }
+            self._set_cached_api_payload_locked(
+                self._cloud2_filter_options_cache,
+                cache_key,
+                payload,
+                ttl_sec=cache_ttl_sec,
+                now_ts=now,
+                expected_generation=self._api_cache_generation,
+            )
+            return payload
 
     def purge_database_records(self, password, now=None, source="ui"):
         expected_password = get_db_purge_password()
