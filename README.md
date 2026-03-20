@@ -53,6 +53,57 @@ $env:CLOUDV2_DEV_HOT_RELOAD="0"; python backend/run_monitor.py
 http://localhost:8008/login
 ```
 
+## Fluxo de desenvolvimento local isolado
+
+Se quiser testar mudancas grandes sem encostar no fluxo atual que esta em producao, use uma branch separada, por exemplo:
+
+```bash
+git checkout -b dev
+```
+
+O projeto agora aceita um backend local com banco/dados isolados e um frontend local separado:
+
+1. Suba o backend local com banco proprio:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-backend.ps1
+```
+
+Isso usa:
+- `CLOUDV2_DATA_DIR=.local-dev/data`
+- `SQLITE_DB_PATH=.local-dev/data/telemetry.sqlite3`
+- cookies/CORS proprios para frontend local
+
+2. Em outro terminal, suba o frontend local:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-frontend.ps1
+```
+
+3. Abra:
+
+```text
+http://127.0.0.1:4173/index.html
+```
+
+Quando o frontend roda em `localhost`/`127.0.0.1`, `frontend/runtime-config.js` passa a apontar automaticamente para `http://127.0.0.1:8008`.
+
+Se quiser que o frontend local bata em outro backend sem editar arquivo versionado:
+
+```javascript
+localStorage.setItem("cloudv2.apiBaseUrl", "https://SEU_BACKEND");
+location.reload();
+```
+
+Para voltar ao backend local:
+
+```javascript
+localStorage.removeItem("cloudv2.apiBaseUrl");
+location.reload();
+```
+
+Esse fluxo deixa o codigo atual intacto e isola os testes locais em `.local-dev/`, sem misturar com a versao que voce mantem em producao.
+
 ## Autenticacao e LGPD
 
 - Todas as rotas e APIs do dashboard exigem autenticacao.
