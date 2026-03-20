@@ -1115,30 +1115,34 @@ a:focus {
 
 .pivot-header {
   display: grid;
-  gap: 12px;
-}
-
-.pivot-header-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(280px, auto) minmax(380px, 1fr) auto;
+  grid-template-areas:
+    "title admin danger"
+    "moreinfo admin .";
   gap: 12px 18px;
-  align-items: start;
+  align-items: center;
 }
 
 .pivot-danger {
+  grid-area: danger;
   display: flex;
   justify-content: flex-end;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  align-self: start;
 }
 
 .pivot-admin-tech {
+  grid-area: admin;
   display: grid;
-  grid-template-columns: minmax(280px, max-content) minmax(320px, 520px);
+  grid-template-columns: max-content minmax(360px, 1fr);
   align-items: flex-end;
-  justify-content: flex-start;
-  gap: 10px 16px;
+  justify-content: center;
+  justify-self: center;
+  gap: 10px 14px;
+  width: min(100%, 760px);
+  min-width: 0;
 }
 
 .pivot-tech-controls {
@@ -1146,11 +1150,12 @@ a:focus {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .pivot-location-controls {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) auto;
+  grid-template-columns: minmax(320px, 1fr) auto;
   align-items: end;
   gap: 10px;
   min-width: 0;
@@ -1158,6 +1163,7 @@ a:focus {
 
 .pivot-location-field {
   min-width: 0;
+  width: 100%;
 }
 
 .pivot-admin-hints {
@@ -1176,16 +1182,20 @@ a:focus {
 }
 
 .pivot-metrics-toggle {
+  grid-area: moreinfo;
   display: flex;
   justify-content: flex-start;
+  align-self: start;
 }
 
 .pivot-title-wrap {
+  grid-area: title;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
+  align-self: start;
 }
 
 .pivot-title-wrap h2 {
@@ -1907,9 +1917,20 @@ th {
     min-height: 0;
   }
 
-  .pivot-header-top,
+  .pivot-header {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "danger"
+      "admin"
+      "moreinfo";
+    align-items: start;
+  }
+
   .pivot-admin-tech {
     grid-template-columns: 1fr;
+    justify-self: stretch;
+    width: 100%;
   }
 
   .pivot-danger {
