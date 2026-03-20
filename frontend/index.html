@@ -204,33 +204,35 @@
 
     <section id="pivotView" class="panel pivot-view" hidden>
       <div class="pivot-header">
-        <div class="pivot-header-main pivot-header-card">
-          <div class="pivot-header-toolbar">
-            <button id="closePivot" class="ghost">Fechar visão</button>
-            <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
-              Mais informações
-            </button>
+        <div class="pivot-header-top">
+          <div class="pivot-header-main pivot-header-card">
+            <div class="pivot-header-toolbar">
+              <button id="closePivot" class="ghost">Fechar visão</button>
+              <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
+                Mais informações
+              </button>
+            </div>
+            <div class="pivot-title-wrap">
+              <h2 id="pivotTitle">Pivô</h2>
+            </div>
+            <div class="pivot-badge-row">
+              <span id="pivotStatus" class="badge gray">Status: Inicial</span>
+              <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
+            </div>
           </div>
-          <div class="pivot-title-wrap">
-            <h2 id="pivotTitle">Pivô</h2>
-          </div>
-          <div class="pivot-badge-row">
-            <span id="pivotStatus" class="badge gray">Status: Inicial</span>
-            <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
-          </div>
-        </div>
 
-        <div class="pivot-danger pivot-header-card">
-          <span class="pivot-header-label">Ações críticas</span>
-          <div class="pivot-danger-actions">
-            <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
-            <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+          <div class="pivot-danger pivot-header-card">
+            <span class="pivot-danger-label">Ações críticas</span>
+            <div class="pivot-danger-actions">
+              <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
+              <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+            </div>
           </div>
         </div>
 
         <div class="pivot-admin-strip" id="pivotAdminTech" hidden>
           <div class="pivot-admin-section">
-            <span class="pivot-header-label">Tecnologia do pivô</span>
+            <span class="pivot-admin-heading">Tecnologia do pivô</span>
             <div class="pivot-tech-controls" id="pivotTechControls">
               <label class="toggle">
                 <input id="pivotConcentratorToggle" type="checkbox"/>
@@ -241,7 +243,7 @@
             <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
           </div>
           <div class="pivot-admin-section">
-            <span class="pivot-header-label">Localização</span>
+            <span class="pivot-admin-heading">Localização</span>
             <div class="pivot-location-controls">
               <label class="field compact pivot-location-field">
                 <span>Latitude, Longitude</span>

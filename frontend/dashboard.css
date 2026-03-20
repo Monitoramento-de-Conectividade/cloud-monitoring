@@ -1115,9 +1115,7 @@ a:focus {
 
 .pivot-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 270px);
-  gap: 16px;
-  align-items: stretch;
+  gap: 14px;
 }
 
 .pivot-header-card,
@@ -1126,6 +1124,13 @@ a:focus {
   border-radius: 16px;
   background: linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
   box-shadow: 0 10px 24px rgba(18, 61, 40, 0.05);
+}
+
+.pivot-header-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: stretch;
 }
 
 .pivot-header-main {
@@ -1146,35 +1151,38 @@ a:focus {
   gap: 10px;
 }
 
+.pivot-header-toolbar .ghost {
+  min-height: 38px;
+}
+
 .pivot-badge-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.pivot-header-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: #587563;
-}
-
 .pivot-danger {
   display: grid;
-  gap: 14px;
-  align-content: start;
-  padding: 18px 16px;
+  gap: 12px;
+  align-content: center;
+  min-width: 244px;
+  padding: 16px 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 246, 244, 0.92) 100%);
 }
 
-.pivot-danger-actions {
-  display: grid;
-  gap: 10px;
+.pivot-danger-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #8d4d45;
 }
 
-.pivot-danger-actions button {
-  width: 100%;
+.pivot-danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .pivot-admin-strip {
@@ -1190,12 +1198,18 @@ a:focus {
   display: grid;
   gap: 12px;
   padding: 18px 20px;
-  min-height: 138px;
+  min-height: 126px;
   align-content: start;
 }
 
 .pivot-admin-section + .pivot-admin-section {
   border-left: 1px solid #e0ebe3;
+}
+
+.pivot-admin-heading {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #173829;
 }
 
 .pivot-tech-controls {
@@ -1207,7 +1221,7 @@ a:focus {
 }
 
 .pivot-tech-controls .primary {
-  flex: 0 0 auto;
+  min-width: 170px;
 }
 
 .pivot-location-controls {
@@ -1225,6 +1239,10 @@ a:focus {
 .pivot-location-field {
   min-width: 0;
   width: 100%;
+}
+
+.pivot-location-field input {
+  min-height: 44px;
 }
 
 .pivot-admin-section .hint-text:empty {
@@ -1249,7 +1267,8 @@ a:focus {
 
 .pivot-location-field > span {
   font-size: 10px;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.1em;
+  color: #658372;
 }
 
 .metrics-grid {
@@ -1967,9 +1986,8 @@ th {
     min-height: 0;
   }
 
-  .pivot-header {
+  .pivot-header-top {
     grid-template-columns: 1fr;
-    align-items: start;
   }
 
   .pivot-admin-strip {
@@ -1981,7 +1999,7 @@ th {
     border-top: 1px solid #e0ebe3;
   }
 
-  .pivot-danger {
+  .pivot-danger-actions {
     justify-content: flex-start;
   }
 }
@@ -2050,6 +2068,11 @@ th {
     align-items: stretch;
   }
 
+  .pivot-danger {
+    min-width: 0;
+  }
+
+  .pivot-danger-actions button,
   .pivot-tech-controls .primary,
   .pivot-location-controls .primary {
     width: 100%;
