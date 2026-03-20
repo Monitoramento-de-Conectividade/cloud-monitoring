@@ -74,6 +74,7 @@ Isso usa:
 - `SQLITE_DB_PATH=.local-dev/data/telemetry.sqlite3`
 - cookies/CORS proprios para frontend local
 - `AUTH_DISABLE_RATE_LIMIT=1` no ambiente local
+- conta admin local da `dev`: `admin-dev@local.test` / `31380626ESP32`
 
 2. Em outro terminal, suba o frontend local:
 
@@ -139,9 +140,10 @@ Protecao adicional:
 ### Conta admin fixa (seed automatico)
 
 - Ao iniciar o servidor, uma conta admin global e criada/atualizada automaticamente com e-mail ja verificado.
-- Valores atuais:
-  - `eduardocostar03@gmail.com`
+- No fluxo local da branch `dev`, `scripts/dev-backend.ps1` sobe esta credencial:
+  - `admin-dev@local.test`
   - senha: `31380626ESP32`
+- Fora do fluxo local, prefira definir explicitamente as variaveis de ambiente do admin fixo em vez de depender de valores padrao.
 - Pode customizar por variaveis:
   - `AUTH_FIXED_ADMIN_ENABLED` (default `1`)
   - `AUTH_FIXED_ADMIN_EMAIL`

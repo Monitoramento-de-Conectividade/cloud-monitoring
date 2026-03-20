@@ -19,6 +19,11 @@ $env:AUTH_BASE_URL = "http://127.0.0.1:$BackendPort"
 $env:AUTH_COOKIE_SECURE = "0"
 $env:AUTH_COOKIE_SAMESITE = "Lax"
 $env:AUTH_DISABLE_RATE_LIMIT = "1"
+$env:AUTH_FIXED_ADMIN_ENABLED = "1"
+$env:AUTH_FIXED_ADMIN_EMAIL = "admin-dev@local.test"
+$env:AUTH_FIXED_ADMIN_PASSWORD = "31380626ESP32"
+$env:AUTH_FIXED_ADMIN_NAME = "Administrador Dev Local"
+$env:AUTH_FIXED_ADMIN_FORCE_PASSWORD = "1"
 $env:CORS_ALLOWED_ORIGINS = $FrontendOrigins
 
 if (-not $env:CLOUDV2_DEV_HOT_RELOAD) {
@@ -32,6 +37,7 @@ Write-Host "  SQLite local:    $env:SQLITE_DB_PATH"
 Write-Host "  Data dir local:  $env:CLOUDV2_DATA_DIR"
 Write-Host "  CORS liberado:   $env:CORS_ALLOWED_ORIGINS"
 Write-Host "  Auth rate limit: desabilitado para dev"
+Write-Host "  Admin dev local: $env:AUTH_FIXED_ADMIN_EMAIL / $env:AUTH_FIXED_ADMIN_PASSWORD"
 Write-Host ""
 
 Set-Location $repoRoot

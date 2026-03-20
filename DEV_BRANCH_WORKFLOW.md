@@ -60,7 +60,22 @@ Esse script prepara um ambiente isolado para desenvolvimento:
 - usa SQLite local em `.local-dev/data/telemetry.sqlite3`
 - libera CORS para frontend local
 - desabilita rate limit de login apenas nesse ambiente local
+- sobe uma conta admin propria da branch `dev`
 - mantem o ambiente principal intacto
+
+### Credencial admin local da `dev`
+
+Quando voce sobe o backend com `scripts/dev-backend.ps1`, ele forca uma conta admin apenas para o fluxo local de desenvolvimento:
+
+- e-mail: `admin-dev@local.test`
+- senha: `31380626ESP32`
+
+Essa e a credencial recomendada para:
+
+- testar login local
+- validar telas protegidas
+- desenvolver funcionalidades de admin
+- onboard de outros programadores na branch `dev`
 
 ### 3. Rodar frontend local
 
