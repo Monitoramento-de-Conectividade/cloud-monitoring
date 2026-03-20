@@ -1178,13 +1178,6 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.metric-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .metric-toggle-button {
   width: 24px;
   min-width: 24px;
@@ -1202,6 +1195,17 @@ a:focus {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.metric-toggle-card {
+  position: relative;
+  padding-right: 40px;
+}
+
+.metric-toggle-button--card {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .metric-toggle-button:hover:not(:disabled) {
