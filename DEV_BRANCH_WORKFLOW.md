@@ -109,6 +109,12 @@ Nunca suba:
 - certificados e segredos locais
 - overrides manuais de ambiente feitos so para teste
 
+Regra pratica para mock:
+
+- todo dado mockado/local deve ficar em `.local-dev/`
+- nao use `frontend/data/` para guardar mock versionado
+- `frontend/data/` deve continuar vazio no Git, exceto `frontend/data/.gitkeep`
+
 Antes de commitar, sempre rode:
 
 ```powershell
@@ -116,6 +122,11 @@ git status --short --ignored
 ```
 
 Isso ajuda a confirmar que os dados locais continuam aparecendo como ignorados.
+
+O repositorio tambem possui uma checagem automatica que falha se alguem tentar versionar:
+
+- qualquer arquivo dentro de `.local-dev/`
+- qualquer arquivo dentro de `frontend/data/`, exceto `.gitkeep`
 
 ## Trocar o frontend local para outro backend
 

@@ -109,6 +109,11 @@ Documentacao operacional completa da branch `dev`:
 
 - `DEV_BRANCH_WORKFLOW.md`
 
+Protecao adicional:
+
+- mock/dados locais devem ficar fora do Git
+- o repositorio possui uma checagem automatica que falha se arquivos de `.local-dev/` ou `frontend/data/` (exceto `.gitkeep`) forem versionados
+
 ## Autenticacao e LGPD
 
 - Todas as rotas e APIs do dashboard exigem autenticacao.
