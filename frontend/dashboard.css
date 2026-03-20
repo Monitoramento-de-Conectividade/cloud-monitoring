@@ -1186,30 +1186,43 @@ a:focus {
 }
 
 .metric-toggle-button {
-  min-width: 18px;
-  min-height: 18px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
   padding: 0;
-  border: 0;
-  background: transparent;
-  color: #5a7465;
+  border: 1px solid #c7dbce;
+  border-radius: 999px;
+  background: #f2f8f4;
+  color: #476556;
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
-  transform: rotate(180deg);
-  transform-origin: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .metric-toggle-button:hover:not(:disabled) {
-  transform: rotate(180deg) translateY(0);
+  transform: translateY(0);
   color: var(--accent);
+  border-color: #9fbdaa;
+  background: #eaf4ee;
 }
 
 .metric-toggle-button.is-expanded {
-  transform: rotate(0deg);
+  background: #e2f0e7;
+  border-color: #9fbdaa;
 }
 
 .metric-toggle-button.is-expanded:hover:not(:disabled) {
-  transform: rotate(0deg) translateY(0);
+  transform: translateY(0);
+}
+
+.metric-toggle-button span {
+  display: block;
+  transform: translateY(-1px);
 }
 
 .metric .value {
