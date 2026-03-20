@@ -1118,57 +1118,46 @@ a:focus {
   gap: 14px;
 }
 
-.pivot-header-card,
-.pivot-admin-strip {
-  border: 1px solid #d8e8dd;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
-  box-shadow: 0 10px 24px rgba(18, 61, 40, 0.05);
-}
-
 .pivot-header-top {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: stretch;
+  gap: 18px;
+  align-items: start;
 }
 
 .pivot-header-main {
   display: grid;
-  gap: 14px;
-  align-content: start;
+  gap: 10px;
   min-width: 0;
-  padding: 18px 20px;
-  background:
-    radial-gradient(circle at top right, rgba(70, 152, 101, 0.08), transparent 42%),
-    linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
 }
 
-.pivot-header-toolbar {
+.pivot-title-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
-.pivot-header-toolbar .ghost {
-  min-height: 38px;
+.pivot-header-side {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  align-content: start;
 }
 
 .pivot-badge-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .pivot-danger {
-  display: grid;
+  display: flex;
+  align-items: center;
   gap: 12px;
-  align-content: center;
-  min-width: 244px;
-  padding: 16px 18px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 246, 244, 0.92) 100%);
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .pivot-danger-label {
@@ -1187,27 +1176,34 @@ a:focus {
 
 .pivot-admin-strip {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-column: 1 / -1;
-  gap: 0;
+  gap: 12px;
   min-width: 0;
-  overflow: hidden;
+  padding: 16px 18px;
+  border: 1px solid #d8e8dd;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
+  box-shadow: 0 10px 24px rgba(18, 61, 40, 0.05);
+}
+
+.pivot-admin-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  gap: 18px;
+  align-items: start;
 }
 
 .pivot-admin-section {
   display: grid;
   gap: 12px;
-  padding: 18px 20px;
-  min-height: 126px;
-  align-content: start;
+  min-width: 0;
 }
 
-.pivot-admin-section + .pivot-admin-section {
-  border-left: 1px solid #e0ebe3;
+.pivot-admin-tech-panel {
+  grid-template-columns: 1fr;
 }
 
 .pivot-admin-heading {
-  font-size: 1rem;
+  font-size: 0.98rem;
   font-weight: 700;
   color: #173829;
 }
@@ -1226,14 +1222,14 @@ a:focus {
 
 .pivot-location-controls {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) auto;
   align-items: end;
   gap: 10px;
   min-width: 0;
 }
 
 .pivot-location-controls .primary {
-  min-width: 180px;
+  min-width: 150px;
 }
 
 .pivot-location-field {
@@ -1242,16 +1238,27 @@ a:focus {
 }
 
 .pivot-location-field input {
-  min-height: 44px;
+  min-height: 40px;
 }
 
-.pivot-admin-section .hint-text:empty {
+.pivot-admin-hints {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+
+.pivot-admin-hints .hint-text:empty {
   display: none;
 }
 
 .hint-text {
   color: var(--muted);
   font-size: 12px;
+}
+
+.pivot-metrics-toggle {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .pivot-title-wrap {
@@ -1263,6 +1270,11 @@ a:focus {
 .pivot-title-wrap h2 {
   margin: 0;
   font-size: clamp(1.5rem, 1.2rem + 1vw, 2rem);
+}
+
+.pivot-title-row .ghost,
+.pivot-metrics-toggle .ghost {
+  min-height: 38px;
 }
 
 .pivot-location-field > span {
@@ -1990,17 +2002,22 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .pivot-admin-strip {
+  .pivot-header-side {
+    justify-items: start;
+  }
+
+  .pivot-badge-row,
+  .pivot-danger,
+  .pivot-danger-actions {
+    justify-content: flex-start;
+  }
+
+  .pivot-admin-row {
     grid-template-columns: 1fr;
   }
 
-  .pivot-admin-section + .pivot-admin-section {
-    border-left: 0;
-    border-top: 1px solid #e0ebe3;
-  }
-
-  .pivot-danger-actions {
-    justify-content: flex-start;
+  .pivot-admin-hints {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2070,6 +2087,8 @@ th {
 
   .pivot-danger {
     min-width: 0;
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .pivot-danger-actions button,
