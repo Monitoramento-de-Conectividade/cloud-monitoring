@@ -203,46 +203,51 @@
     </section>
 
     <section id="pivotView" class="panel pivot-view" hidden>
-        <div class="panel-head">
+      <div class="pivot-header">
+        <div class="pivot-header-top">
           <div class="pivot-title-wrap">
             <button id="closePivot" class="ghost">Fechar visão</button>
             <h2 id="pivotTitle">Pivô</h2>
             <span id="pivotStatus" class="badge gray">Status: Inicial</span>
             <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
           </div>
+          <div class="pivot-danger">
+            <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
+            <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+          </div>
         </div>
 
-      <div class="pivot-danger">
-        <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
-        <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
-      </div>
-
-      <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
-        <div class="pivot-tech-controls" id="pivotTechControls">
-          <label class="toggle">
-            <input id="pivotConcentratorToggle" type="checkbox"/>
-            <span>Marcar este pivô como concentrador</span>
-          </label>
-          <button id="savePivotTechnologyBtn" class="primary" type="button">Salvar tecnologia</button>
+        <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
+          <div class="pivot-tech-controls" id="pivotTechControls">
+            <label class="toggle">
+              <input id="pivotConcentratorToggle" type="checkbox"/>
+              <span>Marcar este pivô como concentrador</span>
+            </label>
+            <button id="savePivotTechnologyBtn" class="primary" type="button">Salvar tecnologia</button>
+          </div>
+          <div class="pivot-location-controls">
+            <label class="field compact pivot-location-field">
+              <span>Latitude, Longitude</span>
+              <input
+                id="pivotLocationInput"
+                type="text"
+                placeholder="Ex.: -22.254261055861843, -45.71657037699047"
+                autocomplete="off"
+              />
+            </label>
+            <button id="savePivotLocationBtn" class="primary" type="button">Salvar localização</button>
+          </div>
+          <div class="pivot-admin-hints">
+            <span id="pivotLocationHint" class="hint-text" aria-live="polite"></span>
+            <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
+          </div>
         </div>
-        <label class="field compact pivot-location-field">
-          <span>Latitude, Longitude</span>
-          <input
-            id="pivotLocationInput"
-            type="text"
-            placeholder="Ex.: -22.254261055861843, -45.71657037699047"
-            autocomplete="off"
-          />
-        </label>
-        <button id="savePivotLocationBtn" class="primary" type="button">Salvar localização</button>
-        <span id="pivotLocationHint" class="hint-text" aria-live="polite"></span>
-        <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
-      </div>
 
-      <div class="pivot-metrics-toggle">
-        <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
-          Mais informações
-        </button>
+        <div class="pivot-metrics-toggle">
+          <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
+            Mais informações
+          </button>
+        </div>
       </div>
 
       <div class="metrics-grid" id="pivotMetrics"></div>

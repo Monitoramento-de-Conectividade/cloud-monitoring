@@ -1110,22 +1110,35 @@ a:focus {
 
 .pivot-view {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+
+.pivot-header {
+  display: grid;
+  gap: 12px;
+}
+
+.pivot-header-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 18px;
+  align-items: start;
 }
 
 .pivot-danger {
   display: flex;
   justify-content: flex-end;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   flex-wrap: wrap;
 }
 
 .pivot-admin-tech {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(280px, max-content) minmax(320px, 520px);
   align-items: flex-end;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 10px 16px;
 }
 
 .pivot-tech-controls {
@@ -1135,8 +1148,26 @@ a:focus {
   gap: 10px;
 }
 
+.pivot-location-controls {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) auto;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
 .pivot-location-field {
-  min-width: min(100%, 420px);
+  min-width: 0;
+}
+
+.pivot-admin-hints {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+}
+
+.pivot-admin-hints .hint-text:empty {
+  display: none;
 }
 
 .hint-text {
@@ -1154,6 +1185,11 @@ a:focus {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pivot-title-wrap h2 {
+  margin-right: 2px;
 }
 
 .metrics-grid {
@@ -1870,6 +1906,15 @@ th {
   .probe-panel {
     min-height: 0;
   }
+
+  .pivot-header-top,
+  .pivot-admin-tech {
+    grid-template-columns: 1fr;
+  }
+
+  .pivot-danger {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 860px) {
@@ -1926,6 +1971,10 @@ th {
   .pager {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .pivot-location-controls {
+    grid-template-columns: 1fr;
   }
 
 }
