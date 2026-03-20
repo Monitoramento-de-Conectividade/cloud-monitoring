@@ -2642,13 +2642,12 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
   ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
       const isTechnologyCard = String(item.key || "") === "last_technology";
-      const toggleButtonHtml = isTechnologyCard && hasExtraCards
-        ? `<button class="metric-toggle-button metric-toggle-button--card${state.pivotMetricsExpanded ? " is-expanded" : ""}" type="button" data-pivot-metrics-toggle aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"><span aria-hidden="true">${state.pivotMetricsExpanded ? "^" : "v"}</span></button>`
+      const toggleSuffixHtml = isTechnologyCard && hasExtraCards
+        ? `<span class="metric-inline-toggle${state.pivotMetricsExpanded ? " is-expanded" : ""}" aria-hidden="true">${state.pivotMetricsExpanded ? "^" : "v"}</span>`
         : "";
       return `
-      <div class="metric${isTechnologyCard && hasExtraCards ? " metric-toggle-card" : ""}">
-        ${toggleButtonHtml}
-        <div class="label">${escapeHtml(item.label)}</div>
+      <div class="metric${isTechnologyCard && hasExtraCards ? " metric-toggle-card" : ""}"${isTechnologyCard && hasExtraCards ? ` data-pivot-metrics-toggle aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"` : ""}>
+        <div class="label">${escapeHtml(item.label)}${toggleSuffixHtml}</div>
         <div class="value">${escapeHtml(item.value)}</div>
       </div>`;
     })
@@ -5089,8 +5088,8 @@ function wireEvents() {
     ui.pivotMetrics.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const button = target.closest("button[data-pivot-metrics-toggle]");
-      if (!button || !ui.pivotMetrics.contains(button)) return;
+      const toggle = target.closest("[data-pivot-metrics-toggle]");
+      if (!toggle || !ui.pivotMetrics.contains(toggle)) return;
       state.pivotMetricsExpanded = !state.pivotMetricsExpanded;
       renderPivotView();
     });
