@@ -73,6 +73,7 @@ Isso usa:
 - `CLOUDV2_DATA_DIR=.local-dev/data`
 - `SQLITE_DB_PATH=.local-dev/data/telemetry.sqlite3`
 - cookies/CORS proprios para frontend local
+- `AUTH_DISABLE_RATE_LIMIT=1` no ambiente local
 
 2. Em outro terminal, suba o frontend local:
 

@@ -299,6 +299,12 @@ def _build_handler(telemetry_store, reload_token_getter=None):
         "/auth/resend-verification": (5, 600),
         "/auth/forgot-password": (5, 600),
     }
+    auth_rate_limit_disabled = str(os.environ.get("AUTH_DISABLE_RATE_LIMIT", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     cookie_samesite = _normalize_cookie_samesite(
         os.environ.get("AUTH_COOKIE_SAMESITE", "Lax"),
         fallback="Lax",
@@ -573,6 +579,8 @@ def _build_handler(telemetry_store, reload_token_getter=None):
             return _is_admin_auth_context(auth_context)
 
         def _check_rate_limit(self, path):
+            if auth_rate_limit_disabled:
+                return True
             rule = rate_limit_rules.get(str(path or "").strip())
             if rule is None:
                 return True

@@ -18,6 +18,7 @@ $env:DASHBOARD_HOST = "127.0.0.1"
 $env:AUTH_BASE_URL = "http://127.0.0.1:$BackendPort"
 $env:AUTH_COOKIE_SECURE = "0"
 $env:AUTH_COOKIE_SAMESITE = "Lax"
+$env:AUTH_DISABLE_RATE_LIMIT = "1"
 $env:CORS_ALLOWED_ORIGINS = $FrontendOrigins
 
 if (-not $env:CLOUDV2_DEV_HOT_RELOAD) {
@@ -30,6 +31,7 @@ Write-Host "  Porta:           http://127.0.0.1:$BackendPort"
 Write-Host "  SQLite local:    $env:SQLITE_DB_PATH"
 Write-Host "  Data dir local:  $env:CLOUDV2_DATA_DIR"
 Write-Host "  CORS liberado:   $env:CORS_ALLOWED_ORIGINS"
+Write-Host "  Auth rate limit: desabilitado para dev"
 Write-Host ""
 
 Set-Location $repoRoot
