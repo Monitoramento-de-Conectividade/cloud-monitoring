@@ -2643,7 +2643,7 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
     .map((item) => {
       const isTechnologyCard = String(item.key || "") === "last_technology";
       const labelHtml = isTechnologyCard && hasExtraCards
-        ? `<div class="metric-label-row"><span>${escapeHtml(item.label)}</span><button class="metric-toggle-button${state.pivotMetricsExpanded ? " is-expanded" : ""}" type="button" data-pivot-metrics-toggle aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"><span aria-hidden="true">${state.pivotMetricsExpanded ? "⌃" : "⌄"}</span></button></div>`
+        ? `<div class="metric-label-row"><span>${escapeHtml(item.label)}</span><button class="metric-toggle-button${state.pivotMetricsExpanded ? " is-expanded" : ""}" type="button" data-pivot-metrics-toggle aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"><span aria-hidden="true">${state.pivotMetricsExpanded ? "^" : "v"}</span></button></div>`
         : escapeHtml(item.label);
       return `
       <div class="metric">
