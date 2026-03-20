@@ -1115,52 +1115,98 @@ a:focus {
 
 .pivot-header {
   display: grid;
-  grid-template-columns: minmax(280px, auto) minmax(420px, 1fr) auto;
-  gap: 12px 18px;
-  align-items: start;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(420px, 1.35fr) minmax(180px, 0.62fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.pivot-header-card,
+.pivot-admin-card {
+  border: 1px solid #d8e8dd;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbf8 100%);
+  box-shadow: 0 10px 24px rgba(18, 61, 40, 0.05);
 }
 
 .pivot-title-block {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   align-content: start;
   min-width: 0;
+  padding: 14px 16px;
+}
+
+.pivot-title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.pivot-title-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.pivot-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pivot-header-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #587563;
 }
 
 .pivot-danger {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
+  display: grid;
   gap: 10px;
-  flex-wrap: wrap;
-  align-self: start;
+  align-content: start;
+  padding: 14px;
+}
+
+.pivot-danger button {
+  width: 100%;
 }
 
 .pivot-admin-tech {
   display: grid;
-  grid-template-columns: max-content minmax(360px, 1fr);
-  align-items: flex-end;
-  justify-content: center;
-  justify-self: center;
-  gap: 10px 14px;
-  width: min(100%, 760px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
   min-width: 0;
+  align-content: start;
+}
+
+.pivot-admin-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  min-height: 128px;
 }
 
 .pivot-tech-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  gap: 12px;
   min-width: 0;
+}
+
+.pivot-tech-controls .primary {
+  justify-self: start;
 }
 
 .pivot-location-controls {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: 10px;
   min-width: 0;
+}
+
+.pivot-location-controls .primary {
+  min-width: 170px;
 }
 
 .pivot-location-field {
@@ -1168,13 +1214,7 @@ a:focus {
   width: 100%;
 }
 
-.pivot-admin-hints {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 4px;
-}
-
-.pivot-admin-hints .hint-text:empty {
+.pivot-admin-card .hint-text:empty {
   display: none;
 }
 
@@ -1200,8 +1240,12 @@ a:focus {
   margin-right: 2px;
 }
 
+.pivot-title-actions .ghost {
+  min-height: 36px;
+}
+
 .pivot-location-field > span {
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.07em;
 }
 
@@ -1926,9 +1970,8 @@ th {
   }
 
   .pivot-admin-tech {
+    display: grid;
     grid-template-columns: 1fr;
-    justify-self: stretch;
-    width: 100%;
   }
 
   .pivot-danger {
