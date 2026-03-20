@@ -105,6 +105,10 @@ location.reload();
 
 Esse fluxo deixa o codigo atual intacto e isola os testes locais em `.local-dev/`, sem misturar com a versao que voce mantem em producao.
 
+Documentacao operacional completa da branch `dev`:
+
+- `DEV_BRANCH_WORKFLOW.md`
+
 ## Autenticacao e LGPD
 
 - Todas as rotas e APIs do dashboard exigem autenticacao.
