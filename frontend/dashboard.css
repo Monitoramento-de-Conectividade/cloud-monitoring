@@ -1149,11 +1149,6 @@ a:focus {
   font-size: 12px;
 }
 
-.pivot-metrics-toggle {
-  display: flex;
-  justify-content: flex-start;
-}
-
 .pivot-title-wrap {
   display: flex;
   align-items: center;
@@ -1164,7 +1159,9 @@ a:focus {
 .metrics-grid {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  width: 100%;
+  max-width: 1228px;
 }
 
 .metric {
@@ -1179,6 +1176,40 @@ a:focus {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.metric-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metric-toggle-button {
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #5a7465;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transform: rotate(180deg);
+  transform-origin: center;
+}
+
+.metric-toggle-button:hover:not(:disabled) {
+  transform: rotate(180deg) translateY(0);
+  color: var(--accent);
+}
+
+.metric-toggle-button.is-expanded {
+  transform: rotate(0deg);
+}
+
+.metric-toggle-button.is-expanded:hover:not(:disabled) {
+  transform: rotate(0deg) translateY(0);
 }
 
 .metric .value {

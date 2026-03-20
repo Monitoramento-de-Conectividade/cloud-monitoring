@@ -2641,9 +2641,13 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
 
   ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
+      const isTechnologyCard = String(item.key || "") === "last_technology";
+      const labelHtml = isTechnologyCard && hasExtraCards
+        ? `<div class="metric-label-row"><span>${escapeHtml(item.label)}</span><button class="metric-toggle-button${state.pivotMetricsExpanded ? " is-expanded" : ""}" type="button" data-pivot-metrics-toggle aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}">^</button></div>`
+        : escapeHtml(item.label);
       return `
       <div class="metric">
-        <div class="label">${escapeHtml(item.label)}</div>
+        <div class="label">${labelHtml}</div>
         <div class="value">${escapeHtml(item.value)}</div>
       </div>`;
     })
@@ -5079,6 +5083,17 @@ function wireEvents() {
       toggleSelectedPivotId(target.dataset.pivotId || "", !!target.checked);
     }
   });
+
+  if (ui.pivotMetrics) {
+    ui.pivotMetrics.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest("button[data-pivot-metrics-toggle]");
+      if (!button || !ui.pivotMetrics.contains(button)) return;
+      state.pivotMetricsExpanded = !state.pivotMetricsExpanded;
+      renderPivotView();
+    });
+  }
 
   ui.cardsPrev.addEventListener("click", () => {
     state.cardsPage = Math.max(1, state.cardsPage - 1);
