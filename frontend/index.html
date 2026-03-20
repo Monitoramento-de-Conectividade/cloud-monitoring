@@ -204,16 +204,18 @@
 
     <section id="pivotView" class="panel pivot-view" hidden>
       <div class="pivot-header">
-        <div class="pivot-title-wrap">
-          <button id="closePivot" class="ghost">Fechar visão</button>
-          <h2 id="pivotTitle">Pivô</h2>
-          <span id="pivotStatus" class="badge gray">Status: Inicial</span>
-          <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
-        </div>
-
-        <div class="pivot-danger">
-          <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
-          <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+        <div class="pivot-title-block">
+          <div class="pivot-title-wrap">
+            <button id="closePivot" class="ghost">Fechar visão</button>
+            <h2 id="pivotTitle">Pivô</h2>
+            <span id="pivotStatus" class="badge gray">Status: Inicial</span>
+            <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
+          </div>
+          <div class="pivot-metrics-toggle">
+            <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
+              Mais informações
+            </button>
+          </div>
         </div>
 
         <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
@@ -242,10 +244,9 @@
           </div>
         </div>
 
-        <div class="pivot-metrics-toggle">
-          <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
-            Mais informações
-          </button>
+        <div class="pivot-danger">
+          <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
+          <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
         </div>
       </div>
 

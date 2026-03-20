@@ -1115,16 +1115,19 @@ a:focus {
 
 .pivot-header {
   display: grid;
-  grid-template-columns: minmax(280px, auto) minmax(380px, 1fr) auto;
-  grid-template-areas:
-    "title admin danger"
-    "moreinfo admin .";
+  grid-template-columns: minmax(280px, auto) minmax(420px, 1fr) auto;
   gap: 12px 18px;
-  align-items: center;
+  align-items: start;
+}
+
+.pivot-title-block {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
 }
 
 .pivot-danger {
-  grid-area: danger;
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -1134,7 +1137,6 @@ a:focus {
 }
 
 .pivot-admin-tech {
-  grid-area: admin;
   display: grid;
   grid-template-columns: max-content minmax(360px, 1fr);
   align-items: flex-end;
@@ -1182,24 +1184,25 @@ a:focus {
 }
 
 .pivot-metrics-toggle {
-  grid-area: moreinfo;
   display: flex;
   justify-content: flex-start;
-  align-self: start;
 }
 
 .pivot-title-wrap {
-  grid-area: title;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   min-width: 0;
-  align-self: start;
 }
 
 .pivot-title-wrap h2 {
   margin-right: 2px;
+}
+
+.pivot-location-field > span {
+  font-size: 11px;
+  letter-spacing: 0.07em;
 }
 
 .metrics-grid {
@@ -1919,11 +1922,6 @@ th {
 
   .pivot-header {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "title"
-      "danger"
-      "admin"
-      "moreinfo";
     align-items: start;
   }
 
