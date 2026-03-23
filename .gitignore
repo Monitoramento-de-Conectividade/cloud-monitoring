@@ -217,6 +217,7 @@ dashboards/
 frontend/data/*
 !frontend/data/.gitkeep
 frontend/pivot_*.html
+.local-dev/
 
 # Local-only security secrets (never commit)
 cloudv2_local_secrets.py

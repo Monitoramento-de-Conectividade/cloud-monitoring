@@ -519,3 +519,26 @@ test("ui: fila de descoberta atualiza localmente sem depender do refresh complet
   _test.removeExpectedPivotPendingState("PivotA_1");
   assert.deepEqual(_test.getExpectedPivotsPending(), []);
 });
+
+test("ui: summary cards history usa a contagem atual do card no ponto mais recente", () => {
+  _test.state.pivots = [
+    { pivot_id: "PivotA", status: { code: "green" }, quality: { code: "green" } },
+    { pivot_id: "PivotB", status: { code: "green" }, quality: { code: "green" } },
+    { pivot_id: "PivotC", status: { code: "red" }, quality: { code: "critical" } },
+  ];
+  _test.state.qualityOverridesByPivotId = {};
+  _test.state.statusOverridesByPivotId = {};
+  _test.state.rawState = { updated_at_ts: 300 };
+
+  const currentCounts = _test.computeSummaryCardCountsFromPivots(_test.state.pivots);
+  const points = _test.buildSummaryCardsDisplayHistoryPoints([
+    { ts: 100, connected_count: 6, disconnected_count: 1, initial_count: 0, total_count: 7 },
+    { ts: 200, connected_count: 6, disconnected_count: 1, initial_count: 0, total_count: 7 },
+  ], currentCounts);
+
+  assert.equal(points.length, 2);
+  assert.equal(points.at(-1).connected_count, 2);
+  assert.equal(points.at(-1).disconnected_count, 1);
+  assert.equal(points.at(-1).total_count, 3);
+  assert.equal(points.at(-1).ts, 300);
+});

@@ -1006,6 +1006,74 @@ function normalizeSummaryCardsHistoryPoints(points) {
     .sort((a, b) => a.ts - b.ts);
 }
 
+function computeSummaryCardCountsFromPivots(pivots = state.pivots) {
+  const stateCounts = { all: 0, green: 0, red: 0, gray: 0 };
+  const qualityCounts = { green: 0, yellow: 0, critical: 0, calculating: 0 };
+  const safePivots = Array.isArray(pivots) ? pivots : [];
+
+  for (const pivot of safePivots) {
+    stateCounts.all += 1;
+    const stateCode = getDisplayStatus(pivot).code;
+    if (stateCounts[stateCode] !== undefined) stateCounts[stateCode] += 1;
+
+    const qualityCode = getDisplayQuality(pivot).code;
+    if (qualityCounts[qualityCode] !== undefined) qualityCounts[qualityCode] += 1;
+  }
+
+  return {
+    stateCounts,
+    qualityCounts,
+    historyPoint: {
+      ts: 0,
+      total_count: stateCounts.all,
+      connected_count: stateCounts.green,
+      disconnected_count: stateCounts.red,
+      initial_count: stateCounts.gray,
+      quality_green_count: qualityCounts.green,
+      quality_calculating_count: qualityCounts.calculating,
+      quality_yellow_count: qualityCounts.yellow,
+      quality_critical_count: qualityCounts.critical,
+    },
+  };
+}
+
+function resolveSummaryCardsHistoryReferenceTs(payload = state.summaryCardsHistoryPayload || {}) {
+  const candidates = [
+    Number((payload || {}).updated_at_ts || 0),
+    Number(((state.rawState || {}).updated_at_ts) || 0),
+  ];
+  for (const candidate of candidates) {
+    if (Number.isFinite(candidate) && candidate > 0) return candidate;
+  }
+  return Math.floor(Date.now() / 1000);
+}
+
+function buildSummaryCardsDisplayHistoryPoints(points, currentCounts, options = {}) {
+  const safePoints = normalizeSummaryCardsHistoryPoints(points);
+  const counts = currentCounts && typeof currentCounts === "object" ? currentCounts : {};
+  const historyPoint = counts.historyPoint && typeof counts.historyPoint === "object"
+    ? { ...counts.historyPoint }
+    : null;
+  if (!historyPoint) return safePoints;
+
+  const referenceTs = resolveSummaryCardsHistoryReferenceTs(options.payload);
+  historyPoint.ts = Number.isFinite(referenceTs) && referenceTs > 0 ? referenceTs : historyPoint.ts;
+
+  if (!safePoints.length) {
+    return historyPoint.total_count > 0 ? normalizeSummaryCardsHistoryPoints([historyPoint]) : [];
+  }
+
+  const mergedPoints = safePoints.map((point) => ({ ...point }));
+  const lastIndex = mergedPoints.length - 1;
+  const lastPoint = mergedPoints[lastIndex] || {};
+  mergedPoints[lastIndex] = {
+    ...lastPoint,
+    ...historyPoint,
+    ts: Math.max(Number(lastPoint.ts || 0), Number(historyPoint.ts || 0)),
+  };
+  return normalizeSummaryCardsHistoryPoints(mergedPoints);
+}
+
 function sampleSummaryCardsHistoryPoints(points, maxPoints = 180) {
   const safePoints = normalizeSummaryCardsHistoryPoints(points);
   if (safePoints.length <= maxPoints) return safePoints;
@@ -1098,7 +1166,8 @@ function buildSummaryCardsHistorySvgModel(points, metricKey, width = 420, height
 
 function buildSummaryCardHistoryPopoverHtml(item) {
   const payload = state.summaryCardsHistoryPayload || {};
-  const points = normalizeSummaryCardsHistoryPoints(payload.points);
+  const currentCounts = computeSummaryCardCountsFromPivots(state.pivots);
+  const points = buildSummaryCardsDisplayHistoryPoints(payload.points, currentCounts, { payload });
   const source = text(payload.source, "live");
   const latestPoint = points.length ? points[points.length - 1] : null;
   const latest = latestPoint ? getSummaryCardHistoryValue(latestPoint, item.key) : 0;
@@ -2723,8 +2792,7 @@ function renderHeader() {
 }
 
 function renderStatusSummary() {
-  const stateCounts = { all: 0, green: 0, red: 0, gray: 0 };
-  const qualityCounts = { green: 0, yellow: 0, critical: 0, calculating: 0 };
+  const { stateCounts, qualityCounts } = computeSummaryCardCountsFromPivots(state.pivots);
   const settings = (state.rawState || {}).settings || {};
   const minSamplesRaw = Number(settings.cloudv2_min_samples ?? 5);
   const minSamples = Number.isFinite(minSamplesRaw) && minSamplesRaw >= 1 ? Math.round(minSamplesRaw) : 5;
@@ -2736,15 +2804,6 @@ function renderStatusSummary() {
   const criticalThreshold = Number.isFinite(criticalThresholdRaw)
     ? Math.max(attentionThreshold, Math.min(100, criticalThresholdRaw))
     : 50;
-
-  for (const pivot of state.pivots) {
-    stateCounts.all += 1;
-    const stateCode = getDisplayStatus(pivot).code;
-    if (stateCounts[stateCode] !== undefined) stateCounts[stateCode] += 1;
-
-    const qualityCode = getDisplayQuality(pivot).code;
-    if (qualityCounts[qualityCode] !== undefined) qualityCounts[qualityCode] += 1;
-  }
 
   const summaryItems = [
     {
@@ -5812,6 +5871,8 @@ if (typeof module !== "undefined" && module.exports) {
       getProbeResponseInfoDisplayRows,
       formatProbeConfiguredNetworks,
       normalizeSummaryCardsHistoryPoints,
+      computeSummaryCardCountsFromPivots,
+      buildSummaryCardsDisplayHistoryPoints,
       sampleSummaryCardsHistoryPoints,
       buildSummaryCardsHistorySvgModel,
       formatShortDateTime,
