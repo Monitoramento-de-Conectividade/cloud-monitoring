@@ -1156,12 +1156,19 @@ a:focus {
   flex-wrap: wrap;
 }
 
+.pivot-metrics-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: start;
+  column-gap: 12px;
+}
+
 .metrics-grid {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   width: 100%;
-  max-width: 1228px;
+  max-width: none;
   padding-right: 0;
   box-sizing: border-box;
 }
@@ -1180,22 +1187,15 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.metric-toggle-composite {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.metric-toggle-composite .metric-toggle-card {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.metric-inline-toggle {
-  flex: 0 0 24px;
+.pivot-metrics-toggle {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
   margin-top: 10px;
+  padding: 0;
   border: 1px solid #acc7b4;
   border-radius: 999px;
   background: #e8f3ec;
@@ -1208,13 +1208,13 @@ a:focus {
   transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.metric-inline-toggle:hover {
+.pivot-metrics-toggle:hover {
   color: var(--accent);
   border-color: #88ae94;
   background: #dceee3;
 }
 
-.metric-toggle-composite.is-expanded .metric-inline-toggle {
+.pivot-metrics-toggle[aria-expanded="true"] {
   background: #dceee3;
   border-color: #88ae94;
 }
