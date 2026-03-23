@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="cloudv2-api-base-url" content=""/>
   <title>Monitoramento de Conectividade</title>
-  <link rel="stylesheet" href="dashboard.css?v=20260323b"/>
+  <link rel="stylesheet" href="dashboard.css?v=20260323d"/>
 </head>
 <body>
   <a class="skip-link" href="#cardsSection">Ir para lista de pivôs</a>
@@ -242,6 +242,14 @@
 
       <div class="pivot-metrics-strip">
         <div class="metrics-grid" id="pivotMetrics"></div>
+        <button
+          id="pivotMetricsToggleBtn"
+          class="pivot-metrics-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-label="Mostrar mais informações"
+          hidden
+        >v</button>
       </div>
 
       <div class="pivot-sections">
@@ -447,7 +455,7 @@
 
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
-  <script src="runtime-config.js?v=20260323b"></script>
-  <script src="dashboard.js?v=20260323b"></script>
+  <script src="runtime-config.js?v=20260323d"></script>
+  <script src="dashboard.js?v=20260323d"></script>
 </body>
 </html>

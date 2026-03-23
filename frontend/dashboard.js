@@ -110,6 +110,7 @@ const ui = HAS_DOM
       pivotTechnologyHint: document.getElementById("pivotTechnologyHint"),
       pivotMoreInfoBtn: document.getElementById("pivotMoreInfoBtn"),
       pivotMetrics: document.getElementById("pivotMetrics"),
+      pivotMetricsToggleBtn: document.getElementById("pivotMetricsToggleBtn"),
       connPreset: document.getElementById("connPreset"),
       connFromWrap: document.getElementById("connFromWrap"),
       connToWrap: document.getElementById("connToWrap"),
@@ -2639,25 +2640,18 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
     ui.pivotMoreInfoBtn.setAttribute("aria-expanded", state.pivotMetricsExpanded ? "true" : "false");
   }
 
+  if (ui.pivotMetricsToggleBtn) {
+    ui.pivotMetricsToggleBtn.hidden = !hasExtraCards;
+    ui.pivotMetricsToggleBtn.textContent = state.pivotMetricsExpanded ? "^" : "v";
+    ui.pivotMetricsToggleBtn.setAttribute("aria-expanded", state.pivotMetricsExpanded ? "true" : "false");
+    ui.pivotMetricsToggleBtn.setAttribute(
+      "aria-label",
+      state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações",
+    );
+  }
+
   ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
-      const isTechnologyCard = String(item.key || "") === "last_technology";
-      if (isTechnologyCard && hasExtraCards) {
-        return `
-      <div class="metric-toggle-group">
-        <div class="metric metric-toggle-card">
-          <div class="label">${escapeHtml(item.label)}</div>
-          <div class="value">${escapeHtml(item.value)}</div>
-        </div>
-        <button
-          type="button"
-          class="metric-side-toggle"
-          data-pivot-metrics-toggle="true"
-          aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"
-          aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}"
-        >${state.pivotMetricsExpanded ? "^" : "v"}</button>
-      </div>`;
-      }
       return `
       <div class="metric">
         <div class="label">${escapeHtml(item.label)}</div>
@@ -5097,12 +5091,8 @@ function wireEvents() {
     }
   });
 
-  if (ui.pivotMetrics) {
-    ui.pivotMetrics.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const toggle = target.closest("[data-pivot-metrics-toggle]");
-      if (!toggle || !ui.pivotMetrics.contains(toggle)) return;
+  if (ui.pivotMetricsToggleBtn) {
+    ui.pivotMetricsToggleBtn.addEventListener("click", () => {
       state.pivotMetricsExpanded = !state.pivotMetricsExpanded;
       renderPivotView();
     });
