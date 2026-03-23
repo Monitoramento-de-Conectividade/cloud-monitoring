@@ -1162,6 +1162,8 @@ a:focus {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   width: 100%;
   max-width: 1228px;
+  padding-right: 34px;
+  box-sizing: border-box;
 }
 
 .metric {
@@ -1178,43 +1180,40 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.metric-toggle-wrap {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
+.metric-toggle-card {
+  position: relative;
+  overflow: visible;
+  cursor: pointer;
 }
 
-.metric-toggle-wrap .metric {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.metric-edge-toggle {
+.metric-toggle-card::after {
+  content: "v";
+  position: absolute;
+  top: 10px;
+  right: -34px;
   width: 24px;
   min-width: 24px;
   height: 24px;
   min-height: 24px;
-  padding: 0;
-  margin-top: 8px;
   border: 1px solid #acc7b4;
   border-radius: 999px;
   background: #e8f3ec;
   color: #2a5340;
   font-size: 13px;
   font-weight: 700;
-  line-height: 1;
+  line-height: 24px;
+  text-align: center;
   text-transform: none;
 }
 
-.metric-edge-toggle:hover:not(:disabled) {
-  transform: translateY(0);
+.metric-toggle-card:hover::after {
   color: var(--accent);
   border-color: #88ae94;
   background: #dceee3;
 }
 
-.metric-edge-toggle.is-expanded {
+.metric-toggle-card.is-expanded::after {
+  content: "^";
   background: #dceee3;
   border-color: #88ae94;
 }
