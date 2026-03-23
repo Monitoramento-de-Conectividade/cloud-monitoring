@@ -967,6 +967,11 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, payload)
                 return
 
+            if path == "/api/summary/connected-history":
+                payload = telemetry_store.get_connected_pivots_history_snapshot()
+                self._write_json(200, payload)
+                return
+
             if path == "/api/monitoring/runs":
                 limit_raw = (query.get("limit") or [None])[0]
                 try:

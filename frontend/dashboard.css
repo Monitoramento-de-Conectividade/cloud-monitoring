@@ -590,6 +590,11 @@ a:focus {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
+.summary-pill-wrap {
+  position: relative;
+  min-width: 0;
+}
+
 .summary-pill {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -633,6 +638,115 @@ a:focus {
   margin-top: 2px;
   color: #153c2c;
   font-size: clamp(1.05rem, 0.85rem + 0.8vw, 1.38rem);
+}
+
+.summary-pill-wrap--chart {
+  outline: none;
+}
+
+.summary-chart-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  width: min(520px, calc(100vw - 48px));
+  padding: 14px 14px 12px;
+  border: 1px solid #c8dfd0;
+  border-radius: 14px;
+  background: rgba(253, 254, 253, 0.98);
+  box-shadow: 0 22px 38px rgba(18, 61, 40, 0.16);
+  z-index: 18;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.summary-pill-wrap--chart:hover .summary-chart-popover,
+.summary-pill-wrap--chart:focus-within .summary-chart-popover,
+.summary-pill-wrap--chart:focus .summary-chart-popover {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.summary-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: #204633;
+}
+
+.summary-chart-head strong {
+  font-size: 1rem;
+  color: #123927;
+}
+
+.summary-chart-head span,
+.summary-chart-note,
+.summary-chart-error,
+.summary-chart-axis,
+.summary-chart-metrics {
+  font-size: 12px;
+  color: #456957;
+}
+
+.summary-chart-metrics {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.summary-chart-metrics strong {
+  color: #153c2c;
+  font-size: 1rem;
+}
+
+.summary-chart-svg {
+  display: block;
+  width: 100%;
+  height: 170px;
+  overflow: visible;
+}
+
+.summary-chart-grid-line {
+  stroke: #d7e8dd;
+  stroke-width: 1;
+}
+
+.summary-chart-area {
+  fill: rgba(42, 126, 76, 0.14);
+}
+
+.summary-chart-line {
+  fill: none;
+  stroke: #1e7a49;
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.summary-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.summary-chart-note {
+  margin-top: 10px;
+}
+
+.summary-chart-error {
+  margin-top: 8px;
+  color: #9c3d2a;
+}
+
+.summary-chart-empty {
+  padding: 18px 10px;
+  color: #577765;
 }
 
 .list {

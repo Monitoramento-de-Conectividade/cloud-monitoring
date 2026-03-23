@@ -25,6 +25,8 @@ CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
+CONNECTED_PIVOTS_HISTORY_WINDOW_SEC = 30 * 24 * 3600
+CONNECTED_PIVOTS_HISTORY_BUCKET_SEC = 3600
 
 STATUS_LABELS = {
     "green": "Online",
@@ -1014,6 +1016,24 @@ class TelemetryStore:
             self._dirty = False
             self._last_write_ts = now
 
+        try:
+            connected_count = 0
+            total_count = 0
+            for item in state_payload.get("pivots", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                total_count += 1
+                status = item.get("status") if isinstance(item.get("status"), dict) else {}
+                if str(status.get("code") or "").strip().lower() == "green":
+                    connected_count += 1
+            self.persistence.record_connected_pivots_hourly(
+                now,
+                connected_count=connected_count,
+                total_count=total_count,
+            )
+        except RuntimeError:
+            pass
+
         write_json_atomic(os.path.join(DATA_DIR, "state.json"), state_payload)
         write_json_atomic(os.path.join(DATA_DIR, "pivots.json"), mapping)
 
@@ -1022,6 +1042,79 @@ class TelemetryStore:
             write_json_atomic(os.path.join(DATA_DIR, f"pivot_{slug}.json"), payload)
 
         write_json_atomic(self.runtime_path, runtime_payload)
+
+    def _build_connected_pivots_history_mock_locked(self, now):
+        safe_now = float(now if now is not None else time.time())
+        bucket_now = int(safe_now // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC) * CONNECTED_PIVOTS_HISTORY_BUCKET_SEC
+        total_count = max(12, len(self.pivots) or 45)
+
+        current_connected = 0
+        for pivot in self.pivots.values():
+            status = self._compute_status_locked(pivot, safe_now)
+            if str(status.get("code") or "").strip().lower() == "green":
+                current_connected += 1
+        if current_connected <= 0:
+            current_connected = max(3, int(round(total_count * 0.62)))
+
+        points = []
+        window_hours = int(CONNECTED_PIVOTS_HISTORY_WINDOW_SEC // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC)
+        for offset in range(window_hours):
+            bucket_ts = bucket_now - ((window_hours - 1 - offset) * CONNECTED_PIVOTS_HISTORY_BUCKET_SEC)
+            wave = ((offset * 7) % 11) - 5
+            trend = -2 if offset < 96 else (1 if offset > (window_hours - 120) else 0)
+            dip = -6 if 240 <= offset <= 258 else 0
+            rebound = 4 if 520 <= offset <= 548 else 0
+            connected_count = current_connected + wave + trend + dip + rebound
+            connected_count = max(0, min(total_count, connected_count))
+            points.append(
+                {
+                    "ts": bucket_ts,
+                    "at": _ts_to_str(bucket_ts),
+                    "connected_count": int(connected_count),
+                    "total_count": int(total_count),
+                }
+            )
+        return points
+
+    def get_connected_pivots_history_snapshot(self, now=None):
+        safe_now = float(now if now is not None else time.time())
+        try:
+            points = self.persistence.fetch_connected_pivots_hourly_history(
+                now=safe_now,
+                window_sec=CONNECTED_PIVOTS_HISTORY_WINDOW_SEC,
+                limit=int(CONNECTED_PIVOTS_HISTORY_WINDOW_SEC // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC),
+            )
+        except RuntimeError:
+            points = []
+
+        source = "live"
+        use_dev_mock = (
+            str(os.environ.get("CLOUDV2_DEV_HOT_RELOAD", "")).strip().lower() in ("1", "true", "yes", "on")
+            and (
+                not points
+                or max((int(item.get("total_count") or 0) for item in points), default=0) <= 0
+            )
+        )
+        if use_dev_mock:
+            with self._lock:
+                points = self._build_connected_pivots_history_mock_locked(safe_now)
+            source = "mock"
+
+        latest = points[-1] if points else {}
+        return {
+            "updated_at_ts": safe_now,
+            "updated_at": _ts_to_str(safe_now),
+            "bucket_sec": CONNECTED_PIVOTS_HISTORY_BUCKET_SEC,
+            "window_sec": CONNECTED_PIVOTS_HISTORY_WINDOW_SEC,
+            "source": source,
+            "points": points,
+            "latest": {
+                "ts": latest.get("ts"),
+                "at": latest.get("at"),
+                "connected_count": int(latest.get("connected_count") or 0),
+                "total_count": int(latest.get("total_count") or 0),
+            },
+        }
 
     def get_state_snapshot(self, now=None, run_id=None):
         now = float(now if now is not None else time.time())

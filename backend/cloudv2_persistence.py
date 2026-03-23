@@ -19,6 +19,8 @@ TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_DEFAULT_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
 CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network")
+CONNECTED_PIVOTS_WINDOW_SEC = 30 * 24 * 3600
+CONNECTED_PIVOTS_BUCKET_SEC = 3600
 
 
 def _ts_to_str(ts):
@@ -645,6 +647,94 @@ class TelemetryPersistence:
                         normalized_id,
                     ),
                 )
+
+    def record_connected_pivots_hourly(self, ts, connected_count, total_count):
+        bucket_ts = _safe_int(ts, None)
+        if bucket_ts is None:
+            bucket_ts = int(time.time())
+        bucket_ts = int(bucket_ts // CONNECTED_PIVOTS_BUCKET_SEC) * CONNECTED_PIVOTS_BUCKET_SEC
+        safe_connected = max(0, int(_safe_int(connected_count, 0) or 0))
+        safe_total = max(safe_connected, int(_safe_int(total_count, 0) or 0))
+        now_ts = time.time()
+        cutoff_ts = bucket_ts - CONNECTED_PIVOTS_WINDOW_SEC
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO connected_pivots_hourly (
+                        bucket_ts,
+                        connected_count,
+                        total_count,
+                        created_at_ts,
+                        updated_at_ts
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(bucket_ts) DO UPDATE SET
+                        connected_count = excluded.connected_count,
+                        total_count = excluded.total_count,
+                        updated_at_ts = excluded.updated_at_ts
+                    """,
+                    (
+                        bucket_ts,
+                        safe_connected,
+                        safe_total,
+                        now_ts,
+                        now_ts,
+                    ),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM connected_pivots_hourly
+                    WHERE bucket_ts < ?
+                    """,
+                    (cutoff_ts,),
+                )
+
+    def fetch_connected_pivots_hourly_history(self, now=None, window_sec=CONNECTED_PIVOTS_WINDOW_SEC, limit=None):
+        safe_now = _safe_float(now, time.time())
+        safe_window = max(
+            CONNECTED_PIVOTS_BUCKET_SEC,
+            int(_safe_int(window_sec, CONNECTED_PIVOTS_WINDOW_SEC) or CONNECTED_PIVOTS_WINDOW_SEC),
+        )
+        safe_limit = limit
+        if safe_limit is None:
+            safe_limit = max(24, int(safe_window // CONNECTED_PIVOTS_BUCKET_SEC))
+        safe_limit = max(1, int(_safe_int(safe_limit, 720) or 720))
+        cutoff_ts = int(safe_now) - safe_window
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT
+                    bucket_ts,
+                    connected_count,
+                    total_count
+                FROM connected_pivots_hourly
+                WHERE bucket_ts >= ?
+                ORDER BY bucket_ts DESC
+                LIMIT ?
+                """,
+                (cutoff_ts, safe_limit),
+            ).fetchall()
+
+        points = []
+        for row in reversed(rows):
+            bucket_ts = _safe_int(row["bucket_ts"], None)
+            if bucket_ts is None:
+                continue
+            connected_value = max(0, int(_safe_int(row["connected_count"], 0) or 0))
+            total_value = max(connected_value, int(_safe_int(row["total_count"], 0) or 0))
+            points.append(
+                {
+                    "ts": bucket_ts,
+                    "at": _ts_to_str(bucket_ts),
+                    "connected_count": connected_value,
+                    "total_count": total_value,
+                }
+            )
+        return points
 
     def set_pivot_is_concentrator(self, pivot_id, is_concentrator, pivot_slug=None, seen_ts=None):
         normalized_id = str(pivot_id or "").strip()
