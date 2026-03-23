@@ -2642,11 +2642,18 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
   ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
       const isTechnologyCard = String(item.key || "") === "last_technology";
-      const technologyCardAttrs = isTechnologyCard && hasExtraCards
-        ? ` metric-toggle-card${state.pivotMetricsExpanded ? " is-expanded" : ""}" data-pivot-metrics-toggle aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}`
-        : `"`;
+      const metricClasses = [
+        "metric",
+        isTechnologyCard && hasExtraCards ? "metric-toggle-card" : "",
+        isTechnologyCard && hasExtraCards && state.pivotMetricsExpanded ? "is-expanded" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const toggleAttrs = isTechnologyCard && hasExtraCards
+        ? ` data-pivot-metrics-toggle="true" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}" aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}"`
+        : "";
       return `
-      <div class="metric${technologyCardAttrs}>
+      <div class="${metricClasses}"${toggleAttrs}>
         <div class="label">${escapeHtml(item.label)}</div>
         <div class="value">${escapeHtml(item.value)}</div>
       </div>`;
