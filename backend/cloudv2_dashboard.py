@@ -967,8 +967,13 @@ def _build_handler(telemetry_store, reload_token_getter=None):
                 self._write_json(200, payload)
                 return
 
+            if path == "/api/summary/cards-history":
+                payload = telemetry_store.get_summary_cards_history_snapshot()
+                self._write_json(200, payload)
+                return
+
             if path == "/api/summary/connected-history":
-                payload = telemetry_store.get_connected_pivots_history_snapshot()
+                payload = telemetry_store.get_summary_cards_history_snapshot()
                 self._write_json(200, payload)
                 return
 

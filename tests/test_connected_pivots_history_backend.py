@@ -8,7 +8,7 @@ from backend.cloudv2_persistence import TelemetryPersistence
 from backend.cloudv2_telemetry import TelemetryStore
 
 
-class ConnectedPivotsHistoryPersistenceTests(unittest.TestCase):
+class SummaryCardsHistoryPersistenceTests(unittest.TestCase):
     def test_hourly_history_keeps_latest_30_days(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = os.path.join(temp_dir, "telemetry.sqlite3")
@@ -16,25 +16,46 @@ class ConnectedPivotsHistoryPersistenceTests(unittest.TestCase):
             persistence.start()
             try:
                 base_ts = 1_700_000_000
-                persistence.record_connected_pivots_hourly(base_ts, connected_count=10, total_count=20)
-                persistence.record_connected_pivots_hourly(
+                persistence.record_summary_cards_hourly(
+                    base_ts,
+                    {
+                        "total_count": 20,
+                        "connected_count": 10,
+                        "disconnected_count": 8,
+                        "initial_count": 2,
+                        "quality_green_count": 9,
+                        "quality_calculating_count": 2,
+                        "quality_yellow_count": 5,
+                        "quality_critical_count": 4,
+                    },
+                )
+                persistence.record_summary_cards_hourly(
                     base_ts + (31 * 24 * 3600),
-                    connected_count=12,
-                    total_count=20,
+                    {
+                        "total_count": 20,
+                        "connected_count": 12,
+                        "disconnected_count": 6,
+                        "initial_count": 2,
+                        "quality_green_count": 11,
+                        "quality_calculating_count": 1,
+                        "quality_yellow_count": 4,
+                        "quality_critical_count": 4,
+                    },
                 )
 
-                points = persistence.fetch_connected_pivots_hourly_history(
+                points = persistence.fetch_summary_cards_hourly_history(
                     now=base_ts + (31 * 24 * 3600),
                 )
 
                 self.assertEqual(len(points), 1)
                 self.assertEqual(points[0]["connected_count"], 12)
                 self.assertEqual(points[0]["total_count"], 20)
+                self.assertEqual(points[0]["quality_green_count"], 11)
             finally:
                 persistence.stop()
 
 
-class ConnectedPivotsHistoryMockSnapshotTests(unittest.TestCase):
+class SummaryCardsHistoryMockSnapshotTests(unittest.TestCase):
     def _build_store(self, temp_dir):
         db_path = os.path.join(temp_dir, "telemetry.sqlite3")
         config = {
@@ -61,9 +82,10 @@ class ConnectedPivotsHistoryMockSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"CLOUDV2_DEV_HOT_RELOAD": "1"}):
             store = self._build_store(temp_dir)
             try:
-                payload = store.get_connected_pivots_history_snapshot(now=1_700_000_000.0)
+                payload = store.get_summary_cards_history_snapshot(now=1_700_000_000.0)
                 self.assertEqual(payload["source"], "mock")
                 self.assertEqual(len(payload["points"]), 720)
                 self.assertGreaterEqual(payload["latest"]["total_count"], payload["latest"]["connected_count"])
+                self.assertGreaterEqual(payload["latest"]["total_count"], payload["latest"]["quality_green_count"])
             finally:
                 store.stop()

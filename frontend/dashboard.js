@@ -226,12 +226,12 @@ const state = {
   authUserEmail: "",
   pivotDeleteAllowed: false,
   adminUsers: [],
-  connectedPivotsHistoryPayload: null,
-  connectedPivotsHistoryLoading: false,
-  connectedPivotsHistoryLoadedAtMs: 0,
-  connectedPivotsHistoryError: "",
-  connectedPivotsHistoryRefreshIntervalMs: 10 * 60 * 1000,
-  connectedPivotsHistoryFetchPromise: null,
+  summaryCardsHistoryPayload: null,
+  summaryCardsHistoryLoading: false,
+  summaryCardsHistoryLoadedAtMs: 0,
+  summaryCardsHistoryError: "",
+  summaryCardsHistoryRefreshIntervalMs: 10 * 60 * 1000,
+  summaryCardsHistoryFetchPromise: null,
   headerRenderSignature: "",
   statusSummaryRenderSignature: "",
   pendingRenderSignature: "",
@@ -954,6 +954,217 @@ function buildConnectedPivotsHistoryPopoverHtml() {
   `;
 }
 
+const SUMMARY_CARD_HISTORY_FIELDS = {
+  all: "total_count",
+  connected: "connected_count",
+  disconnected: "disconnected_count",
+  initial: "initial_count",
+  quality_green: "quality_green_count",
+  quality_calculating: "quality_calculating_count",
+  quality_yellow: "quality_yellow_count",
+  quality_critical: "quality_critical_count",
+};
+
+const SUMMARY_CARD_HISTORY_CURRENT_LABELS = {
+  all: "pivôs no total",
+  connected: "conectados agora",
+  disconnected: "desconectados agora",
+  initial: "em status inicial",
+  quality_green: "estáveis agora",
+  quality_calculating: "em análise agora",
+  quality_yellow: "instáveis agora",
+  quality_critical: "críticos agora",
+};
+
+const SUMMARY_CARD_TEXT_ONLY_KEYS = new Set(["initial", "quality_calculating"]);
+
+function normalizeSummaryCardsHistoryPoints(points) {
+  if (!Array.isArray(points)) return [];
+  return points
+    .filter((item) => item && typeof item === "object")
+    .map((item) => {
+      const ts = Number(item.ts);
+      const normalized = {
+        ts,
+        at: text(item.at, "-"),
+      };
+      for (const field of Object.values(SUMMARY_CARD_HISTORY_FIELDS)) {
+        const parsed = Math.max(0, Number(item[field] || 0));
+        normalized[field] = Number.isFinite(parsed) ? parsed : 0;
+      }
+      const statusTotal = normalized.connected_count + normalized.disconnected_count + normalized.initial_count;
+      const qualityTotal = (
+        normalized.quality_green_count
+        + normalized.quality_calculating_count
+        + normalized.quality_yellow_count
+        + normalized.quality_critical_count
+      );
+      normalized.total_count = Math.max(normalized.total_count, statusTotal, qualityTotal);
+      return normalized;
+    })
+    .filter((item) => Number.isFinite(item.ts) && item.ts > 0)
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function sampleSummaryCardsHistoryPoints(points, maxPoints = 180) {
+  const safePoints = normalizeSummaryCardsHistoryPoints(points);
+  if (safePoints.length <= maxPoints) return safePoints;
+  const bucketSize = Math.max(1, Math.ceil(safePoints.length / maxPoints));
+  const sampled = [];
+  for (let index = 0; index < safePoints.length; index += bucketSize) {
+    const bucket = safePoints.slice(index, index + bucketSize);
+    if (!bucket.length) continue;
+    sampled.push(bucket[bucket.length - 1]);
+  }
+  const lastPoint = safePoints[safePoints.length - 1];
+  if (!sampled.length || sampled[sampled.length - 1].ts !== lastPoint.ts) {
+    sampled.push(lastPoint);
+  }
+  return sampled;
+}
+
+function formatSummaryHistoryAxisLabel(ts) {
+  const parsedTs = Number(ts);
+  if (!Number.isFinite(parsedTs) || parsedTs <= 0) return "-";
+  const date = new Date(parsedTs * 1000);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+  }).replace(",", "");
+}
+
+function getSummaryCardHistoryField(metricKey) {
+  return SUMMARY_CARD_HISTORY_FIELDS[String(metricKey || "").trim()] || "total_count";
+}
+
+function getSummaryCardHistoryValue(item, metricKey) {
+  if (!item || typeof item !== "object") return 0;
+  const field = getSummaryCardHistoryField(metricKey);
+  const parsed = Number(item[field] || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildSummaryCardsHistorySvgModel(points, metricKey, width = 420, height = 170) {
+  const sampled = sampleSummaryCardsHistoryPoints(points);
+  if (!sampled.length) return null;
+
+  const field = getSummaryCardHistoryField(metricKey);
+  const safeWidth = Math.max(240, Number(width || 420));
+  const safeHeight = Math.max(120, Number(height || 170));
+  const padding = { top: 10, right: 10, bottom: 22, left: 10 };
+  const plotWidth = safeWidth - padding.left - padding.right;
+  const plotHeight = safeHeight - padding.top - padding.bottom;
+  const maxValue = Math.max(1, ...sampled.map((item) => Number(item.total_count || item[field] || 0) || 0));
+  const minValue = 0;
+  const valueRange = Math.max(1, maxValue - minValue);
+
+  const chartPoints = sampled.map((item, index) => {
+    const value = getSummaryCardHistoryValue(item, metricKey);
+    const x = padding.left + (plotWidth * index) / Math.max(1, sampled.length - 1);
+    const normalized = (value - minValue) / valueRange;
+    const y = padding.top + plotHeight - (normalized * plotHeight);
+    return {
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      value,
+      total_count: Number(item.total_count || 0),
+      ts: Number(item.ts || 0),
+    };
+  });
+
+  const linePath = chartPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const areaPath = `${linePath} L ${chartPoints[chartPoints.length - 1].x} ${padding.top + plotHeight} L ${chartPoints[0].x} ${padding.top + plotHeight} Z`;
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const y = Number((padding.top + plotHeight - (ratio * plotHeight)).toFixed(2));
+    const value = Math.round(maxValue * ratio);
+    return { y, value };
+  });
+
+  return {
+    width: safeWidth,
+    height: safeHeight,
+    areaPath,
+    linePath,
+    gridLines,
+    firstTs: chartPoints[0].ts,
+    lastTs: chartPoints[chartPoints.length - 1].ts,
+  };
+}
+
+function buildSummaryCardHistoryPopoverHtml(item) {
+  const payload = state.summaryCardsHistoryPayload || {};
+  const points = normalizeSummaryCardsHistoryPoints(payload.points);
+  const source = text(payload.source, "live");
+  const latestPoint = points.length ? points[points.length - 1] : null;
+  const latest = latestPoint ? getSummaryCardHistoryValue(latestPoint, item.key) : 0;
+  const peak = points.length ? points.reduce((max, point) => Math.max(max, getSummaryCardHistoryValue(point, item.key)), 0) : 0;
+  const average = points.length
+    ? (points.reduce((sum, point) => sum + getSummaryCardHistoryValue(point, item.key), 0) / points.length)
+    : 0;
+  const chart = buildSummaryCardsHistorySvgModel(points, item.key);
+  const currentLabel = SUMMARY_CARD_HISTORY_CURRENT_LABELS[item.key] || "registros agora";
+
+  let bodyHtml = `<div class="summary-chart-empty">Nenhum histórico horário registrado ainda.</div>`;
+  if (state.summaryCardsHistoryLoading && !points.length) {
+    bodyHtml = `<div class="summary-chart-empty">Carregando histórico do resumo...</div>`;
+  } else if (chart) {
+    bodyHtml = `
+      <div class="summary-chart-metrics">
+        <span><strong>${escapeHtml(text(latest, "0"))}</strong> ${escapeHtml(currentLabel)}</span>
+        <span><strong>${escapeHtml(String(peak))}</strong> pico no período</span>
+        <span><strong>${escapeHtml(average.toFixed(1))}</strong> média por hora</span>
+      </div>
+      <svg class="summary-chart-svg" viewBox="0 0 ${chart.width} ${chart.height}" preserveAspectRatio="none" aria-hidden="true">
+        ${chart.gridLines
+          .map((line) => `<line x1="10" y1="${line.y}" x2="${chart.width - 10}" y2="${line.y}" class="summary-chart-grid-line"></line>`)
+          .join("")}
+        <path d="${chart.areaPath}" class="summary-chart-area"></path>
+        <path d="${chart.linePath}" class="summary-chart-line"></path>
+      </svg>
+      <div class="summary-chart-axis">
+        <span>${escapeHtml(formatSummaryHistoryAxisLabel(chart.firstTs))}</span>
+        <span>${escapeHtml(formatSummaryHistoryAxisLabel(chart.lastTs))}</span>
+      </div>
+    `;
+  }
+
+  const noteText = source === "mock"
+    ? "Dados simulados locais para visualizar o gráfico."
+    : "Amostras horárias mantidas pelos últimos 30 dias.";
+
+  return `
+    <div class="summary-chart-popover" role="tooltip">
+      <div class="summary-chart-head">
+        <strong>${escapeHtml(item.label)}</strong>
+        <span>Últimos 30 dias • 1 ponto por hora</span>
+      </div>
+      ${bodyHtml}
+      <div class="summary-chart-note">${escapeHtml(noteText)}</div>
+      <div class="summary-chart-copy summary-chart-copy--footer">${escapeHtml(item.tooltip)}</div>
+      ${state.summaryCardsHistoryError
+        ? `<div class="summary-chart-error">${escapeHtml(state.summaryCardsHistoryError)}</div>`
+        : ""}
+    </div>
+  `;
+}
+
+function buildSummaryCardInfoPopoverHtml(item) {
+  return `
+    <div class="summary-chart-popover summary-chart-popover--info" role="tooltip">
+      <div class="summary-chart-head">
+        <strong>${escapeHtml(item.label)}</strong>
+        <span>Significado e cálculo</span>
+      </div>
+      <div class="summary-chart-copy summary-chart-copy--only">${escapeHtml(item.tooltip)}</div>
+    </div>
+  `;
+}
+
 function getProbeResponseInfoDisplayRows(probe) {
   const info = probe && typeof probe === "object" ? probe.last_response_info : null;
   if (!info || typeof info !== "object") return [];
@@ -1513,6 +1724,7 @@ function isCacheableDashboardGet(url) {
   return (
     targetUrl.startsWith("/api/state")
     || targetUrl.startsWith("/api/quality-lite")
+    || targetUrl.startsWith("/api/summary/cards-history")
     || targetUrl.startsWith("/api/summary/connected-history")
     || targetUrl.startsWith("/api/pivot/")
     || targetUrl.startsWith("/api/monitoring/runs")
@@ -1525,6 +1737,7 @@ function isPersistentDashboardGet(url) {
   return (
     targetUrl.startsWith("/api/state")
     || targetUrl.startsWith("/api/quality-lite")
+    || targetUrl.startsWith("/api/summary/cards-history")
     || targetUrl.startsWith("/api/summary/connected-history")
     || targetUrl.startsWith("/api/monitoring/runs")
     || targetUrl === "data/ui_config.json"
@@ -1753,8 +1966,8 @@ function buildQualityLiteUrl(runId = null, pivotIds = []) {
   return query ? `/api/quality-lite?${query}` : "/api/quality-lite";
 }
 
-function buildConnectedHistoryUrl() {
-  return "/api/summary/connected-history";
+function buildSummaryCardsHistoryUrl() {
+  return "/api/summary/cards-history";
 }
 
 function buildPivotPanelUrl(pivotId, runId = null, sessionId = null) {
@@ -2610,14 +2823,14 @@ function renderStatusSummary() {
     minSamples,
     attentionThreshold.toFixed(1),
     criticalThreshold.toFixed(1),
-    state.connectedPivotsHistoryLoading ? "loading" : "idle",
-    text(state.connectedPivotsHistoryError, ""),
-    text((state.connectedPivotsHistoryPayload || {}).source, ""),
-    Array.isArray((state.connectedPivotsHistoryPayload || {}).points)
-      ? (state.connectedPivotsHistoryPayload || {}).points.length
+    state.summaryCardsHistoryLoading ? "loading" : "idle",
+    text(state.summaryCardsHistoryError, ""),
+    text((state.summaryCardsHistoryPayload || {}).source, ""),
+    Array.isArray((state.summaryCardsHistoryPayload || {}).points)
+      ? (state.summaryCardsHistoryPayload || {}).points.length
       : 0,
-    Array.isArray((state.connectedPivotsHistoryPayload || {}).points) && (state.connectedPivotsHistoryPayload || {}).points.length
-      ? `${(state.connectedPivotsHistoryPayload || {}).points[0]?.ts || 0}:${(state.connectedPivotsHistoryPayload || {}).points.at(-1)?.ts || 0}:${(state.connectedPivotsHistoryPayload || {}).points.at(-1)?.connected_count || 0}`
+    Array.isArray((state.summaryCardsHistoryPayload || {}).points) && (state.summaryCardsHistoryPayload || {}).points.length
+      ? `${(state.summaryCardsHistoryPayload || {}).points[0]?.ts || 0}:${(state.summaryCardsHistoryPayload || {}).points.at(-1)?.ts || 0}:${(state.summaryCardsHistoryPayload || {}).points.at(-1)?.total_count || 0}`
       : "no-history",
   ].join("|");
   if (state.statusSummaryRenderSignature === summarySignature) return;
@@ -2625,29 +2838,22 @@ function renderStatusSummary() {
 
   ui.statusSummary.innerHTML = summaryItems
     .map(
-      (item) => {
+      (item, index, list) => {
         const tone = escapeHtml(text(item.tone, "neutral"));
-        const tooltip = escapeHtml(item.tooltip);
-        const isConnectedCard = item.key === "connected";
-        if (isConnectedCard) {
-          return `
-        <div class="summary-pill-wrap summary-pill-wrap--chart" tabindex="0" aria-label="${escapeHtml(item.label + ": " + item.tooltip)}">
+        const alignClass = index >= (list.length - 2) ? " summary-pill-wrap--align-right" : "";
+        const popoverWrapClass = SUMMARY_CARD_TEXT_ONLY_KEYS.has(item.key)
+          ? "summary-pill-wrap--info"
+          : "summary-pill-wrap--chart";
+        const popoverHtml = SUMMARY_CARD_TEXT_ONLY_KEYS.has(item.key)
+          ? buildSummaryCardInfoPopoverHtml(item)
+          : buildSummaryCardHistoryPopoverHtml(item);
+        return `
+        <div class="summary-pill-wrap ${popoverWrapClass} summary-pill-wrap--${tone}${alignClass}" tabindex="0" aria-label="${escapeHtml(item.label + ": " + item.tooltip)}">
           <div class="summary-pill summary-pill--${tone}">
             <span>${escapeHtml(item.label)}</span>
             <strong>${item.value}</strong>
           </div>
-          ${buildConnectedPivotsHistoryPopoverHtml()}
-        </div>
-      `;
-        }
-        return `
-        <div
-          class="summary-pill summary-pill--${tone}"
-          title="${tooltip}"
-          aria-label="${escapeHtml(item.label + ": " + item.tooltip)}"
-        >
-          <span>${escapeHtml(item.label)}</span>
-          <strong>${item.value}</strong>
+          ${popoverHtml}
         </div>
       `;
       }
@@ -3943,54 +4149,54 @@ async function loadUiConfig() {
   }
 }
 
-async function refreshConnectedPivotsHistory(options = {}) {
+async function refreshSummaryCardsHistory(options = {}) {
   const skipRender = !!options.skipRender;
   const forceRefresh = !!options.force;
   const nowMs = Date.now();
-  const refreshIntervalMs = Math.max(60000, Number(state.connectedPivotsHistoryRefreshIntervalMs || 0));
+  const refreshIntervalMs = Math.max(60000, Number(state.summaryCardsHistoryRefreshIntervalMs || 0));
 
-  if (!forceRefresh && state.connectedPivotsHistoryFetchPromise) {
-    return state.connectedPivotsHistoryFetchPromise;
+  if (!forceRefresh && state.summaryCardsHistoryFetchPromise) {
+    return state.summaryCardsHistoryFetchPromise;
   }
   if (
     !forceRefresh
-    && state.connectedPivotsHistoryLoadedAtMs > 0
-    && (nowMs - Number(state.connectedPivotsHistoryLoadedAtMs || 0) < refreshIntervalMs)
+    && state.summaryCardsHistoryLoadedAtMs > 0
+    && (nowMs - Number(state.summaryCardsHistoryLoadedAtMs || 0) < refreshIntervalMs)
   ) {
-    return state.connectedPivotsHistoryPayload;
+    return state.summaryCardsHistoryPayload;
   }
 
-  state.connectedPivotsHistoryLoading = true;
-  state.connectedPivotsHistoryError = "";
+  state.summaryCardsHistoryLoading = true;
+  state.summaryCardsHistoryError = "";
   if (!skipRender) renderStatusSummary();
 
-  const promise = getJson(buildConnectedHistoryUrl(), {
+  const promise = getJson(buildSummaryCardsHistoryUrl(), {
     allowStale: true,
     timeoutMs: 18000,
     retryDelaysMs: [0, 1200],
     staleTtlMs: 30 * 60 * 1000,
   })
     .then((payload) => {
-      state.connectedPivotsHistoryPayload = payload;
-      state.connectedPivotsHistoryLoadedAtMs = Date.now();
-      state.connectedPivotsHistoryError = "";
+      state.summaryCardsHistoryPayload = payload;
+      state.summaryCardsHistoryLoadedAtMs = Date.now();
+      state.summaryCardsHistoryError = "";
       return payload;
     })
     .catch((err) => {
-      if (!state.connectedPivotsHistoryPayload) {
-        state.connectedPivotsHistoryError = "Nao foi possivel carregar o histórico agora.";
+      if (!state.summaryCardsHistoryPayload) {
+        state.summaryCardsHistoryError = "Nao foi possivel carregar o histórico agora.";
       }
       throw err;
     })
     .finally(() => {
-      if (state.connectedPivotsHistoryFetchPromise === promise) {
-        state.connectedPivotsHistoryFetchPromise = null;
+      if (state.summaryCardsHistoryFetchPromise === promise) {
+        state.summaryCardsHistoryFetchPromise = null;
       }
-      state.connectedPivotsHistoryLoading = false;
+      state.summaryCardsHistoryLoading = false;
       if (!skipRender) renderStatusSummary();
     });
 
-  state.connectedPivotsHistoryFetchPromise = promise;
+  state.summaryCardsHistoryFetchPromise = promise;
   return promise;
 }
 
@@ -4276,7 +4482,7 @@ function refreshDashboardSupportData(options = {}) {
   const promise = Promise.allSettled([
     refreshQualityOverrides({ skipRender: true, force: forceQuality }),
     refreshPivot({ skipRender: true }),
-    refreshConnectedPivotsHistory({ skipRender: true, force: forceQuality }),
+    refreshSummaryCardsHistory({ skipRender: true, force: forceQuality }),
   ])
     .then((results) => {
       if (!skipRender) {
@@ -5605,9 +5811,9 @@ if (typeof module !== "undefined" && module.exports) {
       shouldRenderRssiPanel,
       getProbeResponseInfoDisplayRows,
       formatProbeConfiguredNetworks,
-      normalizeConnectedPivotsHistoryPoints,
-      sampleConnectedPivotsHistoryPoints,
-      buildConnectedPivotsHistorySvgModel,
+      normalizeSummaryCardsHistoryPoints,
+      sampleSummaryCardsHistoryPoints,
+      buildSummaryCardsHistorySvgModel,
       formatShortDateTime,
       formatCompactDateTime,
       formatTimestampFromTsOrValue,

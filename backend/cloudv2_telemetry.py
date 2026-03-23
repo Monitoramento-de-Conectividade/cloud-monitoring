@@ -25,8 +25,8 @@ CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
-CONNECTED_PIVOTS_HISTORY_WINDOW_SEC = 30 * 24 * 3600
-CONNECTED_PIVOTS_HISTORY_BUCKET_SEC = 3600
+SUMMARY_CARDS_HISTORY_WINDOW_SEC = 30 * 24 * 3600
+SUMMARY_CARDS_HISTORY_BUCKET_SEC = 3600
 
 STATUS_LABELS = {
     "green": "Online",
@@ -1017,19 +1017,9 @@ class TelemetryStore:
             self._last_write_ts = now
 
         try:
-            connected_count = 0
-            total_count = 0
-            for item in state_payload.get("pivots", []) or []:
-                if not isinstance(item, dict):
-                    continue
-                total_count += 1
-                status = item.get("status") if isinstance(item.get("status"), dict) else {}
-                if str(status.get("code") or "").strip().lower() == "green":
-                    connected_count += 1
-            self.persistence.record_connected_pivots_hourly(
+            self.persistence.record_summary_cards_hourly(
                 now,
-                connected_count=connected_count,
-                total_count=total_count,
+                self._build_summary_cards_counts_from_state_payload(state_payload),
             )
         except RuntimeError:
             pass
@@ -1043,46 +1033,111 @@ class TelemetryStore:
 
         write_json_atomic(self.runtime_path, runtime_payload)
 
-    def _build_connected_pivots_history_mock_locked(self, now):
-        safe_now = float(now if now is not None else time.time())
-        bucket_now = int(safe_now // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC) * CONNECTED_PIVOTS_HISTORY_BUCKET_SEC
-        total_count = max(12, len(self.pivots) or 45)
+    def _build_summary_cards_counts_from_state_payload(self, state_payload):
+        counts = {
+            "total_count": 0,
+            "connected_count": 0,
+            "disconnected_count": 0,
+            "initial_count": 0,
+            "quality_green_count": 0,
+            "quality_calculating_count": 0,
+            "quality_yellow_count": 0,
+            "quality_critical_count": 0,
+        }
+        for item in state_payload.get("pivots", []) or []:
+            if not isinstance(item, dict):
+                continue
+            counts["total_count"] += 1
+            status = item.get("status") if isinstance(item.get("status"), dict) else {}
+            status_code = str(status.get("code") or "").strip().lower()
+            if status_code == "green":
+                counts["connected_count"] += 1
+            elif status_code == "red":
+                counts["disconnected_count"] += 1
+            elif status_code == "gray":
+                counts["initial_count"] += 1
 
-        current_connected = 0
-        for pivot in self.pivots.values():
-            status = self._compute_status_locked(pivot, safe_now)
-            if str(status.get("code") or "").strip().lower() == "green":
-                current_connected += 1
-        if current_connected <= 0:
-            current_connected = max(3, int(round(total_count * 0.62)))
+            quality = item.get("quality") if isinstance(item.get("quality"), dict) else {}
+            quality_code = str(quality.get("code") or "").strip().lower()
+            if quality_code == "green":
+                counts["quality_green_count"] += 1
+            elif quality_code == "calculating":
+                counts["quality_calculating_count"] += 1
+            elif quality_code == "yellow":
+                counts["quality_yellow_count"] += 1
+            elif quality_code == "critical":
+                counts["quality_critical_count"] += 1
+        return counts
+
+    def _build_summary_cards_history_mock_locked(self, now):
+        safe_now = float(now if now is not None else time.time())
+        bucket_now = int(safe_now // SUMMARY_CARDS_HISTORY_BUCKET_SEC) * SUMMARY_CARDS_HISTORY_BUCKET_SEC
+        baseline_counts = self._build_summary_cards_counts_from_state_payload(
+            self._build_state_snapshot_locked(safe_now)
+        )
+        total_count = max(12, int(baseline_counts.get("total_count") or 45))
+        base_connected = int(baseline_counts.get("connected_count") or 0)
+        if base_connected <= 0:
+            base_connected = max(3, int(round(total_count * 0.62)))
+        base_initial = max(0, min(total_count, int(baseline_counts.get("initial_count") or 0)))
+        base_calculating = max(0, min(total_count, int(baseline_counts.get("quality_calculating_count") or 0)))
+        base_yellow = max(0, min(total_count, int(baseline_counts.get("quality_yellow_count") or 0)))
+        base_critical = max(0, min(total_count, int(baseline_counts.get("quality_critical_count") or 0)))
 
         points = []
-        window_hours = int(CONNECTED_PIVOTS_HISTORY_WINDOW_SEC // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC)
+        window_hours = int(SUMMARY_CARDS_HISTORY_WINDOW_SEC // SUMMARY_CARDS_HISTORY_BUCKET_SEC)
         for offset in range(window_hours):
-            bucket_ts = bucket_now - ((window_hours - 1 - offset) * CONNECTED_PIVOTS_HISTORY_BUCKET_SEC)
+            bucket_ts = bucket_now - ((window_hours - 1 - offset) * SUMMARY_CARDS_HISTORY_BUCKET_SEC)
             wave = ((offset * 7) % 11) - 5
             trend = -2 if offset < 96 else (1 if offset > (window_hours - 120) else 0)
             dip = -6 if 240 <= offset <= 258 else 0
             rebound = 4 if 520 <= offset <= 548 else 0
-            connected_count = current_connected + wave + trend + dip + rebound
+            connected_count = base_connected + wave + trend + dip + rebound
             connected_count = max(0, min(total_count, connected_count))
+            initial_count = base_initial + (1 if offset < 10 else 0) + (1 if offset % 167 == 0 else 0)
+            initial_count = max(0, min(min(4, total_count - connected_count), initial_count))
+            disconnected_count = max(0, total_count - connected_count - initial_count)
+
+            quality_calculating_count = max(base_calculating, initial_count)
+            quality_calculating_count += 1 if offset < 8 else 0
+            quality_calculating_count = max(0, min(4, min(total_count, quality_calculating_count)))
+
+            quality_critical_count = base_critical + int(round(disconnected_count * 0.45)) + (2 if dip else 0)
+            quality_critical_count = max(0, min(total_count - quality_calculating_count, quality_critical_count))
+
+            quality_yellow_count = base_yellow + int(round(disconnected_count * 0.25)) + (1 if wave < -2 else 0)
+            quality_yellow_count = max(
+                0,
+                min(total_count - quality_calculating_count - quality_critical_count, quality_yellow_count),
+            )
+
+            quality_green_count = max(
+                0,
+                total_count - quality_calculating_count - quality_yellow_count - quality_critical_count,
+            )
             points.append(
                 {
                     "ts": bucket_ts,
                     "at": _ts_to_str(bucket_ts),
-                    "connected_count": int(connected_count),
                     "total_count": int(total_count),
+                    "connected_count": int(connected_count),
+                    "disconnected_count": int(disconnected_count),
+                    "initial_count": int(initial_count),
+                    "quality_green_count": int(quality_green_count),
+                    "quality_calculating_count": int(quality_calculating_count),
+                    "quality_yellow_count": int(quality_yellow_count),
+                    "quality_critical_count": int(quality_critical_count),
                 }
             )
         return points
 
-    def get_connected_pivots_history_snapshot(self, now=None):
+    def get_summary_cards_history_snapshot(self, now=None):
         safe_now = float(now if now is not None else time.time())
         try:
-            points = self.persistence.fetch_connected_pivots_hourly_history(
+            points = self.persistence.fetch_summary_cards_hourly_history(
                 now=safe_now,
-                window_sec=CONNECTED_PIVOTS_HISTORY_WINDOW_SEC,
-                limit=int(CONNECTED_PIVOTS_HISTORY_WINDOW_SEC // CONNECTED_PIVOTS_HISTORY_BUCKET_SEC),
+                window_sec=SUMMARY_CARDS_HISTORY_WINDOW_SEC,
+                limit=int(SUMMARY_CARDS_HISTORY_WINDOW_SEC // SUMMARY_CARDS_HISTORY_BUCKET_SEC),
             )
         except RuntimeError:
             points = []
@@ -1097,24 +1152,33 @@ class TelemetryStore:
         )
         if use_dev_mock:
             with self._lock:
-                points = self._build_connected_pivots_history_mock_locked(safe_now)
+                points = self._build_summary_cards_history_mock_locked(safe_now)
             source = "mock"
 
         latest = points[-1] if points else {}
         return {
             "updated_at_ts": safe_now,
             "updated_at": _ts_to_str(safe_now),
-            "bucket_sec": CONNECTED_PIVOTS_HISTORY_BUCKET_SEC,
-            "window_sec": CONNECTED_PIVOTS_HISTORY_WINDOW_SEC,
+            "bucket_sec": SUMMARY_CARDS_HISTORY_BUCKET_SEC,
+            "window_sec": SUMMARY_CARDS_HISTORY_WINDOW_SEC,
             "source": source,
             "points": points,
             "latest": {
                 "ts": latest.get("ts"),
                 "at": latest.get("at"),
-                "connected_count": int(latest.get("connected_count") or 0),
                 "total_count": int(latest.get("total_count") or 0),
+                "connected_count": int(latest.get("connected_count") or 0),
+                "disconnected_count": int(latest.get("disconnected_count") or 0),
+                "initial_count": int(latest.get("initial_count") or 0),
+                "quality_green_count": int(latest.get("quality_green_count") or 0),
+                "quality_calculating_count": int(latest.get("quality_calculating_count") or 0),
+                "quality_yellow_count": int(latest.get("quality_yellow_count") or 0),
+                "quality_critical_count": int(latest.get("quality_critical_count") or 0),
             },
         }
+
+    def get_connected_pivots_history_snapshot(self, now=None):
+        return self.get_summary_cards_history_snapshot(now=now)
 
     def get_state_snapshot(self, now=None, run_id=None):
         now = float(now if now is not None else time.time())

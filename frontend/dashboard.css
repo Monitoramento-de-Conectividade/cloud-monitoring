@@ -588,11 +588,19 @@ a:focus {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  position: relative;
+  z-index: 3;
 }
 
 .summary-pill-wrap {
   position: relative;
   min-width: 0;
+}
+
+.summary-pill-wrap:hover,
+.summary-pill-wrap:focus-within,
+.summary-pill-wrap:focus {
+  z-index: 12;
 }
 
 .summary-pill {
@@ -640,8 +648,13 @@ a:focus {
   font-size: clamp(1.05rem, 0.85rem + 0.8vw, 1.38rem);
 }
 
-.summary-pill-wrap--chart {
+.summary-pill-wrap {
   outline: none;
+}
+
+.summary-pill-wrap--align-right .summary-chart-popover {
+  left: auto;
+  right: 0;
 }
 
 .summary-chart-popover {
@@ -661,9 +674,21 @@ a:focus {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-.summary-pill-wrap--chart:hover .summary-chart-popover,
-.summary-pill-wrap--chart:focus-within .summary-chart-popover,
-.summary-pill-wrap--chart:focus .summary-chart-popover {
+#overviewSection {
+  position: relative;
+  z-index: 4;
+  overflow: visible;
+}
+
+#pendingPanel,
+#cardsSection {
+  position: relative;
+  z-index: 1;
+}
+
+.summary-pill-wrap:hover .summary-chart-popover,
+.summary-pill-wrap:focus-within .summary-chart-popover,
+.summary-pill-wrap:focus .summary-chart-popover {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -684,12 +709,29 @@ a:focus {
 }
 
 .summary-chart-head span,
+.summary-chart-copy,
 .summary-chart-note,
 .summary-chart-error,
 .summary-chart-axis,
 .summary-chart-metrics {
   font-size: 12px;
   color: #456957;
+}
+
+.summary-chart-copy {
+  margin-bottom: 10px;
+  line-height: 1.45;
+}
+
+.summary-chart-copy--footer {
+  margin-top: 10px;
+  margin-bottom: 0;
+  padding-top: 10px;
+  border-top: 1px solid #deebe4;
+}
+
+.summary-chart-copy--only {
+  margin: 0;
 }
 
 .summary-chart-metrics {
@@ -728,6 +770,62 @@ a:focus {
   stroke-linecap: round;
 }
 
+.summary-pill-wrap--neutral .summary-chart-area {
+  fill: rgba(86, 118, 104, 0.14);
+}
+
+.summary-pill-wrap--neutral .summary-chart-line {
+  stroke: #557768;
+}
+
+.summary-pill-wrap--green .summary-chart-area {
+  fill: rgba(30, 122, 73, 0.14);
+}
+
+.summary-pill-wrap--green .summary-chart-line {
+  stroke: #1e7a49;
+}
+
+.summary-pill-wrap--red .summary-chart-area {
+  fill: rgba(192, 70, 43, 0.12);
+}
+
+.summary-pill-wrap--red .summary-chart-line {
+  stroke: #c0462b;
+}
+
+.summary-pill-wrap--gray .summary-chart-area {
+  fill: rgba(97, 116, 125, 0.12);
+}
+
+.summary-pill-wrap--gray .summary-chart-line {
+  stroke: #647581;
+}
+
+.summary-pill-wrap--calculating .summary-chart-area {
+  fill: rgba(96, 122, 163, 0.14);
+}
+
+.summary-pill-wrap--calculating .summary-chart-line {
+  stroke: #607aa3;
+}
+
+.summary-pill-wrap--yellow .summary-chart-area {
+  fill: rgba(201, 146, 28, 0.14);
+}
+
+.summary-pill-wrap--yellow .summary-chart-line {
+  stroke: #c9921c;
+}
+
+.summary-pill-wrap--critical .summary-chart-area {
+  fill: rgba(227, 117, 22, 0.14);
+}
+
+.summary-pill-wrap--critical .summary-chart-line {
+  stroke: #e37516;
+}
+
 .summary-chart-axis {
   display: flex;
   justify-content: space-between;
@@ -742,6 +840,10 @@ a:focus {
 .summary-chart-error {
   margin-top: 8px;
   color: #9c3d2a;
+}
+
+.summary-chart-popover--info {
+  width: min(420px, calc(100vw - 48px));
 }
 
 .summary-chart-empty {
