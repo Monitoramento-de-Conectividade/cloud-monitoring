@@ -1119,11 +1119,18 @@ a:focus {
 
 .pivot-danger {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.pivot-danger-actions {
+  display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  margin-left: auto;
 }
 
 .pivot-admin-tech {
@@ -1157,10 +1164,7 @@ a:focus {
 }
 
 .pivot-metrics-strip {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  align-items: start;
-  column-gap: 12px;
+  display: block;
 }
 
 .metrics-grid {
@@ -1188,13 +1192,11 @@ a:focus {
 }
 
 .pivot-metrics-toggle {
-  position: static;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  margin-top: 10px;
   padding: 0;
   border: 1px solid #acc7b4;
   border-radius: 999px;

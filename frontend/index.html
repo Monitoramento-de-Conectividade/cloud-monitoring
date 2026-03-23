@@ -211,8 +211,18 @@
             <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
           </div>
           <div class="pivot-danger">
-            <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
-            <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+            <div class="pivot-danger-actions">
+              <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
+              <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+            </div>
+            <button
+              id="pivotMetricsToggleBtn"
+              class="pivot-metrics-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-label="Mostrar mais informações"
+              hidden
+            >v</button>
           </div>
         </div>
 
@@ -240,14 +250,6 @@
 
       <div class="pivot-metrics-strip">
         <div class="metrics-grid" id="pivotMetrics"></div>
-        <button
-          id="pivotMetricsToggleBtn"
-          class="pivot-metrics-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-label="Mostrar mais informações"
-          hidden
-        >v</button>
       </div>
 
       <div class="pivot-sections">
