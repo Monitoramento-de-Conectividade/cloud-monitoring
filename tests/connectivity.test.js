@@ -430,6 +430,32 @@ test("ui: timeline mini usa fallback do payload enquanto override ainda nao cheg
   ]);
 });
 
+test("ui: summary cards history normaliza, ordena e filtra pontos invalidos", () => {
+  const points = _test.normalizeSummaryCardsHistoryPoints([
+    { ts: 200, connected_count: 8, disconnected_count: 2, initial_count: 0, total_count: 20 },
+    { ts: 100, connected_count: 5, disconnected_count: 4, initial_count: 1, total_count: 20 },
+    { ts: "invalid", connected_count: 3, total_count: 20 },
+  ]);
+
+  assert.equal(points.length, 2);
+  assert.equal(points[0].ts, 100);
+  assert.equal(points[1].connected_count, 8);
+});
+
+test("ui: connected pivots history chart model gera paths para o gráfico", () => {
+  const model = _test.buildSummaryCardsHistorySvgModel([
+    { ts: 100, connected_count: 4, disconnected_count: 3, initial_count: 3, total_count: 10 },
+    { ts: 200, connected_count: 7, disconnected_count: 2, initial_count: 1, total_count: 10 },
+    { ts: 300, connected_count: 6, disconnected_count: 4, initial_count: 0, total_count: 10 },
+  ], "disconnected");
+
+  assert.ok(model);
+  assert.match(model.linePath, /^M /);
+  assert.match(model.areaPath, /^M /);
+  assert.equal(model.firstTs, 100);
+  assert.equal(model.lastTs, 300);
+});
+
 test("ui: painel de eventos mantém apenas os 125 eventos mais recentes", () => {
   const timeline = Array.from({ length: 160 }, (_, index) => ({
     ts: 2_000 - index,

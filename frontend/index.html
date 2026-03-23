@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="cloudv2-api-base-url" content=""/>
   <title>Monitoramento de Conectividade</title>
-  <link rel="stylesheet" href="dashboard.css?v=20260309c"/>
+  <link rel="stylesheet" href="dashboard.css?v=20260323i"/>
 </head>
 <body>
   <a class="skip-link" href="#cardsSection">Ir para lista de pivôs</a>
@@ -210,12 +210,13 @@
             <span id="pivotStatus" class="badge gray">Status: Inicial</span>
             <span id="pivotQuality" class="badge green">Conectividade: Estável</span>
           </div>
+          <div class="pivot-danger">
+            <div class="pivot-danger-actions">
+              <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
+              <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
+            </div>
+          </div>
         </div>
-
-      <div class="pivot-danger">
-        <button id="resetPivotModemBtn" class="danger-inline" type="button">Reset Modem</button>
-        <button id="deletePivotBtn" class="danger" type="button">Deletar pivô</button>
-      </div>
 
       <div class="pivot-admin-tech" id="pivotAdminTech" hidden>
         <div class="pivot-tech-controls" id="pivotTechControls">
@@ -239,13 +240,17 @@
         <span id="pivotTechnologyHint" class="hint-text" aria-live="polite"></span>
       </div>
 
-      <div class="pivot-metrics-toggle">
-        <button id="pivotMoreInfoBtn" class="ghost" type="button" aria-expanded="false">
-          Mais informações
-        </button>
+      <div class="pivot-metrics-strip">
+        <div class="metrics-grid" id="pivotMetrics"></div>
+        <button
+          id="pivotMetricsToggleBtn"
+          class="pivot-metrics-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-label="Mostrar mais informações"
+          hidden
+        >v</button>
       </div>
-
-      <div class="metrics-grid" id="pivotMetrics"></div>
 
       <div class="pivot-sections">
         <section class="connectivity-panel">
@@ -450,7 +455,7 @@
 
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
-  <script src="runtime-config.js"></script>
-  <script src="dashboard.js?v=20260227b"></script>
+  <script src="runtime-config.js?v=20260323i"></script>
+  <script src="dashboard.js?v=20260323i"></script>
 </body>
 </html>

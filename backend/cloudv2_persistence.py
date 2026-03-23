@@ -19,6 +19,20 @@ TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_DEFAULT_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
 CONNECTIVITY_TOPICS = ("cloudv2", "cloudv2-ping", "cloudv2-info", "cloudv2-network")
+SUMMARY_CARDS_WINDOW_SEC = 30 * 24 * 3600
+SUMMARY_CARDS_BUCKET_SEC = 3600
+CONNECTED_PIVOTS_WINDOW_SEC = SUMMARY_CARDS_WINDOW_SEC
+CONNECTED_PIVOTS_BUCKET_SEC = SUMMARY_CARDS_BUCKET_SEC
+SUMMARY_CARD_HISTORY_FIELDS = (
+    "total_count",
+    "connected_count",
+    "disconnected_count",
+    "initial_count",
+    "quality_green_count",
+    "quality_calculating_count",
+    "quality_yellow_count",
+    "quality_critical_count",
+)
 
 
 def _ts_to_str(ts):
@@ -645,6 +659,175 @@ class TelemetryPersistence:
                         normalized_id,
                     ),
                 )
+
+    def record_summary_cards_hourly(self, ts, counts):
+        bucket_ts = _safe_int(ts, None)
+        if bucket_ts is None:
+            bucket_ts = int(time.time())
+        bucket_ts = int(bucket_ts // SUMMARY_CARDS_BUCKET_SEC) * SUMMARY_CARDS_BUCKET_SEC
+        raw_counts = counts if isinstance(counts, dict) else {}
+        safe_counts = {
+            field: max(0, int(_safe_int(raw_counts.get(field), 0) or 0))
+            for field in SUMMARY_CARD_HISTORY_FIELDS
+        }
+        status_total = (
+            safe_counts["connected_count"]
+            + safe_counts["disconnected_count"]
+            + safe_counts["initial_count"]
+        )
+        quality_total = (
+            safe_counts["quality_green_count"]
+            + safe_counts["quality_calculating_count"]
+            + safe_counts["quality_yellow_count"]
+            + safe_counts["quality_critical_count"]
+        )
+        safe_counts["total_count"] = max(safe_counts["total_count"], status_total, quality_total)
+        now_ts = time.time()
+        cutoff_ts = bucket_ts - SUMMARY_CARDS_WINDOW_SEC
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO summary_cards_hourly (
+                        bucket_ts,
+                        total_count,
+                        connected_count,
+                        disconnected_count,
+                        initial_count,
+                        quality_green_count,
+                        quality_calculating_count,
+                        quality_yellow_count,
+                        quality_critical_count,
+                        created_at_ts,
+                        updated_at_ts
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(bucket_ts) DO UPDATE SET
+                        total_count = excluded.total_count,
+                        connected_count = excluded.connected_count,
+                        disconnected_count = excluded.disconnected_count,
+                        initial_count = excluded.initial_count,
+                        quality_green_count = excluded.quality_green_count,
+                        quality_calculating_count = excluded.quality_calculating_count,
+                        quality_yellow_count = excluded.quality_yellow_count,
+                        quality_critical_count = excluded.quality_critical_count,
+                        updated_at_ts = excluded.updated_at_ts
+                    """,
+                    (
+                        bucket_ts,
+                        safe_counts["total_count"],
+                        safe_counts["connected_count"],
+                        safe_counts["disconnected_count"],
+                        safe_counts["initial_count"],
+                        safe_counts["quality_green_count"],
+                        safe_counts["quality_calculating_count"],
+                        safe_counts["quality_yellow_count"],
+                        safe_counts["quality_critical_count"],
+                        now_ts,
+                        now_ts,
+                    ),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM summary_cards_hourly
+                    WHERE bucket_ts < ?
+                    """,
+                    (cutoff_ts,),
+                )
+
+    def fetch_summary_cards_hourly_history(self, now=None, window_sec=SUMMARY_CARDS_WINDOW_SEC, limit=None):
+        safe_now = _safe_float(now, time.time())
+        safe_window = max(
+            SUMMARY_CARDS_BUCKET_SEC,
+            int(_safe_int(window_sec, SUMMARY_CARDS_WINDOW_SEC) or SUMMARY_CARDS_WINDOW_SEC),
+        )
+        safe_limit = limit
+        if safe_limit is None:
+            safe_limit = max(24, int(safe_window // SUMMARY_CARDS_BUCKET_SEC))
+        safe_limit = max(1, int(_safe_int(safe_limit, 720) or 720))
+        cutoff_ts = int(safe_now) - safe_window
+
+        with self._lock:
+            conn = self._require_conn_locked()
+            rows = conn.execute(
+                """
+                SELECT
+                    bucket_ts,
+                    total_count,
+                    connected_count,
+                    disconnected_count,
+                    initial_count,
+                    quality_green_count,
+                    quality_calculating_count,
+                    quality_yellow_count,
+                    quality_critical_count
+                FROM summary_cards_hourly
+                WHERE bucket_ts >= ?
+                ORDER BY bucket_ts DESC
+                LIMIT ?
+                """,
+                (cutoff_ts, safe_limit),
+            ).fetchall()
+
+        points = []
+        for row in reversed(rows):
+            bucket_ts = _safe_int(row["bucket_ts"], None)
+            if bucket_ts is None:
+                continue
+            item = {
+                "ts": bucket_ts,
+                "at": _ts_to_str(bucket_ts),
+            }
+            for field in SUMMARY_CARD_HISTORY_FIELDS:
+                item[field] = max(0, int(_safe_int(row[field], 0) or 0))
+            status_total = (
+                item["connected_count"]
+                + item["disconnected_count"]
+                + item["initial_count"]
+            )
+            quality_total = (
+                item["quality_green_count"]
+                + item["quality_calculating_count"]
+                + item["quality_yellow_count"]
+                + item["quality_critical_count"]
+            )
+            item["total_count"] = max(item["total_count"], status_total, quality_total)
+            points.append(item)
+        return points
+
+    def record_connected_pivots_hourly(self, ts, connected_count, total_count):
+        safe_connected = max(0, int(_safe_int(connected_count, 0) or 0))
+        safe_total = max(safe_connected, int(_safe_int(total_count, 0) or 0))
+        self.record_summary_cards_hourly(
+            ts,
+            {
+                "total_count": safe_total,
+                "connected_count": safe_connected,
+                "disconnected_count": max(0, safe_total - safe_connected),
+                "initial_count": 0,
+                "quality_green_count": 0,
+                "quality_calculating_count": 0,
+                "quality_yellow_count": 0,
+                "quality_critical_count": 0,
+            },
+        )
+
+    def fetch_connected_pivots_hourly_history(self, now=None, window_sec=CONNECTED_PIVOTS_WINDOW_SEC, limit=None):
+        points = self.fetch_summary_cards_hourly_history(
+            now=now,
+            window_sec=window_sec,
+            limit=limit,
+        )
+        return [
+            {
+                "ts": item["ts"],
+                "at": item["at"],
+                "connected_count": item["connected_count"],
+                "total_count": item["total_count"],
+            }
+            for item in points
+        ]
 
     def set_pivot_is_concentrator(self, pivot_id, is_concentrator, pivot_slug=None, seen_ts=None):
         normalized_id = str(pivot_id or "").strip()

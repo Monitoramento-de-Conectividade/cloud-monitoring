@@ -25,6 +25,8 @@ CONNECTIVITY_TOPICS = (TOPIC_CLOUDV2, TOPIC_PING, TOPIC_INFO, TOPIC_NETWORK)
 TIMELINE_MINI_BINS = 96
 TIMELINE_MINI_WINDOW_SEC = 30 * 24 * 3600
 TIMELINE_MINI_EMPTY_FALLBACK_SEC = 24 * 3600
+SUMMARY_CARDS_HISTORY_WINDOW_SEC = 30 * 24 * 3600
+SUMMARY_CARDS_HISTORY_BUCKET_SEC = 3600
 
 STATUS_LABELS = {
     "green": "Online",
@@ -1014,6 +1016,14 @@ class TelemetryStore:
             self._dirty = False
             self._last_write_ts = now
 
+        try:
+            self.persistence.record_summary_cards_hourly(
+                now,
+                self._build_summary_cards_counts_from_state_payload(state_payload),
+            )
+        except RuntimeError:
+            pass
+
         write_json_atomic(os.path.join(DATA_DIR, "state.json"), state_payload)
         write_json_atomic(os.path.join(DATA_DIR, "pivots.json"), mapping)
 
@@ -1022,6 +1032,78 @@ class TelemetryStore:
             write_json_atomic(os.path.join(DATA_DIR, f"pivot_{slug}.json"), payload)
 
         write_json_atomic(self.runtime_path, runtime_payload)
+
+    def _build_summary_cards_counts_from_state_payload(self, state_payload):
+        counts = {
+            "total_count": 0,
+            "connected_count": 0,
+            "disconnected_count": 0,
+            "initial_count": 0,
+            "quality_green_count": 0,
+            "quality_calculating_count": 0,
+            "quality_yellow_count": 0,
+            "quality_critical_count": 0,
+        }
+        for item in state_payload.get("pivots", []) or []:
+            if not isinstance(item, dict):
+                continue
+            counts["total_count"] += 1
+            status = item.get("status") if isinstance(item.get("status"), dict) else {}
+            status_code = str(status.get("code") or "").strip().lower()
+            if status_code == "green":
+                counts["connected_count"] += 1
+            elif status_code == "red":
+                counts["disconnected_count"] += 1
+            elif status_code == "gray":
+                counts["initial_count"] += 1
+
+            quality = item.get("quality") if isinstance(item.get("quality"), dict) else {}
+            quality_code = str(quality.get("code") or "").strip().lower()
+            if quality_code == "green":
+                counts["quality_green_count"] += 1
+            elif quality_code == "calculating":
+                counts["quality_calculating_count"] += 1
+            elif quality_code == "yellow":
+                counts["quality_yellow_count"] += 1
+            elif quality_code == "critical":
+                counts["quality_critical_count"] += 1
+        return counts
+
+    def get_summary_cards_history_snapshot(self, now=None):
+        safe_now = float(now if now is not None else time.time())
+        try:
+            points = self.persistence.fetch_summary_cards_hourly_history(
+                now=safe_now,
+                window_sec=SUMMARY_CARDS_HISTORY_WINDOW_SEC,
+                limit=int(SUMMARY_CARDS_HISTORY_WINDOW_SEC // SUMMARY_CARDS_HISTORY_BUCKET_SEC),
+            )
+        except RuntimeError:
+            points = []
+
+        latest = points[-1] if points else {}
+        return {
+            "updated_at_ts": safe_now,
+            "updated_at": _ts_to_str(safe_now),
+            "bucket_sec": SUMMARY_CARDS_HISTORY_BUCKET_SEC,
+            "window_sec": SUMMARY_CARDS_HISTORY_WINDOW_SEC,
+            "source": "live",
+            "points": points,
+            "latest": {
+                "ts": latest.get("ts"),
+                "at": latest.get("at"),
+                "total_count": int(latest.get("total_count") or 0),
+                "connected_count": int(latest.get("connected_count") or 0),
+                "disconnected_count": int(latest.get("disconnected_count") or 0),
+                "initial_count": int(latest.get("initial_count") or 0),
+                "quality_green_count": int(latest.get("quality_green_count") or 0),
+                "quality_calculating_count": int(latest.get("quality_calculating_count") or 0),
+                "quality_yellow_count": int(latest.get("quality_yellow_count") or 0),
+                "quality_critical_count": int(latest.get("quality_critical_count") or 0),
+            },
+        }
+
+    def get_connected_pivots_history_snapshot(self, now=None):
+        return self.get_summary_cards_history_snapshot(now=now)
 
     def get_state_snapshot(self, now=None, run_id=None):
         now = float(now if now is not None else time.time())
