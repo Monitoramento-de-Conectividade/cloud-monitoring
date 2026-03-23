@@ -1191,12 +1191,27 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.pivot-metrics-toggle {
+.metric-toggle-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.metric-toggle-card {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.metric-side-toggle {
+  flex: 0 0 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
+  margin-top: 10px;
   padding: 0;
   border: 1px solid #acc7b4;
   border-radius: 999px;
@@ -1210,13 +1225,13 @@ a:focus {
   transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.pivot-metrics-toggle:hover {
+.metric-side-toggle:hover {
   color: var(--accent);
   border-color: #88ae94;
   background: #dceee3;
 }
 
-.pivot-metrics-toggle[aria-expanded="true"] {
+.metric-side-toggle[aria-expanded="true"] {
   background: #dceee3;
   border-color: #88ae94;
 }
