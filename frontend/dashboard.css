@@ -1178,25 +1178,25 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.metric-toggle-card {
-  cursor: pointer;
-}
-
-.metric-toggle-card .label {
+.metric-toggle-wrap {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
+  min-width: 0;
 }
 
-.metric-inline-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.metric-toggle-wrap .metric {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.metric-edge-toggle {
   width: 24px;
   min-width: 24px;
   height: 24px;
   min-height: 24px;
+  padding: 0;
+  margin-top: 8px;
   border: 1px solid #acc7b4;
   border-radius: 999px;
   background: #e8f3ec;
@@ -1204,17 +1204,17 @@ a:focus {
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  flex-shrink: 0;
   text-transform: none;
 }
 
-.metric-toggle-card:hover .metric-inline-toggle {
+.metric-edge-toggle:hover:not(:disabled) {
+  transform: translateY(0);
   color: var(--accent);
   border-color: #88ae94;
   background: #dceee3;
 }
 
-.metric-inline-toggle.is-expanded {
+.metric-edge-toggle.is-expanded {
   background: #dceee3;
   border-color: #88ae94;
 }
