@@ -1162,7 +1162,7 @@ a:focus {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   width: 100%;
   max-width: 1228px;
-  padding-right: 56px;
+  padding-right: 0;
   box-sizing: border-box;
 }
 
@@ -1180,42 +1180,41 @@ a:focus {
   letter-spacing: 0.06em;
 }
 
-.metric-toggle-card {
-  position: relative;
-  overflow: visible;
-  cursor: pointer;
+.metric-toggle-composite {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
-.metric-toggle-card::after {
-  content: "v";
-  position: absolute;
-  top: 10px;
-  right: -36px;
+.metric-toggle-composite .metric-toggle-card {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.metric-inline-toggle {
+  flex: 0 0 24px;
   width: 24px;
-  min-width: 24px;
   height: 24px;
-  min-height: 24px;
+  margin-top: 10px;
   border: 1px solid #acc7b4;
   border-radius: 999px;
   background: #e8f3ec;
   color: #2a5340;
   font-size: 13px;
   font-weight: 700;
-  line-height: 24px;
+  line-height: 22px;
   text-align: center;
-  text-transform: none;
-  pointer-events: none;
-  z-index: 1;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
-.metric-toggle-card:hover::after {
+.metric-inline-toggle:hover {
   color: var(--accent);
   border-color: #88ae94;
   background: #dceee3;
 }
 
-.metric-toggle-card.is-expanded::after {
-  content: "^";
+.metric-toggle-composite.is-expanded .metric-inline-toggle {
   background: #dceee3;
   border-color: #88ae94;
 }

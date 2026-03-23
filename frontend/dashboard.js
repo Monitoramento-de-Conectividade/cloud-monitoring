@@ -2642,18 +2642,24 @@ function renderPivotMetrics(pivot, statusView = null, qualityView = null, connec
   ui.pivotMetrics.innerHTML = visibleCards
     .map((item) => {
       const isTechnologyCard = String(item.key || "") === "last_technology";
-      const metricClasses = [
-        "metric",
-        isTechnologyCard && hasExtraCards ? "metric-toggle-card" : "",
-        isTechnologyCard && hasExtraCards && state.pivotMetricsExpanded ? "is-expanded" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const toggleAttrs = isTechnologyCard && hasExtraCards
-        ? ` data-pivot-metrics-toggle="true" aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}" aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}"`
-        : "";
+      if (isTechnologyCard && hasExtraCards) {
+        return `
+      <div class="metric-toggle-composite${state.pivotMetricsExpanded ? " is-expanded" : ""}">
+        <div class="metric metric-toggle-card">
+          <div class="label">${escapeHtml(item.label)}</div>
+          <div class="value">${escapeHtml(item.value)}</div>
+        </div>
+        <button
+          type="button"
+          class="metric-inline-toggle"
+          data-pivot-metrics-toggle="true"
+          aria-expanded="${state.pivotMetricsExpanded ? "true" : "false"}"
+          aria-label="${escapeHtml(state.pivotMetricsExpanded ? "Recolher informações" : "Mostrar mais informações")}"
+        >${state.pivotMetricsExpanded ? "^" : "v"}</button>
+      </div>`;
+      }
       return `
-      <div class="${metricClasses}"${toggleAttrs}>
+      <div class="metric">
         <div class="label">${escapeHtml(item.label)}</div>
         <div class="value">${escapeHtml(item.value)}</div>
       </div>`;
