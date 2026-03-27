@@ -7,7 +7,7 @@
   <title>Mapa de Pivos</title>
   <link rel="stylesheet" href="dashboard.css?v=20260309c"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-  <link rel="stylesheet" href="mapa.css?v=20260309b"/>
+  <link rel="stylesheet" href="mapa.css?v=20260327a"/>
 </head>
 <body>
   <main class="layout">
@@ -33,7 +33,10 @@
     <section class="panel map-page-panel">
       <div class="panel-head tight">
         <h2>Mapa interativo</h2>
-        <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
+        <div class="map-panel-actions">
+          <button id="mapMarketingBtn" class="ghost map-marketing-btn" type="button" aria-pressed="false">Marketing</button>
+          <button id="mapRefreshBtn" class="ghost" type="button">Atualizar</button>
+        </div>
       </div>
       <p id="mapStatus" class="hint">Carregando dados...</p>
       <div id="pivotsMapWrap" class="pivots-map-wrap">
@@ -115,6 +118,6 @@
 
   <script src="runtime-config.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="mapa.js?v=20260227a"></script>
+  <script src="mapa.js?v=20260327a"></script>
 </body>
 </html>

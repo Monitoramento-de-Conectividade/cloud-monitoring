@@ -5,6 +5,21 @@
   min-width: 0;
 }
 
+.map-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.map-marketing-btn.is-active {
+  border-color: rgba(42, 126, 76, 0.5);
+  background: rgba(42, 126, 76, 0.14);
+  color: #14563b;
+  box-shadow: 0 8px 16px rgba(20, 86, 59, 0.12);
+}
+
 .pivots-map-wrap {
   position: relative;
   min-height: 0;
@@ -317,6 +332,15 @@
 }
 
 @media (max-width: 860px) {
+  .map-panel-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .map-panel-actions > button {
+    flex: 1 1 140px;
+  }
+
   .map-filters-panel {
     bottom: 8px;
     left: 8px;

@@ -121,6 +121,7 @@ const ui = HAS_DOM
   ? {
       mapUpdatedAt: document.getElementById("mapUpdatedAt"),
       mapCountsMeta: document.getElementById("mapCountsMeta"),
+      mapMarketingBtn: document.getElementById("mapMarketingBtn"),
       mapRefreshBtn: document.getElementById("mapRefreshBtn"),
       mapStatus: document.getElementById("mapStatus"),
       mapFullscreenBtn: document.getElementById("mapFullscreenBtn"),
@@ -146,6 +147,7 @@ const state = {
   mapStatusFilter: "",
   mapQualityFilter: "",
   mapFiltersMinimized: false,
+  mapMarketingMode: false,
 };
 
 let mapInstance = null;
@@ -458,9 +460,19 @@ function statusLabelForPivot(pivot) {
 }
 
 function pinColorForPivot(pivot) {
+  if (state.mapMarketingMode) {
+    return resolveCssVarColor("--green", "#2a7e4c");
+  }
   const qualityCode = qualityCodeForPivot(pivot);
   const variableName = QUALITY_COLOR_VAR_BY_CODE[qualityCode] || QUALITY_COLOR_VAR_BY_CODE.green;
   return resolveCssVarColor(variableName, "#2a7e4c");
+}
+
+function updateMapMarketingButtonState() {
+  if (!ui.mapMarketingBtn) return;
+  const active = !!state.mapMarketingMode;
+  ui.mapMarketingBtn.classList.toggle("is-active", active);
+  ui.mapMarketingBtn.setAttribute("aria-pressed", active ? "true" : "false");
 }
 
 function normalizeMapSearchTerm(value) {
@@ -1057,10 +1069,18 @@ async function boot() {
 
   applyMapFiltersPanelVisibility();
   updateMapFilterUi();
+  updateMapMarketingButtonState();
 
   if (ui.mapRefreshBtn) {
     ui.mapRefreshBtn.addEventListener("click", () => {
       void refreshMapData();
+    });
+  }
+  if (ui.mapMarketingBtn) {
+    ui.mapMarketingBtn.addEventListener("click", () => {
+      state.mapMarketingMode = !state.mapMarketingMode;
+      updateMapMarketingButtonState();
+      renderMapMarkers();
     });
   }
   if (ui.mapFullscreenBtn) {
